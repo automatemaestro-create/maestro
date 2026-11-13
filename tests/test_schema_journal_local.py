@@ -68,10 +68,10 @@ def evenement(tache_id: str) -> Event:
 def tache(identifiant: str) -> Task:
     return Task(
         id=identifiant,
-        titre=f"Tâche {identifiant}",
+        title=f"Tâche {identifiant}",
         description=f"Réaliser {identifiant}.",
-        competences_requises=("backend",),
-        format_sortie="Texte",
+        required_competencies=("backend",),
+        output_format="Texte",
     )
 
 

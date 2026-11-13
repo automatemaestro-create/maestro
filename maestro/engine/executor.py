@@ -1321,7 +1321,7 @@ class LocalExecutor(TaskExecutor):
         # sur l'avancement acquis), mais l'**écart** entre ce qu'elle porte et le
         # verdict de la tâche ne se dit qu'à la clôture — et la clôture est ici.
         # L'agent qui l'alimente, lui, n'existe pas encore : il sort du routage.
-        suivi = SuiviChecklist(task.etapes)
+        suivi = SuiviChecklist(task.steps)
         # Les blocages que l'agent **signale** (#719), retenus en plus d'être
         # consignés (#1181) : ils voyagent avec le résultat jusqu'au Chef de
         # projet, qui les lit s'il faut juger un échec. Nés ici pour la raison de
@@ -1344,7 +1344,7 @@ class LocalExecutor(TaskExecutor):
         # point de contrôle (#1304) — part sur une ligne du run (#1398), et non
         # dans le collecteur ci-dessous, qui le rangeait chez la première tâche.
         with (
-            run_spend_channel(_consigne_depense_du_run(journal, task.projet_id)),
+            run_spend_channel(_consigne_depense_du_run(journal, task.project_id)),
             collect_usage(spending_cap=plafond, on_measure=releve.mesure) as recolte,
         ):
             refus = _refus_plafond_creve(task, plafond)
@@ -1353,8 +1353,8 @@ class LocalExecutor(TaskExecutor):
             else:
                 decision = await self._router.route(
                     task,
-                    excluded=self._desactives(task.projet_id),
-                    agents=self._equipe(task.projet_id),
+                    excluded=self._desactives(task.project_id),
+                    agents=self._equipe(task.project_id),
                     # Le métier manque et personne ne l'a recruté (#1260) : la
                     # tâche va au rôle le plus proche plutôt qu'« à assigner ».
                     closest=journal.run_id in self._equipe_actuelle,
@@ -1385,7 +1385,7 @@ class LocalExecutor(TaskExecutor):
                     )
                     if manque is not None:
                         result = replace(
-                            result, prerequis=prerequis_du_role(manque, task.titre)
+                            result, prerequis=prerequis_du_role(manque, task.title)
                         )
                 else:
                     releve.agent = decision.agent
@@ -1402,13 +1402,13 @@ class LocalExecutor(TaskExecutor):
                     # exécution. Et **dans le projet de la tâche** depuis #1038 :
                     # c'est ici que le rangement par projet atteint l'exécution,
                     # au même endroit et au même moment que la relecture à chaud.
-                    playbook = self._playbook_courant(decision.agent.nom, task.projet_id)
+                    playbook = self._playbook_courant(decision.agent.nom, task.project_id)
                     try:
                         serveurs_mcp = self._serveurs_mcp(
-                            decision.agent.nom, task.projet_id
+                            decision.agent.nom, task.project_id
                         )
                         politique = self._politique_permissions(
-                            decision.agent.nom, task.projet_id
+                            decision.agent.nom, task.project_id
                         )
                     except ValueError as exc:
                         result = _echec(
@@ -1449,7 +1449,7 @@ class LocalExecutor(TaskExecutor):
                         # de ce run, la cause part au journal (`cadence`).
                         debut_creneau = perf_counter()
                         async with self._creneau_capacite(
-                            decision.agent.nom, task.projet_id, task=task, journal=journal
+                            decision.agent.nom, task.project_id, task=task, journal=journal
                         ):
                             attente_creneau_ms = _ecoule_ms(debut_creneau)
                             debut_atelier = perf_counter()
@@ -1520,7 +1520,7 @@ class LocalExecutor(TaskExecutor):
         result = _livree_hors_du_projet(result, fusion)
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=result.agent,
             role=result.role,
             # Une tâche à qui il manque un prérequis constaté n'échoue pas quand la
@@ -1538,7 +1538,7 @@ class LocalExecutor(TaskExecutor):
             usage=result.usage,
             playbook_version=result.playbook_version,
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             # La description que le plan porte déjà (#246) : le moteur ne fait
             # que la transporter, le journal étant le seul chemin par lequel
             # elle atteint le panneau de détail de la Control Tower (#251).
@@ -1643,10 +1643,10 @@ class LocalExecutor(TaskExecutor):
         le verrou de ses fusions.
         """
         brief = self._briefs.get(run_id)
-        if self._verificateur is None or brief is None or not brief.criteres_acceptation:
+        if self._verificateur is None or brief is None or not brief.acceptance_criteria:
             return None
         debut = perf_counter()
-        criteres = brief.criteres_acceptation
+        criteres = brief.acceptance_criteria
         projet = (
             self._projets.lire(projet_id)
             if projet_id is not None and self._projets is not None
@@ -1751,7 +1751,7 @@ class LocalExecutor(TaskExecutor):
         accord = self._accords_fusion.get((run_id, projet.id))
         accorde = accord is not None and accord.approuve
         texte = recette.en_markdown(
-            objectif=brief.objectif,
+            objectif=brief.goal,
             run_id=run_id,
             horodatage=datetime.now(UTC).strftime("%Y-%m-%d à %H:%M UTC"),
         )
@@ -1849,7 +1849,7 @@ class LocalExecutor(TaskExecutor):
             accepte = _livree_hors_du_projet(accepte, fusion)
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=accepte.agent,
             role=accepte.role,
             statut=accepte.statut,
@@ -1859,7 +1859,7 @@ class LocalExecutor(TaskExecutor):
             usage=StepUsage(),
             playbook_version=accepte.playbook_version,
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             description=task.description,
         )
         return accepte
@@ -1985,7 +1985,7 @@ class LocalExecutor(TaskExecutor):
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_VERIFICATION}",
-            nom=f"Vérification — {task.titre}",
+            nom=f"Vérification — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut=verdict.statut,
@@ -1993,7 +1993,7 @@ class LocalExecutor(TaskExecutor):
             sortie=verdict.resume(),
             description=verdict.preuves(),
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             verification={**verdict.to_dict(), "livraison": livraison},
         )
 
@@ -2025,7 +2025,7 @@ class LocalExecutor(TaskExecutor):
             return
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_PLAFOND}",
-            nom=task.titre,
+            nom=task.title,
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_TACHE_SUSPENDUE,
@@ -2037,7 +2037,7 @@ class LocalExecutor(TaskExecutor):
             erreur=result.erreur,
             usage=result.usage,
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...] | None:
@@ -2171,7 +2171,7 @@ class LocalExecutor(TaskExecutor):
             STATUT_UNE_A_UNE,
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def atelier_du_projet(self, projet_id: str) -> str | None:
@@ -2414,9 +2414,9 @@ class LocalExecutor(TaskExecutor):
         planification et l'exécution) ne condamne pas la tâche, il la ramène au
         comportement qu'elle avait avant ce lot.
         """
-        if task.projet_id is None or self._projets is None:
+        if task.project_id is None or self._projets is None:
             return None
-        return self._projets.lire(task.projet_id)
+        return self._projets.lire(task.project_id)
 
     async def _fusionne_dans_le_projet(
         self, task: Task, result: TaskResult, journal: RunJournal, *, en_place: bool = False
@@ -2474,7 +2474,7 @@ class LocalExecutor(TaskExecutor):
         et sa clôture, le projet n'a pas de branche de cette tâche à fusionner — ce
         qu'elle a écrit en place est déjà dans le premier commit.
         """
-        if task.projet_id is None or self._projets is None:
+        if task.project_id is None or self._projets is None:
             return None
         projet = self._projet(task)
         if result.role == ROLE_A_ASSIGNER:
@@ -2487,9 +2487,9 @@ class LocalExecutor(TaskExecutor):
                 result,
                 _statut_sans_agent(projet),
                 entree=(
-                    f"projet {task.projet_id}" if projet is None else f"projet {projet.racine}"
+                    f"projet {task.project_id}" if projet is None else f"projet {projet.racine}"
                 ),
-                detail=_phrase_sans_agent(projet, task.projet_id),
+                detail=_phrase_sans_agent(projet, task.project_id),
                 journal=journal,
             )
         if projet is None:
@@ -2497,9 +2497,9 @@ class LocalExecutor(TaskExecutor):
                 task,
                 result,
                 STATUT_PROJET_INTROUVABLE,
-                entree=f"projet {task.projet_id}",
+                entree=f"projet {task.project_id}",
                 detail=(
-                    f"projet {task.projet_id} introuvable dans le dépôt : la tâche a "
+                    f"projet {task.project_id} introuvable dans le dépôt : la tâche a "
                     "travaillé dans un espace jetable et rien n'a atteint aucune racine."
                 ),
                 journal=journal,
@@ -2599,7 +2599,7 @@ class LocalExecutor(TaskExecutor):
         commits = await asyncio.to_thread(sujets_de_la_branche, projet, diff.branche)
         changement = (
             f"fusionne dans `{diff.base}` la branche `{diff.branche}`, le travail de la "
-            f"tâche « {task.titre} » ({diff.fichiers} fichier(s), +{diff.ajouts} / "
+            f"tâche « {task.title} » ({diff.fichiers} fichier(s), +{diff.ajouts} / "
             f"−{diff.suppressions})"
         )
         with collect_usage() as recolte:
@@ -2695,7 +2695,7 @@ class LocalExecutor(TaskExecutor):
             task,
             agent=result.agent,
             role=result.role,
-            nom=f"Accord d'écriture dans le projet — {task.titre}",
+            nom=f"Accord d'écriture dans le projet — {task.title}",
             raison=demande.raison,
             approuve=approuve,
             detail=detail,
@@ -2747,7 +2747,7 @@ class LocalExecutor(TaskExecutor):
         noms = programmes_de_l_outillage(projet)
         if journal is None:
             return await asyncio.to_thread(constater, noms)
-        cle = (journal.run_id, task.projet_id or "")
+        cle = (journal.run_id, task.project_id or "")
         connue = self._machines.get(cle)
         if connue is not None:
             return connue
@@ -2811,7 +2811,7 @@ class LocalExecutor(TaskExecutor):
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_FUSION}",
-            nom=f"Projet — {task.titre}",
+            nom=f"Projet — {task.title}",
             agent=result.agent,
             role=result.role,
             statut=statut,
@@ -2819,7 +2819,7 @@ class LocalExecutor(TaskExecutor):
             sortie=detail,
             usage=usage if usage is not None else StepUsage(),
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
         return statut, detail
 
@@ -2894,7 +2894,7 @@ class LocalExecutor(TaskExecutor):
             return refus
         # Ce que la personne a demandé en refusant (#1185) rejoint ce que l'agent lit.
         description = avec_consignes(description, consignes)
-        suivi = suivi if suivi is not None else SuiviChecklist(task.etapes)
+        suivi = suivi if suivi is not None else SuiviChecklist(task.steps)
         blocages = blocages if blocages is not None else []
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
@@ -3009,7 +3009,7 @@ class LocalExecutor(TaskExecutor):
         while True:
             demande = DemandeValidation(
                 task_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 # Réorientée par les consignes déjà reçues (#1185) : ce qu'on soumet
                 # est ce que la tâche fera, pas ce qu'elle aurait fait.
                 description=avec_consignes(task.description, consignes),
@@ -3023,7 +3023,7 @@ class LocalExecutor(TaskExecutor):
                 # premier `tache.statut` de sa tâche, donc rien en aval ne peut
                 # recoller l'appartenance à sa place.
                 run_id=journal.run_id,
-                projet_id=task.projet_id,
+                projet_id=task.project_id,
                 # Qui a demandé (#582) : ici, nous — c'est la classification du
                 # moteur. Posée explicitement plutôt que laissée au défaut du champ :
                 # ce chemin-ci *est* celui qui donne son sens à `ORIGINE_POLITIQUE`.
@@ -3035,7 +3035,7 @@ class LocalExecutor(TaskExecutor):
                 task,
                 agent=agent.nom,
                 role=agent.role,
-                nom=f"Validation humaine — {task.titre}",
+                nom=f"Validation humaine — {task.title}",
                 raison=raison,
                 approuve=approuve,
                 detail=detail,
@@ -3087,7 +3087,7 @@ class LocalExecutor(TaskExecutor):
         async def arbitre(raison: str) -> tuple[bool, str]:
             demande = DemandeValidation(
                 task_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 description=task.description,
                 agent=agent.nom,
                 role=agent.role,
@@ -3098,7 +3098,7 @@ class LocalExecutor(TaskExecutor):
                 # texte voyage — le champ `origine` reste la source.
                 raison=f"arbitrage demandé par l'agent {agent.nom} : {raison}",
                 run_id=journal.run_id,
-                projet_id=task.projet_id,
+                projet_id=task.project_id,
                 origine=ORIGINE_AGENT,
             )
             approuve, detail = await self._guardrails.demande_validation(demande)
@@ -3106,7 +3106,7 @@ class LocalExecutor(TaskExecutor):
                 task,
                 agent=agent.nom,
                 role=agent.role,
-                nom=f"Arbitrage demandé par l'agent — {task.titre}",
+                nom=f"Arbitrage demandé par l'agent — {task.title}",
                 raison=demande.raison,
                 approuve=approuve,
                 detail=detail,
@@ -3175,7 +3175,7 @@ class LocalExecutor(TaskExecutor):
             # La livraison d'abord — si celle-ci lève, l'agent doit l'apprendre
             # (le fournisseur lui sert `courrier.CANAL_EN_ERREUR`) : c'est la seule
             # promesse de ce verbe, et la seule dont l'échec change quelque chose.
-            record_message(journal, mot, role=agent.role, project_id=task.projet_id)
+            record_message(journal, mot, role=agent.role, project_id=task.project_id)
             if self._mailbox is None:
                 return
             try:
@@ -3260,11 +3260,11 @@ class LocalExecutor(TaskExecutor):
                 # #720) : il pourrait sinon signer d'un autre nom, ou rattacher sa
                 # question à la tâche d'un tiers.
                 tache_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 agent=agent.nom,
                 role=agent.role,
                 run_id=journal.run_id,
-                projet_id=task.projet_id,
+                projet_id=task.project_id,
                 attente_s=attente_s,
             )
 
@@ -3331,7 +3331,7 @@ class LocalExecutor(TaskExecutor):
         repondue = reponse is not None
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_QUESTION}",
-            nom=f"Question de l'agent — {task.titre}",
+            nom=f"Question de l'agent — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut=(
@@ -3351,7 +3351,7 @@ class LocalExecutor(TaskExecutor):
             # Le projet (#222) est porté par **toutes** les étapes de la tâche,
             # annexes comprises : une étape qui ne le porterait pas disparaîtrait
             # des vues restreintes à ce projet.
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_validation(
@@ -3400,7 +3400,7 @@ class LocalExecutor(TaskExecutor):
             # Le projet (#222) est porté par **toutes** les étapes de la tâche,
             # annexes comprises : c'est un critère de filtre, et une étape qui ne
             # le porterait pas disparaîtrait des vues restreintes à ce projet.
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     async def _realise(  # noqa: C901
@@ -3544,10 +3544,10 @@ class LocalExecutor(TaskExecutor):
                 if sortie or fichiers:
                     return TaskResult(
                         task_id=task.id,
-                        titre=task.titre,
+                        titre=task.title,
                         agent=agent.nom,
                         role=agent.role,
-                        competences_requises=task.competences_requises,
+                        competences_requises=task.required_competencies,
                         score=score,
                         statut=STATUT_TERMINEE,
                         sortie=sortie,
@@ -3635,7 +3635,7 @@ class LocalExecutor(TaskExecutor):
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_DEBUT}",
-            nom=task.titre,
+            nom=task.title,
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_EN_COURS,
@@ -3647,7 +3647,7 @@ class LocalExecutor(TaskExecutor):
             ),
             usage=StepUsage(),
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             # Dès le démarrage (#246) : la carte s'ouvre pendant que la tâche
             # tourne, pas seulement une fois qu'elle est finie.
             description=task.description,
@@ -3693,14 +3693,14 @@ class LocalExecutor(TaskExecutor):
             geste += f" Jugé passager : {diagnostic}"
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_RELANCE}",
-            nom=f"Relance — {task.titre}",
+            nom=f"Relance — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut="relance",
             entree=_avec_stderr_cli(cause, stderr_cli),
             sortie=_avec_stderr_cli(geste, stderr_cli),
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_refus(
@@ -3766,9 +3766,9 @@ class LocalExecutor(TaskExecutor):
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_REFUS}",
             nom=(
-                f"Outil arbitré ({decideur or decision.decideur}) — {task.titre}"
+                f"Outil arbitré ({decideur or decision.decideur}) — {task.title}"
                 if arbitrage
-                else f"Outil refusé — {task.titre}"
+                else f"Outil refusé — {task.title}"
             ),
             agent=agent.nom,
             role=agent.role,
@@ -3776,7 +3776,7 @@ class LocalExecutor(TaskExecutor):
             entree=outil,
             sortie=raison,
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _arbitre_acte(
@@ -3896,20 +3896,20 @@ class LocalExecutor(TaskExecutor):
         async def arbitre(
             outil: str, arguments: dict[str, str], motif: str, decideur: Decideur
         ) -> tuple[bool, str]:
-            if task.acte_accorde and outil == OUTIL_EXECUTION:
+            if task.granted_act and outil == OUTIL_EXECUTION:
                 # L'accord est déjà donné : il n'y a personne à déranger, donc
                 # rien à composer, rien à mémoriser et rien à attendre. Le
                 # détail part quand même — c'est lui qui portera l'acte accordé
                 # jusqu'au journal.
-                return True, detail_accorde(task.acte_accorde)
+                return True, detail_accorde(task.granted_act)
             # Un oui étendu à l'outil (#1185) : relu à chaque appel, pour qu'un
             # accord retiré depuis les permissions de l'agent vaille dès le suivant.
-            etendu = self._accord_etendu(agent.nom, outil, task.projet_id, run_id)
+            etendu = self._accord_etendu(agent.nom, outil, task.project_id, run_id)
             if etendu is not None:
                 return True, etendu.detail()
             demande = DemandeValidation(
                 task_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 description=task.description,
                 agent=agent.nom,
                 role=agent.role,
@@ -3917,7 +3917,7 @@ class LocalExecutor(TaskExecutor):
                 # D'où vient la demande (#570) : sans run ni projet, elle sort du
                 # journal du run et de toutes les vues, qui sont cadrées dessus.
                 run_id=run_id,
-                projet_id=task.projet_id,
+                projet_id=task.project_id,
                 outil=outil,
                 arguments=arguments,
                 # Qui a demandé (#582) : nous. Un outil classé `ask` est une règle
@@ -3966,9 +3966,9 @@ class LocalExecutor(TaskExecutor):
         async def attendre(limite: LimiteUsageAtteinte) -> None:
             faits = LimiteDuRun(
                 run_id=journal.run_id,
-                projet_id=task.projet_id,
+                projet_id=task.project_id,
                 tache_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 reprise_a=limite.reprise_a,
                 detail=str(limite),
             )
@@ -4012,14 +4012,14 @@ class LocalExecutor(TaskExecutor):
             return
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_ACTIVITE}",
-            nom=task.titre,
+            nom=task.title,
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_ACTIVITE,
             entree="",
             sortie=texte,
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _releve_usage(
@@ -4050,13 +4050,13 @@ class LocalExecutor(TaskExecutor):
             usage = replace(usage, cost_usd=0.0)
         journal.releve(
             tache_id=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_USAGE,
             usage=usage,
             sortie=_resume_releve(usage),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_blocage_signale(
@@ -4102,14 +4102,14 @@ class LocalExecutor(TaskExecutor):
             retenus.append(raison.strip())
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_BLOCAGE}",
-            nom=f"Blocage signalé — {task.titre}",
+            nom=f"Blocage signalé — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_BLOCAGE_SIGNALE,
             entree="",
             sortie=raison,
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_role_manquant(
@@ -4140,14 +4140,14 @@ class LocalExecutor(TaskExecutor):
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_MANQUE}",
-            nom=f"Rôle manquant — {task.titre}",
+            nom=f"Rôle manquant — {task.title}",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
             statut=STATUT_ROLE_MANQUANT,
             entree="",
             sortie=manque.phrase(),
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_decision_autonome(
@@ -4195,7 +4195,7 @@ class LocalExecutor(TaskExecutor):
             return
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_DECISION}",
-            nom=f"Décision de l'agent — {task.titre}",
+            nom=f"Décision de l'agent — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut=STATUT_DECISION_AUTONOME,
@@ -4203,7 +4203,7 @@ class LocalExecutor(TaskExecutor):
             sortie=decision,
             description=raison,
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_processus(
@@ -4239,14 +4239,14 @@ class LocalExecutor(TaskExecutor):
             statut = STATUT_PROCESSUS_ARRETES
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_PROCESSUS}",
-            nom=f"Processus de la session — {task.titre}",
+            nom=f"Processus de la session — {task.title}",
             agent=agent.nom,
             role=agent.role,
             statut=statut,
             entree="",
             sortie=releve.phrase(),
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
 
     def _consigne_etapes(
@@ -4503,7 +4503,7 @@ class LocalExecutor(TaskExecutor):
                 try:
                     outcome = await runtime.execute(
                         description,
-                        format_sortie=task.format_sortie,
+                        format_sortie=task.output_format,
                         system_prompt=playbook.contenu if playbook is not None else None,
                         mcp_serveurs=serveurs_mcp,
                         environ=(
@@ -4603,7 +4603,7 @@ class LocalExecutor(TaskExecutor):
                         tache_id=task.id,
                         # Une tâche de tête d'un redécoupage (#1396) : sa branche part
                         # de celle de la tâche qu'elle remplace, pas de la base.
-                        reprend=task.reprend,
+                        reprend=task.resumes_from,
                         effort=agent.effort,
                         # La recette, puis la base (#1548) : une livraison qui tient
                         # mais que Git refuserait de fusionner revient à l'agent.
@@ -4628,7 +4628,7 @@ class LocalExecutor(TaskExecutor):
         # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
         # texte-seul — l'appel est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(agent.modele, agent.effort)
-        prompt = _build_task_prompt(description, task.format_sortie)
+        prompt = _build_task_prompt(description, task.output_format)
         a_la_limite = self._a_la_limite(task, agent, journal, deliberation.credit)
 
         async def livrer(message: str) -> str:
@@ -5167,10 +5167,10 @@ def _livree_non_verifiee(
     cause = exc.panne.cause if exc.panne is not None else exc
     return TaskResult(
         task_id=task.id,
-        titre=task.titre,
+        titre=task.title,
         agent=agent.nom,
         role=agent.role,
-        competences_requises=task.competences_requises,
+        competences_requises=task.required_competencies,
         score=score,
         statut=STATUT_ECHEC,
         sortie=exc.sortie.strip(),
@@ -5201,10 +5201,10 @@ def _echec(
     """
     return TaskResult(
         task_id=task.id,
-        titre=task.titre,
+        titre=task.title,
         agent=agent,
         role=role,
-        competences_requises=task.competences_requises,
+        competences_requises=task.required_competencies,
         score=score,
         statut=STATUT_ECHEC,
         sortie="",
@@ -5235,7 +5235,7 @@ def _build_task_description(
 
     Le **brief approuvé du run** (#1402) y suit la tâche quand le run en a un : son
     objectif, ce qui en est exclu, ses contraintes et ses critères d'acceptation
-    (`Brief.cadre`). Un agent ne voyait que sa tâche — et celui d'une tâche de
+    (`Brief.frame`). Un agent ne voyait que sa tâche — et celui d'une tâche de
     vérification « reconstituait » les critères du run faute de les avoir (p4, run
     `ad4d2ce8c3bf`). Il vient **après** la description et non avant : la première
     ligne reste le titre de la tâche, et c'est elle, le contrat sur lequel la
@@ -5243,18 +5243,18 @@ def _build_task_description(
     le message est celui d'avant, à la ligne près.
     """
     lignes = [
-        f"Tâche : {task.titre}",
+        f"Tâche : {task.title}",
         "",
         "Description :",
         task.description,
     ]
-    if task.etapes:
+    if task.steps:
         lignes += [
             "",
             "Étapes prévues au plan (proposition — ta liste de travail fait foi, "
             "reprends-les, corrige-les ou remplace-les selon ce que la tâche exige) :",
         ]
-        lignes += [f"- {etape}" for etape in task.etapes]
+        lignes += [f"- {etape}" for etape in task.steps]
     if brief is not None:
         lignes += [
             "",
@@ -5263,7 +5263,7 @@ def _build_task_description(
             "et c'est sur ses critères que ta livraison sera vérifiée ; ce qui est "
             "hors périmètre l'est aussi pour toi :",
             "",
-            brief.cadre(),
+            brief.frame(),
         ]
     if dependances:
         lignes += ["", "Résultats des tâches dont celle-ci dépend :"]

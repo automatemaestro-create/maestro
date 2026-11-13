@@ -12,3 +12,6 @@
 
 # #1651 — sources, telemetry (redact, langfuse, costs)
 c06fb2b8e04d2decb60a9db7179fa7ac5d70b44c
+
+# #1664 — telemetry usage
+65ecdd5e5c2c6cc476b4b3e2617e3c7af22c587e

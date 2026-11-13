@@ -553,7 +553,7 @@ def test_un_run_eteint_se_reprend_par_le_bouton_existant() -> None:
         # Le cadrage repart, et lui seul : la synthèse du brief approuvé, jamais
         # l'objectif brut « Fais-moi un CRM » qui referait payer la clarification.
         # `strip()` parce que le lancement normalise son objectif, ici comme partout.
-        assert nouveau["objectif"] == BRIEF.synthese().strip()
+        assert nouveau["objectif"] == BRIEF.summary().strip()
 
 
 def test_un_run_annule_a_la_main_reste_refuse() -> None:

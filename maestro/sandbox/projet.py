@@ -598,7 +598,7 @@ def espace_de_travail(
     versionné, **la racine elle-même** sinon (#839, `maestro.sandbox.en_place`).
 
     `reprend` (#1396) nomme la tâche dont celle-ci reprend le travail
-    (`Task.reprend`, posé aux tâches de tête d'un redécoupage) : sur un projet
+    (`Task.resumes_from`, posé aux tâches de tête d'un redécoupage) : sur un projet
     versionné, une branche **créée** ici part de celle de cette tâche, si elle
     existe, plutôt que de la base — ce qui est fait n'est pas refait. Il ne joue
     qu'à la création : une branche qui existe déjà se reprend telle quelle. Sans

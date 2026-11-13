@@ -10,7 +10,7 @@ deux moitiés ; les tests étaient différés au lot final
 
 Six volets, dans l'ordre où la donnée descend — du plan jusqu'à la carte servie :
 
-① **L'ossature au plan** (`Task.etapes`) — le plan dit *ce qu'il y a à faire*,
+① **L'ossature au plan** (`Task.steps`) — le plan dit *ce qu'il y a à faire*,
    jamais *où l'on en est*. La clé est **omise** de `to_dict` quand il n'y en a
    pas : un plan sans ossature doit rester sérialisable tel quel, comme pour
    `ticket` et `projet_id`.
@@ -107,10 +107,10 @@ def _tache(**kwargs) -> Task:
     """Une tâche routée sur `developpeur` par sa compétence — le chemin outillé."""
     champs: dict[str, object] = {
         "id": "api-crud",
-        "titre": "API CRUD",
+        "title": "API CRUD",
         "description": "Exposer les routes.",
-        "competences_requises": ("backend",),
-        "format_sortie": "Module d'API",
+        "required_competencies": ("backend",),
+        "output_format": "Module d'API",
     }
     champs.update(kwargs)
     return Task(**champs)  # type: ignore[arg-type]
@@ -235,17 +235,17 @@ def test_le_plan_transporte_l_ossature_et_l_omet_quand_il_n_y_en_a_pas():
     rester sérialisable et relisible tel quel.
     """
     avec = Task(
-        id="t1", titre="T", description="d", competences_requises=("backend",),
-        format_sortie="md", etapes=("Lister les entités", "Écrire la migration"),
+        id="t1", title="T", description="d", required_competencies=("backend",),
+        output_format="md", steps=("Lister les entités", "Écrire la migration"),
     )
     assert avec.to_dict()["etapes"] == ["Lister les entités", "Écrire la migration"]
-    assert Task.from_dict(avec.to_dict()).etapes == avec.etapes
+    assert Task.from_dict(avec.to_dict()).steps == avec.steps
 
     sans = Task(
-        id="t2", titre="T", description="d", competences_requises=(), format_sortie="md"
+        id="t2", title="T", description="d", required_competencies=(), output_format="md"
     )
     assert "etapes" not in sans.to_dict()
-    assert Task.from_dict(sans.to_dict()).etapes == ()
+    assert Task.from_dict(sans.to_dict()).steps == ()
 
 
 def test_l_ossature_ne_porte_jamais_d_avancement():
@@ -271,7 +271,7 @@ def test_l_ossature_est_donnee_a_l_agent_comme_une_proposition():
     annoncé disparaîtrait de l'écran au premier relevé — d'où la reprise dans la
     description, en toutes lettres et comme une proposition.
     """
-    entree = _build_task_description(_tache(etapes=("Lister les entités",)), [])
+    entree = _build_task_description(_tache(steps=("Lister les entités",)), [])
 
     assert "Lister les entités" in entree
     assert "proposition" in entree
@@ -769,7 +769,7 @@ def test_l_ossature_part_avant_que_l_agent_n_ait_rien_dit():
     qui avance.
     """
     provider = FournisseurChecklist()
-    journal = _joue(_executeur(provider), _tache(etapes=("Lire l'existant", "Écrire le code")))
+    journal = _joue(_executeur(provider), _tache(steps=("Lire l'existant", "Écrire le code")))
 
     assert _details(journal)[0] == [
         ("Lire l'existant", ETAPE_A_FAIRE),
@@ -794,7 +794,7 @@ def test_le_releve_de_l_agent_supplante_l_ossature_et_se_consigne():
         [[_releve(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS))]]
     )
 
-    journal = _joue(_executeur(provider), _tache(etapes=("Étape annoncée",)))
+    journal = _joue(_executeur(provider), _tache(steps=("Étape annoncée",)))
 
     assert _details(journal) == [
         [("Étape annoncée", ETAPE_A_FAIRE)],
@@ -838,7 +838,7 @@ def test_le_repli_texte_garde_l_ossature_sans_jamais_la_cocher():
     """
     provider = FournisseurChecklist()
     journal = _joue(
-        _executeur(provider, outille=False), _tache(etapes=("Lire l'existant",))
+        _executeur(provider, outille=False), _tache(steps=("Lire l'existant",))
     )
 
     assert provider.generate_calls  # le chemin texte a bien été pris
@@ -876,7 +876,7 @@ def test_un_fournisseur_sans_outils_dit_qu_il_ne_pouvait_rien_cocher():
     provider = FournisseurSansOutils()
 
     journal = _joue(
-        _executeur(provider), _tache(etapes=("Lire l'existant", "Écrire le code"))
+        _executeur(provider), _tache(steps=("Lire l'existant", "Écrire le code"))
     )
 
     assert provider.generate_calls  # le repli texte a bien été pris
@@ -915,7 +915,7 @@ def test_a_travers_une_relance_l_avancement_acquis_ne_recule_pas():
         provider, relance=PolitiqueRelance(max_tentatives=2, backoff_s=0.0)
     )
 
-    journal = _joue(executeur, _tache(etapes=("Étape annoncée",)))
+    journal = _joue(executeur, _tache(steps=("Étape annoncée",)))
 
     assert provider.tentatives == 2
     assert _details(journal)[-1] == [
@@ -932,7 +932,7 @@ def test_l_ossature_n_est_posee_qu_une_fois_malgre_la_relance():
         provider, relance=PolitiqueRelance(max_tentatives=2, backoff_s=0.0)
     )
 
-    journal = _joue(executeur, _tache(etapes=("Étape annoncée",)))
+    journal = _joue(executeur, _tache(steps=("Étape annoncée",)))
 
     assert provider.tentatives == 2
     assert _details(journal) == [[("Étape annoncée", ETAPE_A_FAIRE)]]
@@ -1047,7 +1047,7 @@ def test_une_tache_cochee_par_le_verbe_finit_a_n_sur_n_sans_ecart():
         ]
     )
 
-    journal = _joue(_executeur(provider), _tache(etapes=("Étape annoncée",)))
+    journal = _joue(_executeur(provider), _tache(steps=("Étape annoncée",)))
 
     assert _details(journal)[-1] == [
         ("Lire le schéma", ETAPE_FAITE),
@@ -1115,7 +1115,7 @@ def test_la_checklist_de_l_agent_ressort_sur_la_carte_servie_par_l_api():
             _entree_verbe(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS)),
         ]
     )
-    journal = _joue(_executeur(provider), _tache(etapes=("Étape annoncée",)))
+    journal = _joue(_executeur(provider), _tache(steps=("Étape annoncée",)))
     assert all(servi.startswith("Checklist relevée") for servi in provider.servis)
 
     log = InMemoryEventLog()

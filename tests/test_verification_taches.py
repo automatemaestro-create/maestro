@@ -1098,10 +1098,10 @@ class _Reponses(ModelProvider):
 
 _TACHE = Task(
     id="t",
-    titre="Servir l'API",
+    title="Servir l'API",
     description="Critères de réussite : le serveur démarre ; les tests passent.",
-    competences_requises=("backend",),
-    format_sortie="Un module",
+    required_competencies=("backend",),
+    output_format="Un module",
 )
 
 

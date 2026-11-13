@@ -39,11 +39,11 @@ from maestro.router.classifier import _parse_classification
 def _task(**overrides) -> Task:
     data = {
         "id": "t",
-        "titre": "Une tâche",
+        "title": "Une tâche",
         "description": "Description.",
-        "competences_requises": ("sql", "migration"),
-        "format_sortie": "Un livrable",
-        "dependances": (),
+        "required_competencies": ("sql", "migration"),
+        "output_format": "Un livrable",
+        "dependencies": (),
     }
     data.update(overrides)
     return Task(**data)
@@ -87,22 +87,23 @@ def _router(provider: ModelProvider | None = None, **kwargs) -> Router:
 
 
 def test_assign_picks_the_best_overlap():
-    result = assign(_task(competences_requises=("sql", "migration")), GABARITS_DU_CODE)
+    result = assign(_task(required_competencies=("sql", "migration")), GABARITS_DU_CODE)
     assert result.agent.nom == "bdd"
     assert result.score == 2
 
 
 def test_assign_routes_each_domain_to_its_agent():
-    assert assign(_task(competences_requises=("ui",)), GABARITS_DU_CODE).agent.nom == "designer"
-    assert assign(_task(competences_requises=("tests",)), GABARITS_DU_CODE).agent.nom == "qa"
-    assert assign(_task(competences_requises=("deploy",)), GABARITS_DU_CODE).agent.nom == "devops"
-    assert assign(_task(competences_requises=("api",)), GABARITS_DU_CODE).agent.nom == "developpeur"
+    assert assign(_task(required_competencies=("ui",)), GABARITS_DU_CODE).agent.nom == "designer"
+    assert assign(_task(required_competencies=("tests",)), GABARITS_DU_CODE).agent.nom == "qa"
+    assert assign(_task(required_competencies=("deploy",)), GABARITS_DU_CODE).agent.nom == "devops"
+    developer = assign(_task(required_competencies=("api",)), GABARITS_DU_CODE)
+    assert developer.agent.nom == "developpeur"
 
 
 def test_assign_without_a_competent_agent_raises_routing_error():
     # 'planning' is a competency of the orchestrator, which no executing agent has.
     with pytest.raises(RoutingError):
-        assign(_task(competences_requises=("planning",)), GABARITS_DU_CODE)
+        assign(_task(required_competencies=("planning",)), GABARITS_DU_CODE)
 
 
 def test_assign_without_agents_raises_value_error():
@@ -113,7 +114,7 @@ def test_assign_without_agents_raises_value_error():
 def test_tie_broken_by_catalog_order():
     a = Agent(nom="a", role="A", competences=frozenset({"x"}), modele="m", prompt_systeme="p")
     b = Agent(nom="b", role="B", competences=frozenset({"x"}), modele="m", prompt_systeme="p")
-    task = _task(competences_requises=("x",))
+    task = _task(required_competencies=("x",))
     assert assign(task, [a, b]).agent.nom == "a"
     assert assign(task, [b, a]).agent.nom == "b"
 
@@ -156,7 +157,7 @@ def test_parse_clamps_the_confidence():
 def test_route_clear_case_assigns_without_calling_the_classifier():
     provider = ScriptedProvider()
     decision = asyncio.run(
-        _router(provider).route(_task(competences_requises=("sql", "migration")))
+        _router(provider).route(_task(required_competencies=("sql", "migration")))
     )
     assert decision.agent is not None and decision.agent.nom == "bdd"
     assert decision.method == METHOD_COMPETENCIES
@@ -167,9 +168,9 @@ def test_route_clear_case_assigns_without_calling_the_classifier():
 def test_route_tie_broken_by_the_classifier_among_the_tied_candidates_only():
     provider = ScriptedProvider('{"agent": "devops", "confiance": 0.9}')
     task = _task(
-        titre="Déployer le schéma en staging",
+        title="Déployer le schéma en staging",
         description="Déployer le schéma de base sur l'environnement de staging.",
-        competences_requises=("deploy", "schema"),  # devops / bdd tie
+        required_competencies=("deploy", "schema"),  # devops / bdd tie
     )
     decision = asyncio.run(_router(provider).route(task))
 
@@ -186,9 +187,9 @@ def test_route_tie_broken_by_the_classifier_among_the_tied_candidates_only():
 def test_route_without_overlap_asks_about_the_whole_catalog():
     provider = ScriptedProvider('{"agent": "designer", "confiance": 0.8}')
     task = _task(
-        titre="Audit d'accessibilité",
+        title="Audit d'accessibilité",
         description="Vérifier contrastes et navigation clavier des écrans.",
-        competences_requises=("accessibilite",),  # no agent declares it
+        required_competencies=("accessibilite",),  # no agent declares it
     )
     decision = asyncio.run(_router(provider).route(task))
 
@@ -200,7 +201,7 @@ def test_route_without_overlap_asks_about_the_whole_catalog():
 
 def test_route_low_confidence_marks_needs_assignment():
     provider = ScriptedProvider('{"agent": "devops", "confiance": 0.3}')
-    task = _task(competences_requises=("deploy", "schema"))
+    task = _task(required_competencies=("deploy", "schema"))
     decision = asyncio.run(_router(provider).route(task))
 
     assert decision.needs_assignment
@@ -211,21 +212,21 @@ def test_route_low_confidence_marks_needs_assignment():
 
 def test_route_unreadable_answer_marks_needs_assignment():
     provider = ScriptedProvider("aucune idée")
-    decision = asyncio.run(_router(provider).route(_task(competences_requises=("inconnu",))))
+    decision = asyncio.run(_router(provider).route(_task(required_competencies=("inconnu",))))
     assert decision.needs_assignment
     assert "à assigner" in decision.reason
 
 
 def test_route_without_classifier_does_not_route_at_random():
     # Ambiguous and no classifier: explicit fallback, no arbitrary assignment.
-    decision = asyncio.run(_router().route(_task(competences_requises=("deploy", "schema"))))
+    decision = asyncio.run(_router().route(_task(required_competencies=("deploy", "schema"))))
     assert decision.needs_assignment
     assert decision.method == METHOD_FALLBACK
 
 
 def test_route_failing_classifier_marks_needs_assignment_without_raising():
     decision = asyncio.run(
-        _router(BrokenProvider()).route(_task(competences_requises=("inconnu",)))
+        _router(BrokenProvider()).route(_task(required_competencies=("inconnu",)))
     )
     assert decision.needs_assignment
     assert "indisponible" in decision.reason
@@ -346,7 +347,7 @@ def test_without_the_decision_a_task_no_one_covers_stays_to_be_assigned():
     provider = ScriptedProvider('{"agent": null, "confiance": 0.1}')
     router = Router(_team_without_designer(), classifier=TaskClassifier(provider))
 
-    decision = asyncio.run(router.route(_task(competences_requises=("ui",))))
+    decision = asyncio.run(router.route(_task(required_competencies=("ui",))))
 
     assert decision.needs_assignment
     assert decision.method == METHOD_FALLBACK
@@ -360,7 +361,7 @@ def test_closest_asks_the_question_that_admits_no_abstention():
     router = Router(_team_without_designer(), classifier=TaskClassifier(provider))
 
     decision = asyncio.run(
-        router.route(_task(competences_requises=("ui",)), closest=True)
+        router.route(_task(required_competencies=("ui",)), closest=True)
     )
 
     assert decision.agent is not None and decision.agent.nom == "redaction"
@@ -376,7 +377,7 @@ def test_closest_with_a_single_candidate_asks_the_model_nothing():
     router = Router(_team_without_designer()[:1], classifier=TaskClassifier(provider))
 
     decision = asyncio.run(
-        router.route(_task(competences_requises=("ui",)), closest=True)
+        router.route(_task(required_competencies=("ui",)), closest=True)
     )
 
     assert decision.agent is not None and decision.agent.nom == "dev"
@@ -403,7 +404,7 @@ def test_closest_without_designation_the_order_breaks_the_tie_and_says_so(provid
     )
 
     decision = asyncio.run(
-        router.route(_task(competences_requises=("ui",)), closest=True)
+        router.route(_task(required_competencies=("ui",)), closest=True)
     )
 
     assert decision.agent is not None and decision.agent.nom == "dev"
@@ -416,7 +417,7 @@ def test_closest_leaves_a_covered_competency_to_the_competency_rule():
     router = Router(_team_without_designer(), classifier=TaskClassifier(provider))
 
     decision = asyncio.run(
-        router.route(_task(competences_requises=("documentation",)), closest=True)
+        router.route(_task(required_competencies=("documentation",)), closest=True)
     )
 
     assert decision.agent is not None and decision.agent.nom == "redaction"
@@ -448,7 +449,7 @@ def test_the_recruited_role_takes_the_task_that_required_its_trade():
     """Run `2f7aae8437f4`: a `ui` + `frontend` + `api` task, of which the developer
     covers two and the recruited designer one. Without `recruited` the developer
     wins; with it, the role recruited for this plan takes it, as the chat promised."""
-    task = _task(competences_requises=("ui", "frontend", "api"))
+    task = _task(required_competencies=("ui", "frontend", "api"))
     router = Router(_completed_team())
 
     without_recruited = asyncio.run(router.route(task))
@@ -460,7 +461,7 @@ def test_the_recruited_role_takes_the_task_that_required_its_trade():
 
 
 def test_recruited_competencies_leave_alone_a_task_that_does_not_require_them():
-    task = _task(competences_requises=("backend",))
+    task = _task(required_competencies=("backend",))
 
     decision = asyncio.run(Router(_completed_team()).route(task, recruited={"ui"}))
 
@@ -471,7 +472,7 @@ def test_a_disabled_recruited_role_hands_back_to_the_ordinary_rule():
     """No one covers the recruited trade any more: the ordinary rule resumes,
     without routing to a disabled agent nor falling back on a task the developer
     can take."""
-    task = _task(competences_requises=("ui", "frontend"))
+    task = _task(required_competencies=("ui", "frontend"))
 
     decision = asyncio.run(
         Router(_completed_team()).route(task, excluded={"interface"}, recruited={"ui"})
@@ -486,7 +487,7 @@ def test_closest_makes_up_no_one_when_all_are_disabled():
 
     decision = asyncio.run(
         router.route(
-            _task(competences_requises=("ui",)),
+            _task(required_competencies=("ui",)),
             excluded={"dev", "redaction"},
             closest=True,
         )

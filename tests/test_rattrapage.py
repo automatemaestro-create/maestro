@@ -44,13 +44,13 @@ from maestro.engine.rattrapage import (
     SUFFIXE_ETAPE_RATTRAPAGE,
     PolitiqueRattrapage,
 )
-from maestro.orchestrator import Orchestrator, RattrapageValidationError, Task
-from maestro.orchestrator.prompt import build_rattrapage_user_prompt, prompt_rattrapage
-from maestro.orchestrator.rattrapage import (
-    EchecDeTache,
-    Tentative,
-    taches_redecoupees,
-    valide_rattrapage,
+from maestro.orchestrator import Orchestrator, RecoveryValidationError, Task
+from maestro.orchestrator.prompt import build_recovery_user_prompt, recovery_prompt
+from maestro.orchestrator.recovery import (
+    Attempt,
+    TaskFailure,
+    resplit_tasks,
+    validate_recovery,
 )
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
@@ -729,37 +729,37 @@ def test_un_diagnostic_illisible_devient_une_question_plutot_qu_une_relance_aveu
 # --- Le contrat du Chef de projet ----------------------------------------------------------
 
 
-def _echec(**kwargs) -> EchecDeTache:
+def _echec(**kwargs) -> TaskFailure:
     tache = Task.from_dict(_tache("t1", "Réaliser le module par APPROCHE-A."))
-    return EchecDeTache(
-        tache=tache,
-        tentatives=(
-            Tentative(taches=(tache,), agent="developpeur", role="Développeur", erreur="403"),
+    return TaskFailure(
+        task=tache,
+        attempts=(
+            Attempt(tasks=(tache,), agent="developpeur", role="Développeur", error="403"),
         ),
-        aval=(Task.from_dict(_tache("t2", "Documenter.", dependances=("t1",))),),
+        downstream=(Task.from_dict(_tache("t2", "Documenter.", dependances=("t1",))),),
         **kwargs,
     )
 
 
 def test_un_echec_non_passager_ne_se_rejoue_pas():
-    with pytest.raises(RattrapageValidationError, match="ne se rejoue pas"):
-        valide_rattrapage(
+    with pytest.raises(RecoveryValidationError, match="ne se rejoue pas"):
+        validate_recovery(
             {"nature": "configuration", "diagnostic": "403", "geste": "rejouer"}, _echec()
         )
 
 
 def test_abandonner_n_appartient_qu_a_l_utilisateur():
     verdict = {"nature": "approche", "diagnostic": "…", "geste": "abandonner"}
-    with pytest.raises(RattrapageValidationError, match="utilisateur"):
-        valide_rattrapage(verdict, _echec())
-    assert valide_rattrapage(verdict, _echec(reponse="abandonnez")).geste == "abandonner"
+    with pytest.raises(RecoveryValidationError, match="utilisateur"):
+        validate_recovery(verdict, _echec())
+    assert validate_recovery(verdict, _echec(answer="abandonnez")).action == "abandonner"
 
 
 def test_un_rattrapage_n_ajoute_aucun_acte_accorde():
     tache = _tache("t1", "Autre approche.")
     tache["acte_accorde"] = "supprimer tout le contenu du dossier"
-    with pytest.raises(RattrapageValidationError, match="acte accordé"):
-        valide_rattrapage(_retenter(tache), _echec())
+    with pytest.raises(RecoveryValidationError, match="acte accordé"):
+        validate_recovery(_retenter(tache), _echec())
 
 
 def test_un_redecoupage_se_valide_comme_un_plan():
@@ -767,23 +767,23 @@ def test_un_redecoupage_se_valide_comme_un_plan():
         _tache("a", "A", dependances=("b",)),
         _tache("b", "B", dependances=("a",)),
     )
-    with pytest.raises(RattrapageValidationError, match="Cycle"):
-        valide_rattrapage(cycle, _echec())
+    with pytest.raises(RecoveryValidationError, match="Cycle"):
+        validate_recovery(cycle, _echec())
 
 
 def test_un_ajustement_ne_vise_que_l_aval():
-    with pytest.raises(RattrapageValidationError, match="n'attend pas"):
-        valide_rattrapage(
+    with pytest.raises(RecoveryValidationError, match="n'attend pas"):
+        validate_recovery(
             _retenter(_tache("t1", "Autre."), aval=[{"id": "t9", "description": "x"}]),
             _echec(),
         )
 
 
 def test_le_prompt_de_rattrapage_porte_l_equipe_et_la_reponse():
-    systeme = prompt_rattrapage()
+    systeme = recovery_prompt()
     assert systeme.startswith(_ENTETE_RATTRAPAGE)
     assert "{{" not in systeme
-    prompt = build_rattrapage_user_prompt(_echec(question="Accès ?", reponse="Accordé."))
+    prompt = build_recovery_user_prompt(_echec(question="Accès ?", answer="Accordé."))
     assert prompt.rstrip().endswith("Accordé.")
     assert "Accès ?" in prompt
 
@@ -791,11 +791,11 @@ def test_le_prompt_de_rattrapage_porte_l_equipe_et_la_reponse():
 def test_une_erreur_demesuree_est_bornee_par_la_fin():
     tache = Task.from_dict(_tache("t1", "X"))
     erreur = "PREMIERE-LIGNE " + "x" * 20_000 + " CAUSE FINALE"
-    echec = EchecDeTache(
-        tache=tache,
-        tentatives=(Tentative(taches=(tache,), agent="a", role="r", erreur=erreur),),
+    echec = TaskFailure(
+        task=tache,
+        attempts=(Attempt(tasks=(tache,), agent="a", role="r", error=erreur),),
     )
-    prompt = build_rattrapage_user_prompt(echec)
+    prompt = build_recovery_user_prompt(echec)
     assert "CAUSE FINALE" in prompt and "PREMIERE-LIGNE" not in prompt
     assert len(prompt) < 10_000
 
@@ -808,20 +808,20 @@ def test_le_prompt_dit_qu_une_livraison_faite_n_est_pas_un_travail_rate():
     redécoupage. Le fait est un champ : il n'a rien à reconnaître.
     """
     tache = Task.from_dict(_tache("t1", "X"))
-    livree = Tentative(
-        taches=(tache,),
+    livree = Attempt(
+        tasks=(tache,),
         agent="dev",
         role="Développeur",
-        erreur="livrée, vérification en panne — Prompt is too long",
-        verification_en_panne=True,
+        error="livrée, vérification en panne — Prompt is too long",
+        verification_outage=True,
     )
-    ratee = Tentative(taches=(tache,), agent="dev", role="Développeur", erreur="403")
+    ratee = Attempt(tasks=(tache,), agent="dev", role="Développeur", error="403")
 
-    assert "c'est sa vérification qui n'a pas abouti" in build_rattrapage_user_prompt(
-        EchecDeTache(tache=tache, tentatives=(livree,))
+    assert "c'est sa vérification qui n'a pas abouti" in build_recovery_user_prompt(
+        TaskFailure(task=tache, attempts=(livree,))
     )
-    assert "c'est sa vérification qui n'a pas abouti" not in build_rattrapage_user_prompt(
-        EchecDeTache(tache=tache, tentatives=(ratee,))
+    assert "c'est sa vérification qui n'a pas abouti" not in build_recovery_user_prompt(
+        TaskFailure(task=tache, attempts=(ratee,))
     )
 
 
@@ -837,10 +837,10 @@ def test_un_redecoupage_reprend_le_travail_de_la_tache_qu_il_remplace():
         Task.from_dict(_tache("contrat", "Écrire le contrat.", dependances=("init",))),
     )
 
-    init, contrat = taches_redecoupees(tache, sous, 1)
+    init, contrat = resplit_tasks(tache, sous, 1)
 
-    assert (init.id, init.reprend) == ("socle-r1-init", "socle")
-    assert (contrat.id, contrat.reprend, contrat.dependances) == (
+    assert (init.id, init.resumes_from) == ("socle-r1-init", "socle")
+    assert (contrat.id, contrat.resumes_from, contrat.dependencies) == (
         "socle-r1-contrat",
         "",
         ("socle-r1-init",),

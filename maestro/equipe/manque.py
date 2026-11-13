@@ -90,12 +90,12 @@ class TacheDuPlan(Protocol):
     """
 
     @property
-    def titre(self) -> str:
+    def title(self) -> str:
         """L'intitulé, tel qu'il sera nommé à qui décide du recrutement."""
         ...  # pragma: no cover - protocole
 
     @property
-    def competences_requises(self) -> tuple[str, ...]:
+    def required_competencies(self) -> tuple[str, ...]:
         """Les tags que la tâche demande, tels que la décomposition les a écrits."""
         ...  # pragma: no cover - protocole
 
@@ -187,7 +187,7 @@ def manque_au_plan(
     """
     if not equipe or not taches:
         return None
-    demandees = {tag for tache in taches for tag in tache.competences_requises}
+    demandees = {tag for tache in taches for tag in tache.required_competencies}
     non_couvertes = competences_non_couvertes(demandees, equipe)
     manque = role_manquant(non_couvertes)
     if manque is None:
@@ -196,9 +196,9 @@ def manque_au_plan(
     return ManqueAuPlan(
         manque=manque,
         taches=tuple(
-            tache.titre
+            tache.title
             for tache in taches
-            if vises & frozenset(tache.competences_requises)
+            if vises & frozenset(tache.required_competencies)
         ),
     )
 

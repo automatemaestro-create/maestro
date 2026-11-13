@@ -1,23 +1,21 @@
-"""Tests de l'orchestrateur : objectif → liste de tâches JSON (ticket #3).
+"""Tests of the orchestrator: goal → list of JSON tasks (#3).
 
-Aucun appel réseau : l'orchestrateur est exercé avec un `ModelProvider` factice
-qui renvoie une réponse canned. Couvre les deux critères d'acceptation :
-① un objectif produit un plan de tâches JSON valides et bien formées ;
-② le schéma de tâche est documenté et validé (validation contre la JSON Schema
-partagée + règles inter-tâches).
+No network call: the orchestrator runs against a fake `ModelProvider` that returns a
+canned answer. The suite proves that:
 
-Et, depuis #1149 ([docs/40 §4](../docs/40-decision-rythme-et-scenarios-de-reference.md)),
-③ le **document** du Chef de projet distingue les deux natures d'objectif —
-construire, ou agir. C'est un prompt système, donc ce qui se teste est ce qu'il
-**dit**, jamais le plan qu'un modèle en tirerait : la fourchette n'est plus un
-plancher, une action se planifie en une tâche qui agit, et l'acte que l'objectif
-nomme ne se refait pas valider. Les phrases attendues sont courtes et prises au
-texte normalisé — reformuler reste possible, retirer la règle doit se voir.
-
-Et, depuis #1531 ([docs/50 §§ 2 et 4.1](../docs/50-ecart-face-a-un-agent-seul.md)),
-④ il découpe en **capacités à la taille d'une session**, tests compris, sans
-fourchette de tâches : ni tâche de tests seuls, ni tâche amont sans livrable
-propre, ni une tâche par élément quand les éléments tiennent ensemble.
+① a goal yields a plan of valid, well-formed JSON tasks;
+② the task schema is documented and enforced (validation against the shared JSON Schema,
+plus the cross-task rules);
+③ the orchestrator's **document** tells the two kinds of goal apart — build, or act
+(#1149, [docs/40 §4](../docs/40-decision-rythme-et-scenarios-de-reference.md)). It is a
+system prompt, so what is tested is what it **says**, never the plan a model would draw
+from it: there is no floor on the number of tasks, an action is planned as one task that
+acts, and the act the goal names is not approved again. The expected sentences are short
+and taken from the normalised text — rewording stays possible, removing the rule shows;
+④ it splits a goal into **capabilities the size of a session**, tests included, with no
+task-count range: no tests-only task, no upstream task without a deliverable of its own,
+no task per element when the elements hold together (#1531,
+[docs/50 §§ 2 and 4.1](../docs/50-ecart-face-a-un-agent-seul.md)).
 """
 
 import asyncio
@@ -35,18 +33,18 @@ from maestro.orchestrator import (
     Task,
     TaskValidationError,
     load_task_schema,
-    prompt_orchestrateur,
+    orchestrator_prompt,
     validate_plan,
     validate_task,
 )
 from maestro.orchestrator.orchestrator import _extract_task_array
 from maestro.providers.base import ModelProvider
 
-# --- Provider factice (pas de réseau) -------------------------------------------------
+# --- Fake provider (no network) -------------------------------------------------------
 
 
 class FakeProvider(ModelProvider):
-    """Renvoie une réponse préprogrammée et enregistre les arguments d'appel."""
+    """Returns a preprogrammed answer and records the call arguments."""
 
     name = "fake"
 
@@ -101,11 +99,10 @@ def _canned_plan_json():
 
 
 def _canned_action_plan_json():
-    """Le plan d'un objectif d'**action** : une tâche, qui agit (#1149).
+    """The plan of an **action** goal: one task, which acts (#1149).
 
-    Ce que le run `8a15f78f45d3` aurait dû rendre le 2026-09-21 — là où il a
-    rendu « implémenter un utilitaire de vidage », « le tester », « faire valider
-    et exécuter ». Le `format_sortie` est un **état constaté**, pas un fichier.
+    What run `8a15f78f45d3` should have returned, where it planned a draining utility,
+    its tests and its approval. The `format_sortie` is an **observed state**, not a file.
     """
     return json.dumps(
         [
@@ -128,7 +125,7 @@ def _canned_action_plan_json():
     )
 
 
-# --- Critère ① : un objectif produit un plan de tâches valides ------------------------
+# --- Criterion ①: a goal yields a plan of valid tasks ---------------------------------
 
 
 def test_plan_produces_tasks():
@@ -139,14 +136,13 @@ def test_plan_produces_tasks():
 
     assert all(isinstance(t, Task) for t in tasks)
     assert [t.id for t in tasks] == ["migration-taches", "api-taches", "tests-api"]
-    # Les dépendances déclarées sont bien résolues dans le plan.
-    assert tasks[1].dependances == ("migration-taches",)
+    # The declared dependencies are resolved in the plan.
+    assert tasks[1].dependencies == ("migration-taches",)
 
 
-def test_une_action_rend_un_plan_d_une_seule_tache():
-    """#1149 : `MIN_TASKS` n'a jamais été une borne de validation, et ne le devient
-    pas. Un plan d'**une** tâche traverse l'orchestrateur entier — extraction,
-    schéma partagé, invariants inter-tâches — sans que rien n'exige un compte."""
+def test_an_action_yields_a_single_task_plan():
+    """A one-task plan goes through the whole orchestrator — extraction, shared schema,
+    cross-task invariants — and nothing requires a minimum count (#1149)."""
     provider = FakeProvider(_canned_action_plan_json())
     orchestrator = Orchestrator(provider, model="claude-opus-4-8")
 
@@ -154,9 +150,9 @@ def test_une_action_rend_un_plan_d_une_seule_tache():
 
     assert len(tasks) == 1
     assert tasks[0].id == "vider-la-racine"
-    assert tasks[0].dependances == ()
-    # Le livrable d'une action est un état, pas un fichier à produire.
-    assert "vide" in tasks[0].format_sortie.lower()
+    assert tasks[0].dependencies == ()
+    # The deliverable of an action is a state, not a file to produce.
+    assert "vide" in tasks[0].output_format.lower()
 
 
 def test_plan_forwards_system_prompt_and_model():
@@ -171,32 +167,32 @@ def test_plan_forwards_system_prompt_and_model():
     assert "Un objectif" in call["prompt"]
 
 
-def test_plan_rejects_empty_objective():
+def test_plan_rejects_empty_goal():
     provider = FakeProvider(_canned_plan_json())
     orchestrator = Orchestrator(provider, model="claude-opus-4-8")
     with pytest.raises(ValueError):
         asyncio.run(orchestrator.plan("   "))
 
 
-# --- Critère ② : le schéma est valide, documenté et applique la validation ------------
+# --- Criterion ②: the schema is valid, documented and enforces validation -------------
 
 
 def test_shared_schema_is_a_valid_json_schema():
-    # Le fichier partagé packages/shared/schemas/task.schema.json est une JSON Schema
-    # draft 2020-12 bien formée.
+    # The shared file packages/shared/schemas/task.schema.json is a well-formed
+    # draft 2020-12 JSON Schema.
     Draft202012Validator.check_schema(load_task_schema())
 
 
 def test_validate_task_accepts_well_formed_task():
-    validate_task(_valid_task())  # ne lève pas
+    validate_task(_valid_task())  # does not raise
 
 
 @pytest.mark.parametrize(
     "mutation",
     [
-        {"titre": ""},  # champ vide
-        {"competences_requises": []},  # tableau requis non vide
-        {"id": "Bad_ID"},  # slug invalide (majuscule + underscore)
+        {"titre": ""},  # empty field
+        {"competences_requises": []},  # required array must not be empty
+        {"id": "Bad_ID"},  # invalid slug (uppercase + underscore)
     ],
 )
 def test_validate_task_rejects_malformed(mutation):
@@ -254,25 +250,26 @@ def test_task_dict_roundtrip():
     assert again == task
 
 
-def test_la_tache_reprise_voyage_jusqu_au_worker_et_ne_vient_jamais_d_un_plan():
-    """`reprend` (#1396) traverse la file comme le reste de la tâche, schéma compris.
+def test_the_resumed_task_travels_to_the_worker_and_never_comes_from_a_plan():
+    """`resumes_from` (wire key `reprend`, #1396) travels through the queue like the rest
+    of the task, schema included.
 
-    Le worker revalide la tâche contre le schéma partagé avant de l'exécuter : un
-    champ que le schéma ignorerait y serait refusé, et le redécoupage repartirait
-    de la base. Mais c'est le moteur seul qui le pose — un plan qui l'écrirait ne
-    ferait pas partir une tâche de la branche d'une autre.
+    The worker revalidates the task against the shared schema before running it: a field
+    the schema ignored would be refused there, and the resplit would start again from the
+    base. But only the engine sets it — a plan that wrote it would not make a task start
+    from another task's branch.
     """
-    reprise = replace(Task.from_dict(_valid_task()), reprend="socle")
-    brut = json.loads(json.dumps(reprise.to_dict()))
+    resumed = replace(Task.from_dict(_valid_task()), resumes_from="socle")
+    raw = json.loads(json.dumps(resumed.to_dict()))
 
-    validate_task(brut)
-    assert Task.from_dict(brut).reprend == "socle"
+    validate_task(raw)
+    assert Task.from_dict(raw).resumes_from == "socle"
     assert "reprend" not in Task.from_dict(_valid_task()).to_dict()
-    (planifiee,) = validate_plan([brut])
-    assert planifiee.reprend == ""
+    (planned,) = validate_plan([raw])
+    assert planned.resumes_from == ""
 
 
-# --- Extraction JSON tolérante --------------------------------------------------------
+# --- Tolerant JSON extraction ---------------------------------------------------------
 
 
 def test_extract_direct_array():
@@ -313,227 +310,220 @@ def test_extract_rejects_array_of_non_objects():
         _extract_task_array("[1, 2, 3]")
 
 
-# --- Critère ③ : le playbook distingue construire et agir (#1149) ---------------------
+# --- Criterion ③: the playbook tells building and acting apart (#1149) ----------------
 
-#: Un titre de section du document, quel que soit son niveau.
+#: A section title of the document, whatever its level.
 _SECTION = re.compile(r"^#{2,3} (.+)$", re.MULTILINE)
 
 
-def _normalise(texte: str) -> str:
-    """Le texte sans sa mise en forme Markdown ni ses retours à la ligne.
+def _normalise(text: str) -> str:
+    """The text without its Markdown formatting or its line breaks.
 
-    Même normalisation que `tests/test_playbooks_defaut.py` : le document est
-    enveloppé à ~95 colonnes et emphatise au fil du texte, si bien qu'une phrase
-    attendue traverse une fin de ligne et porte des `**` au milieu. Chercher la
-    phrase brute échouerait sur la mise en page, pas sur le fond.
+    Same normalisation as `tests/test_playbooks_defaut.py`: the document wraps at
+    ~95 columns and emphasises inline, so an expected sentence crosses a line end and
+    carries `**` in the middle. Searching for the raw sentence would fail on the layout,
+    not on the substance.
     """
-    sans_emphase = texte.replace("**", "").replace("`", "")
-    return " ".join(sans_emphase.split())
+    without_emphasis = text.replace("**", "").replace("`", "")
+    return " ".join(without_emphasis.split())
 
 
 def _playbook() -> str:
-    """Le playbook effectif du Chef de projet — marqueurs substitués, normalisé."""
+    """The orchestrator's effective playbook — placeholders substituted, normalised."""
     return _normalise(ORCHESTRATOR_SYSTEM_PROMPT)
 
 
-def test_le_playbook_nomme_les_deux_natures_d_objectif():
-    """La distinction est ce qui porte tout le reste : sans elle, « une action est
-    une tâche » ne serait qu'une exception de plus dans un document qui en a déjà."""
-    titres = [m.group(1).strip() for m in _SECTION.finditer(ORCHESTRATOR_SYSTEM_PROMPT)]
+def test_the_playbook_names_both_kinds_of_goal():
+    """The distinction carries everything else: without it, "an action is one task"
+    would be just one more exception in a document that already has some."""
+    titles = [m.group(1).strip() for m in _SECTION.finditer(ORCHESTRATOR_SYSTEM_PROMPT)]
 
-    assert any("construire, ou agir" in titre for titre in titres), titres
-    texte = _playbook()
-    # Les deux natures, et de quoi les reconnaitre sans lexique : ce qui doit
-    # exister, ou ce qui doit changer.
-    assert "Construire" in texte and "Agir" in texte
-    assert "vider un dossier" in texte
-    assert "renommer ou déplacer des fichiers" in texte
-    assert "lancer une commande" in texte
-
-
-def test_une_action_se_planifie_en_une_tache_qui_agit():
-    """Les trois tâches du run `8a15f78f45d3`, nommées et écartées une à une :
-    l'utilitaire, ses tests, sa validation. Une seule règle générale les couvrirait
-    mal — c'est chacune de ces trois-là que le plan a réellement produites."""
-    texte = _playbook()
-
-    assert "une seule tâche" in texte
-    assert "aucun utilitaire" in texte
-    assert "aucune tâche de tests" in texte
-    assert "aucune tâche de validation" in texte
-    assert "aucun plancher" in texte
+    assert any("construire, ou agir" in title for title in titles), titles
+    text = _playbook()
+    # Both kinds, and how to recognise them without a lexicon: what must exist, or
+    # what must change.
+    assert "Construire" in text and "Agir" in text
+    assert "vider un dossier" in text
+    assert "renommer ou déplacer des fichiers" in text
+    assert "lancer une commande" in text
 
 
-def test_aucune_fourchette_de_taches_n_est_visee():
-    """#1149 avait retiré le plancher du ticket #6 (`MIN_TASKS`, docs/06 §Phase 0) ;
-    #1531 retire la fourchette elle-même. « 3 à 5 tâches », même présentée comme un
-    signal à relire, tirait p5 — qui tient en une session — vers un compte que
-    l'objectif n'appelait pas (docs/50 § 2 : 9 tâches sur 4 niveaux). Ce qui se
-    relit est la taille de chaque tâche, et aucun marqueur de compte ne reste à
-    substituer."""
-    texte = _playbook()
-    brut = prompt_orchestrateur()
+def test_an_action_is_planned_as_one_task_that_acts():
+    """The three tasks of run `8a15f78f45d3` are named and ruled out one by one: the
+    utility, its tests, its approval. A single general rule would cover them poorly —
+    these three are the ones the plan actually produced."""
+    text = _playbook()
 
-    assert not re.search(r"\b\d+ à \d+ tâches\b", texte), "une fourchette est revenue"
-    assert "{{min_taches}}" not in brut and "{{max_taches}}" not in brut
-    assert "pas un plancher" in texte
-    assert "reste le plancher" not in texte
-    # Le nombre de tâches reste une conséquence, jamais un quota.
-    assert "jamais un quota à remplir" in texte
-    assert "Ce qui se relit est la taille de chaque tâche, jamais leur nombre" in texte
+    assert "une seule tâche" in text
+    assert "aucun utilitaire" in text
+    assert "aucune tâche de tests" in text
+    assert "aucune tâche de validation" in text
+    assert "aucun plancher" in text
 
 
-def test_le_nombre_de_taches_n_est_jamais_borne_par_le_code():
-    """La règle est un jugement du modèle (docs/41), jamais un quota : le plan de C2,
-    neuf tâches sur quatre niveaux, traverse la validation comme celui d'une tâche.
-    Ce que le playbook demande ne devient pas un refus de schéma."""
-    plan_c2 = [
-        _valid_task(id=identifiant, dependances=list(dependances))
-        for identifiant, dependances in _PLAN_C2
+def test_no_task_count_range_is_targeted():
+    """The playbook aims at no task-count range, and no count placeholder is left to
+    substitute (#1149, #1531). A range, even framed as a signal to reread, pulled p5 —
+    which fits in one session — towards a count the goal did not call for (docs/50 § 2:
+    9 tasks on 4 levels). What is reread is the size of each task."""
+    text = _playbook()
+    raw = orchestrator_prompt()
+
+    assert not re.search(r"\b\d+ à \d+ tâches\b", text), "une fourchette est revenue"
+    assert "{{min_taches}}" not in raw and "{{max_taches}}" not in raw
+    assert "pas un plancher" in text
+    assert "reste le plancher" not in text
+    # The number of tasks stays a consequence, never a quota.
+    assert "jamais un quota à remplir" in text
+    assert "Ce qui se relit est la taille de chaque tâche, jamais leur nombre" in text
+
+
+def test_the_number_of_tasks_is_never_bounded_by_the_code():
+    """The rule is the model's judgement (docs/41), never a quota: the C2 plan, nine tasks
+    on four levels, passes validation like a one-task plan. What the playbook asks never
+    becomes a schema refusal."""
+    c2_plan = [
+        _valid_task(id=task_id, dependances=list(dependencies))
+        for task_id, dependencies in _C2_PLAN
     ]
 
-    taches = validate_plan(plan_c2)
+    tasks = validate_plan(c2_plan)
 
-    assert len(taches) == _C2_TACHES
-    assert _niveaux(taches) == _C2_NIVEAUX
-
-
-def test_un_acte_nomme_par_l_objectif_ne_se_refait_pas_valider():
-    """L'accord donné au cadrage vaut décision humaine (docs/40 §4). La tâche
-    « faire valider et exécuter » est nommée pour être interdite, et la famille
-    « acte irréversible » ne disparaît pas : elle se replie sur ce que l'objectif
-    ne nomme pas."""
-    texte = _playbook()
-
-    assert "approuvé" in texte
-    assert "faire valider" in texte
-    assert "ne nomme pas" in texte
-    # Ce qui demande un humain reste une famille du document : on retire la tâche
-    # redondante, jamais l'escalade.
-    assert "un acte irréversible" in texte
-    # Et la redondance est retirée jusque dans l'exécution : la latitude écrite sur
-    # la tâche dit à l'agent que l'acte nommé est accordé, au lieu de le lui faire
-    # redemander au moment de le faire.
-    assert "est déjà accordé et se fait" in texte
+    assert len(tasks) == _C2_TASKS
+    assert _levels(tasks) == _C2_LEVELS
 
 
-def test_le_playbook_dit_ce_qui_ne_bouge_pas_autour_de_l_acte():
-    """Les garde-fous que docs/40 §4 range dans « ce qui ne bouge pas », **moins un**.
+def test_an_act_the_goal_names_is_not_approved_again():
+    """The consent given at framing counts as a human decision (docs/40 §4). The "get it
+    approved and run it" task is named so as to forbid it, and the "irreversible act"
+    family does not disappear: it falls back on what the goal does not name."""
+    text = _playbook()
 
-    Le périmètre du projet et la politique de l'agent tiennent toujours, et le plan
-    ne les tient pas lui-même : il les **écrit dans la tâche**, seul endroit où
-    l'agent qui agit les lira.
+    assert "approuvé" in text
+    assert "faire valider" in text
+    assert "ne nomme pas" in text
+    # What needs a human stays a family of the document: the redundant task goes,
+    # never the escalation.
+    assert "un acte irréversible" in text
+    # And the redundancy is gone down to the execution: the latitude written on the task
+    # tells the agent the named act is granted, instead of making it ask again at the
+    # moment it acts.
+    assert "est déjà accordé et se fait" in text
 
-    Ce qui a bougé est l'arbitrage sur l'acte que l'objectif **nomme** (#1198).
-    #1149 promettait qu'« il lève la main au moment de l'acte » suffirait ; mesuré
-    le 2026-09-22 sur S1, cela voulait dire une personne redemandée à **chaque
-    commande**, cinq demandes écartées à 240 s et un dossier intact. L'escalade
-    reste entière sur ce que l'objectif n'a pas nommé — et c'est cette moitié-là
-    que le texte doit continuer de dire.
+
+def test_the_playbook_says_what_stays_fixed_around_the_act():
+    """The guardrails docs/40 §4 lists under "what does not move", **minus one**.
+
+    The project perimeter and the agent's policy still hold, and the plan does not hold
+    them itself: it **writes them into the task**, the only place where the acting agent
+    reads them.
+
+    The exception is the approval of the act the goal **names** (#1198): asking at the
+    moment of the act meant asking the person again at **every command** (S1, 2026-09-22:
+    five requests dismissed at 240 s and a folder left intact). Escalation stays whole on
+    what the goal did not name — and that half is what the text keeps saying.
     """
-    texte = _playbook()
+    text = _playbook()
 
-    assert "suspend l'appel d'outil le temps qu'un humain tranche" in texte
-    assert "Ce que l'objectif n'a pas nommé" in texte
-    assert ".git" in texte and ".env" in texte
-    assert "exclusions déclarées" in texte
+    assert "suspend l'appel d'outil le temps qu'un humain tranche" in text
+    assert "Ce que l'objectif n'a pas nommé" in text
+    assert ".git" in text and ".env" in text
+    assert "exclusions déclarées" in text
 
 
-def test_l_accord_de_l_objectif_s_ecrit_dans_la_tache():
-    """L'accord donné au cadrage voyage par une **clé**, pas par de la prose (#1198).
+def test_the_consent_given_by_the_goal_is_written_into_the_task():
+    """The consent given at framing travels as a **key**, not as prose (#1198).
 
-    La description s'adresse à l'agent ; `acte_accorde` s'adresse à l'exécution,
-    qui ne lit aucune prose. Sans la clé, l'accord s'arrête au plan et la
-    validation qu'on vient d'en retirer revient une fois par commande.
+    The description speaks to the agent; the `acte_accorde` key (`Task.granted_act`)
+    speaks to the execution, which reads no prose. Without the key, the consent stops at
+    the plan and the approval just removed from it comes back once per command.
 
-    Le playbook doit dire les trois bords, faute de quoi la clé deviendrait un
-    laissez-passer : seulement la tâche qui commet l'acte, seulement un acte que
-    l'objectif nomme, et l'acte écrit **tel qu'il a été accordé**.
+    The playbook must state the three edges, or the key would become a free pass: only
+    the task that commits the act, only an act the goal names, and the act written **as
+    it was granted**.
     """
-    texte = _playbook()
+    text = _playbook()
 
-    assert "acte_accorde" in texte
-    assert "à chaque commande" in texte
-    assert "tel qu'il a été accordé" in texte
-    # Une tâche qui construit ne la porte jamais — c'est ce qui la garde étroite.
-    assert "une tâche qui construit ne la porte jamais" in texte
-    # Et elle est annoncée au contrat de sortie, avec les autres clés.
-    assert '"acte_accorde" :' in texte
-
-
-def test_le_format_de_sortie_d_une_action_est_un_etat():
-    """Le contrat de sortie ne change pas d'une clé — ce qui change est ce qu'on
-    écrit dans `format_sortie` quand la tâche agit."""
-    texte = _playbook()
-
-    assert "état constaté" in texte
-    assert "jamais un fichier à produire" in texte
+    assert "acte_accorde" in text
+    assert "à chaque commande" in text
+    assert "tel qu'il a été accordé" in text
+    # A task that builds never carries it — that is what keeps it narrow.
+    assert "une tâche qui construit ne la porte jamais" in text
+    # And it is announced in the output contract, with the other keys.
+    assert '"acte_accorde" :' in text
 
 
-def test_le_plan_degage_le_travail_qui_se_fait_de_front_entre_capacites():
-    """#1299 : « ne relier que les dépendances réelles » ne suffisait pas à faire
-    **dégager** l'indépendance — les deux runs de `p3` avaient une largeur de 1.
+def test_the_output_format_of_an_action_is_a_state():
+    """The output contract does not change by a single key — what changes is what goes
+    into `format_sortie` when the task acts."""
+    text = _playbook()
 
-    La règle positive reste : des capacités indépendantes tournent de front, sans
-    dépendance entre elles, même pour un seul rôle ; ce qu'elles partagent vient
-    d'une capacité dont elles dépendent ou s'écrit dans chacune, jamais par une
-    chaîne ; ce qui les réunit, quand il y a quelque chose à produire, dépend
-    d'elles toutes — et n'est plus une tâche qui ne ferait que vérifier (#1530,
-    `tests/test_recette_du_run.py`).
+    assert "état constaté" in text
+    assert "jamais un fichier à produire" in text
 
-    Ce que #1531 renverse : le front se gagnait **par élément** (« maquetter les
-    quatre sections du site est quatre tâches »), et sur p5 cela a fait neuf tâches
-    sur quatre niveaux pour un objectif qui tient en une session. Il se gagne
-    désormais entre capacités, jamais en coupant une capacité qui tient dans une
-    session — le parallélisme reste dû à un objectif qui la dépasse (#1513).
+
+def test_the_plan_brings_out_the_work_done_in_parallel_across_capabilities():
+    """Independent capabilities run in parallel (#1299, #1531).
+
+    "Link only the real dependencies" is not enough to make independence **emerge** —
+    both runs of `p3` had a width of 1. The positive rule: independent capabilities run in
+    parallel, with no dependency between them, even for a single role; what they share
+    comes from a capability they depend on or is written into each one, never through a
+    chain; what joins them, when there is something to produce, depends on all of them —
+    and is not a task that would only check (#1530, `tests/test_recette_du_run.py`).
+
+    Parallelism is gained across capabilities, never by cutting up a capability that fits
+    in a session: splitting per element made p5 nine tasks on four levels for a goal that
+    fits in one session. Parallelism stays due to a goal that exceeds a session (#1513).
     """
-    texte = _playbook()
+    text = _playbook()
 
-    assert "Le travail qui se fait de front" in texte
-    assert "même confiées au même rôle" in texte
-    assert "ne les enchaîne jamais pour qu'elles se le transmettent" in texte
-    assert "elle dépend alors d'elles toutes, et elle produit" in texte
-    assert "Le front se gagne entre capacités" in texte
-    assert "jamais en coupant en morceaux une capacité qui tient dans une session" in texte
-    # La règle renversée ne survit nulle part dans le document.
-    assert "est quatre tâches" not in texte
-    assert "fais une tâche par élément" not in texte
-    assert "se décide dans une tâche amont dont ils dépendent tous" not in texte
+    assert "Le travail qui se fait de front" in text
+    assert "même confiées au même rôle" in text
+    assert "ne les enchaîne jamais pour qu'elles se le transmettent" in text
+    assert "elle dépend alors d'elles toutes, et elle produit" in text
+    assert "Le front se gagne entre capacités" in text
+    assert "jamais en coupant en morceaux une capacité qui tient dans une session" in text
+    # The overturned rule survives nowhere in the document.
+    assert "est quatre tâches" not in text
+    assert "fais une tâche par élément" not in text
+    assert "se décide dans une tâche amont dont ils dépendent tous" not in text
 
 
-def test_une_tache_est_une_capacite_a_la_taille_d_une_session():
-    """Critère ① de #1531 : la chaîne du dépôt découpe ainsi (docs/10 § 5.1, #1150),
-    et p5, qui tient en une session, y serait un ticket (docs/50 § 3, point 2).
+def test_a_task_is_a_capability_the_size_of_a_session():
+    """Criterion ① of #1531: the repository's own chain splits this way (docs/10 § 5.1,
+    #1150), and p5, which fits in one session, would be one ticket there (docs/50 § 3,
+    point 2).
 
-    Les trois formes que C2 a prises et que la règle écarte sont nommées une à une
-    — `tests-logique`, `charte-ui` et `socle-projet`, les quatre `page-*` —, parce
-    qu'une règle générale sur la « bonne granularité » les couvrait déjà mal. Et un
-    élément qui fait sa tâche le justifie par écrit : taille, métier ou livraison.
+    The three shapes C2 took and the rule rules out are named one by one —
+    `tests-logique`, `charte-ui` and `socle-projet`, the four `page-*` —, because a
+    general rule on the "right granularity" already covered them poorly. And an element
+    that gets its own task justifies it in writing: size, trade or delivery.
     """
-    texte = _playbook()
+    text = _playbook()
 
-    assert "Une tâche est une capacité, à la taille d'une session" in texte
-    assert "capacités visibles" in texte
-    assert "dans une seule session de travail" in texte
-    assert "ses tests" in texte
-    # Ce qu'une tâche coûte en plus de son travail : la raison de la règle.
-    assert "chaque niveau du plan ajoute ce coût au chemin" in texte
-    # Les trois formes écartées.
-    assert "une tâche de tests seuls" in texte
-    assert "une tâche amont sans livrable propre" in texte
-    assert "une tâche par élément quand les éléments tiennent ensemble dans une session" in texte
-    # Les trois raisons qui font une tâche d'un élément, et la justification écrite.
-    assert "sa taille" in texte and "son métier" in texte and "sa livraison" in texte
-    assert "écrit pourquoi dans sa description" in texte
-    # La relecture du plan et les critères de « terminé » le redisent.
-    assert "Relis-le contre le point 4" in texte
-    assert "Chaque tâche est une capacité visible qui tient dans une session" in texte
+    assert "Une tâche est une capacité, à la taille d'une session" in text
+    assert "capacités visibles" in text
+    assert "dans une seule session de travail" in text
+    assert "ses tests" in text
+    # What a task costs on top of its work: the reason for the rule.
+    assert "chaque niveau du plan ajoute ce coût au chemin" in text
+    # The three shapes ruled out.
+    assert "une tâche de tests seuls" in text
+    assert "une tâche amont sans livrable propre" in text
+    assert "une tâche par élément quand les éléments tiennent ensemble dans une session" in text
+    # The three reasons that make an element its own task, and the written justification.
+    assert "sa taille" in text and "son métier" in text and "sa livraison" in text
+    assert "écrit pourquoi dans sa description" in text
+    # The plan review and the "done" criteria say it again.
+    assert "Relis-le contre le point 4" in text
+    assert "Chaque tâche est une capacité visible qui tient dans une session" in text
 
 
-#: Le plan de C2, relu dans le journal du run `fea601a5c629` (docs/50 § 2) : neuf
-#: tâches, treize enchaînements, quatre niveaux — socle, puis charte, jeu de
-#: recettes et tests seuls, puis quatre pages, puis la recette.
-_PLAN_C2 = (
+#: The C2 plan, reread in the journal of run `fea601a5c629` (docs/50 § 2): nine tasks,
+#: thirteen links, four levels — foundation, then style guide, recipe set and tests
+#: alone, then four pages, then acceptance.
+_C2_PLAN = (
     ("socle-projet", ()),
     ("charte-ui", ("socle-projet",)),
     ("jeu-recettes", ("socle-projet",)),
@@ -554,24 +544,24 @@ _PLAN_C2 = (
         ),
     ),
 )
-_C2_TACHES = 9
-_C2_NIVEAUX = 4
+_C2_TASKS = 9
+_C2_LEVELS = 4
 
 
-def _niveaux(taches) -> int:
-    """Le nombre de niveaux d'un plan, par la mesure du produit (`maestro.plan_run`)."""
+def _levels(tasks) -> int:
+    """The number of levels of a plan, by the product's own measure (`maestro.plan_run`)."""
     from maestro.plan_run import niveaux_topologiques, noeuds_du_plan
 
-    return 1 + max(niveaux_topologiques(noeuds_du_plan(taches)).values(), default=-1)
+    return 1 + max(niveaux_topologiques(noeuds_du_plan(tasks)).values(), default=-1)
 
 
-def _plan_p5_en_capacites_json() -> str:
-    """Un plan de **type p5** découpé en capacités : ce que le playbook demande.
+def _p5_plan_in_capabilities_json() -> str:
+    """A **p5-like** plan split into capabilities: what the playbook asks for.
 
-    Deux capacités visibles, chacune avec ses tests : parcourir les recettes —
-    socle, charte, données et les quatre pages, qui tiennent ensemble dans une
-    session — puis cuisiner une recette, qui en dépend et le dit. Aucune tâche de
-    tests seuls, aucune charte en amont, aucune recette au plan.
+    Two visible capabilities, each with its tests: browsing the recipes — foundation,
+    style guide, data and the four pages, which hold together in one session — then
+    cooking a recipe, which depends on it and says so. No tests-only task, no upstream
+    style guide, no acceptance task in the plan.
     """
     return json.dumps(
         [
@@ -612,57 +602,57 @@ def _plan_p5_en_capacites_json() -> str:
     )
 
 
-def test_un_plan_de_type_p5_se_planifie_en_capacites():
-    """Critère ① de #1531, sur le modèle doublé : l'objectif de p5 — le message du
-    banc comparatif (`maestro/scenarios/objectifs/p5.toml`), mot pour mot — part au
-    modèle sous le playbook des capacités, et le plan qu'il rend traverse
-    l'orchestrateur entier avec moins de tâches **et** moins de niveaux que C2.
+def test_a_p5_like_plan_is_planned_in_capabilities():
+    """Criterion ① of #1531, on the doubled model: the p5 goal — the comparative bench
+    message (`maestro/scenarios/objectifs/p5.toml`), word for word — goes to the model
+    under the capabilities playbook, and the plan it returns goes through the whole
+    orchestrator with fewer tasks **and** fewer levels than C2.
 
-    Le double rend ce que le playbook demande ; ce qui est éprouvé est le chemin :
-    la consigne que le modèle reçoit, puis la mesure des niveaux par le produit
-    (`maestro.plan_run`), la même que celle du graphe et du plafond de front.
+    The double returns what the playbook asks; what is tested is the path: the
+    instruction the model receives, then the measure of levels by the product
+    (`maestro.plan_run`), the same as the graph's and the parallelism cap's.
     """
     from maestro.scenarios.comparatif import charger_objectif
 
     p5 = charger_objectif("p5")
-    provider = FakeProvider(_plan_p5_en_capacites_json())
+    provider = FakeProvider(_p5_plan_in_capabilities_json())
     orchestrator = Orchestrator(provider, model="claude-opus-4-8")
 
-    taches = asyncio.run(orchestrator.plan(p5.message))
+    tasks = asyncio.run(orchestrator.plan(p5.message))
 
-    appel = provider.calls[0]
-    systeme = _normalise(appel["system_prompt"])
-    assert "Une tâche est une capacité, à la taille d'une session" in systeme
-    assert "une tâche de tests seuls" in systeme
-    assert "Construis l'application entière." in appel["prompt"]
-    assert len(taches) < _C2_TACHES
-    assert _niveaux(taches) < _C2_NIVEAUX
-    # Les tests vont avec la capacité qu'ils prouvent : aucune tâche n'est que tests.
-    assert all(set(t.competences_requises) != {"tests"} for t in taches)
-    # La tâche séparée dit pourquoi, dans sa description.
-    assert "pour sa taille" in taches[1].description
-
-
-def test_le_plan_designe_la_racine_du_projet_jamais_le_nom_de_son_dossier():
-    """#1399 : la tâche `socle-nextjs` de p5 disait « Installer dans le dossier p5 »,
-    « Commence par inspecter p5 » — et l'agent, qui travaille dans une copie qui ne
-    porte pas ce nom, cherchait un sous-dossier `p5` qui n'existait pas.
-
-    Le planificateur ne reçoit ni nom ni chemin, mais il sait que le répertoire de
-    l'agent **est** la racine du projet (« Agir », plus haut) : c'est ainsi qu'il la
-    désigne. La règle vit dans ses **entrées**, là où il apprend ce qu'il ne reçoit
-    pas — et aucune réécriture du texte qu'il rend ne la remplace."""
-    texte = _playbook()
-
-    assert "est la racine du projet" in texte
-    assert "désigne-le par « la racine du projet »" in texte
-    assert "jamais par le nom du projet ni par celui de son dossier" in texte
+    call = provider.calls[0]
+    system = _normalise(call["system_prompt"])
+    assert "Une tâche est une capacité, à la taille d'une session" in system
+    assert "une tâche de tests seuls" in system
+    assert "Construis l'application entière." in call["prompt"]
+    assert len(tasks) < _C2_TASKS
+    assert _levels(tasks) < _C2_LEVELS
+    # Tests go with the capability they prove: no task is tests only.
+    assert all(set(t.required_competencies) != {"tests"} for t in tasks)
+    # The separate task says why, in its description.
+    assert "pour sa taille" in tasks[1].description
 
 
-def test_le_playbook_cadre_sur_l_equipe_reste_celui_du_document():
-    """Garde de non-régression sur le chargeur (#1041) : le document servi à une
-    équipe donnée porte les mêmes règles que celui du code, marqueurs substitués."""
-    cadre = _normalise(prompt_orchestrateur())
+def test_the_plan_names_the_project_root_never_its_folder_name():
+    """The planner designates the project root as such, never by the project's name nor
+    its folder's (#1399): an agent working in a copy that does not bear that name looked
+    for a `p5` subfolder that did not exist.
 
-    assert "construire, ou agir" in cadre.lower()
-    assert "{{" not in cadre
+    The planner receives neither name nor path, but it knows the agent's directory **is**
+    the project root ("Agir", above): that is how it designates it. The rule lives in its
+    **inputs**, where it learns what it does not receive — and no rewriting of the text
+    it returns replaces it."""
+    text = _playbook()
+
+    assert "est la racine du projet" in text
+    assert "désigne-le par « la racine du projet »" in text
+    assert "jamais par le nom du projet ni par celui de son dossier" in text
+
+
+def test_the_playbook_served_for_a_team_stays_the_document():
+    """Non-regression guard on the loader (#1041): the document served to a given team
+    carries the same rules as the code's, placeholders substituted."""
+    framed = _normalise(orchestrator_prompt())
+
+    assert "construire, ou agir" in framed.lower()
+    assert "{{" not in framed

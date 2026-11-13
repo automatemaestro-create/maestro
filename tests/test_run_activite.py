@@ -318,11 +318,11 @@ def test_un_publieur_en_panne_ne_casse_pas_l_execution_observee():
 def _tache() -> Task:
     return Task(
         id="t1",
-        titre="Implémenter la boucle",
+        title="Implémenter la boucle",
         description="…",
-        competences_requises=("python",),
-        format_sortie="Module",
-        dependances=(),
+        required_competencies=("python",),
+        output_format="Module",
+        dependencies=(),
     )
 
 

@@ -36,8 +36,27 @@ from maestro.messaging import (
     AgentMessage,
     mailbox_channel,
 )
+from maestro.orchestrator import Brief, Task, validate_brief, validate_task
+from maestro.orchestrator.orchestrator import (
+    _extract_brief_object,
+    _extract_recovery_object,
+    _extract_task_array,
+)
+from maestro.orchestrator.prompt import (
+    BRIEF_PLAYBOOK_PATH,
+    PLAYBOOK_PATH,
+    RECOVERY_PLAYBOOK_PATH,
+)
+from maestro.orchestrator.recovery import (
+    ACTIONS,
+    NATURES,
+    Attempt,
+    TaskFailure,
+    validate_recovery,
+)
 from maestro.queue import EXECUTE_TASK_NAME, TASKS_QUEUE, create_app
 from maestro.queue.worker import execute_task as celery_execute_task
+from maestro.references import ReferenceTicket
 from maestro.router import (
     METHOD_CLASSIFIER,
     METHOD_CLOSEST,
@@ -371,3 +390,181 @@ def test_the_screen_reads_the_usage_keys_the_api_writes() -> None:
     assert block is not None, "the `Usage` type of apps/web/lib/types.ts is gone"
     keys = set(re.findall(r"^  (\w+)\??:", block.group(1), re.MULTILINE))
     assert keys == STEP_USAGE_KEYS
+
+
+# --- The orchestrator (#1652) ------------------------------------------------------------
+#
+# A plan, a brief and a recovery are written by the model, then travel to the Celery queue,
+# between the Temporal workflow and its activities, into a run's saved state and to the
+# screen. Their keys are those of the shared schemas (`packages/shared/schemas/`), which
+# the playbooks ask the model for.
+
+
+def _task(**changes: object) -> Task:
+    # Every field holds a distinct value, so that two swapped keys fail too.
+    fields: dict[str, object] = {
+        "id": "t2",
+        "title": "Écrire l'API",
+        "description": "Exposer les contacts",
+        "required_competencies": ("api", "python"),
+        "output_format": "code",
+        "dependencies": ("t1",),
+        "ticket": ReferenceTicket(id="#42", url="https://example.com/42"),
+        "project_id": "crm-minimal",
+        "steps": ("Écrire", "Tester"),
+        "granted_act": "vider le dossier",
+        "resumes_from": "t0",
+    }
+    fields.update(changes)
+    return Task(**fields)  # type: ignore[arg-type]
+
+
+def test_a_task_keeps_its_json_keys() -> None:
+    task = _task()
+    assert task.to_dict() == {
+        "id": "t2",
+        "titre": "Écrire l'API",
+        "description": "Exposer les contacts",
+        "competences_requises": ["api", "python"],
+        "format_sortie": "code",
+        "dependances": ["t1"],
+        "ticket": {"id": "#42", "url": "https://example.com/42"},
+        "projet_id": "crm-minimal",
+        "etapes": ["Écrire", "Tester"],
+        "acte_accorde": "vider le dossier",
+        "reprend": "t0",
+    }
+    # The shared schema still accepts them, and a task written by an older version reads
+    # back field for field.
+    validate_task(task.to_dict())
+    assert Task.from_dict(task.to_dict()) == task
+
+
+def test_a_brief_keeps_its_json_keys() -> None:
+    brief = Brief(
+        goal="Un CRM minimal",
+        in_scope=("contacts",),
+        out_of_scope=("facturation",),
+        acceptance_criteria=("un contact se crée",),
+        constraints=("Python",),
+        assumptions=("usage interne",),
+        questions=("Quel volume ?",),
+    )
+    assert brief.to_dict() == {
+        "objectif": "Un CRM minimal",
+        "perimetre": ["contacts"],
+        "hors_perimetre": ["facturation"],
+        "contraintes": ["Python"],
+        "criteres_acceptation": ["un contact se crée"],
+        "hypotheses": ["usage interne"],
+        "questions": ["Quel volume ?"],
+    }
+    validate_brief(brief.to_dict())
+    assert Brief.from_dict(brief.to_dict()) == brief
+
+
+def test_recovery_natures_actions_and_first_attempt_keep_their_values() -> None:
+    # The engine compares the actions literally and records them in the journal.
+    assert NATURES == ("passager", "configuration", "approche")
+    assert ACTIONS == ("rejouer", "retenter", "demander", "abandonner", "proposer")
+    attempt = Attempt(tasks=(_task(),), agent="developpeur", role="dev", error="403")
+    assert attempt.action == "telle que planifiée"
+
+
+def test_the_recovery_reads_the_keys_the_model_writes() -> None:
+    downstream = _task(id="t3", dependencies=("t2",), resumes_from="", granted_act="")
+    failure = TaskFailure(
+        task=_task(),
+        attempts=(Attempt(tasks=(_task(),), agent="developpeur", role="dev", error="403"),),
+        downstream=(downstream,),
+    )
+    retry = validate_recovery(
+        {
+            "nature": "approche",
+            "geste": "retenter",
+            "diagnostic": "le jeton manque",
+            "taches": [
+                {
+                    "id": "t2",
+                    "titre": "Écrire l'API sans jeton",
+                    "description": "Exposer les contacts en local",
+                    "competences_requises": ["api"],
+                    "format_sortie": "code",
+                }
+            ],
+            "aval": [{"id": "t3", "description": "Tester en local"}],
+        },
+        failure,
+    )
+    assert (retry.nature, retry.action, retry.diagnosis) == (
+        "approche",
+        "retenter",
+        "le jeton manque",
+    )
+    assert [task.title for task in retry.tasks] == ["Écrire l'API sans jeton"]
+    assert retry.adjustments == (("t3", "Tester en local"),)
+
+    ask = validate_recovery(
+        {"nature": "configuration", "geste": "demander", "diagnostic": "d", "question": "Q ?"},
+        failure,
+    )
+    assert ask.question == "Q ?"
+
+    propose = validate_recovery(
+        {
+            "nature": "configuration",
+            "geste": "proposer",
+            "diagnostic": "d",
+            "prerequis": {
+                "genre": "role",
+                "objet": "un rôle data",
+                "raison": "personne ne sait lire le CSV",
+                "procedure": "le recruter",
+                "competences": ["csv"],
+            },
+        },
+        failure,
+    )
+    assert propose.prerequisite is not None
+    assert (propose.prerequisite.objet, propose.prerequisite.competences) == (
+        "un rôle data",
+        ("csv",),
+    )
+
+
+@pytest.mark.parametrize("envelope", ["taches", "tâches", "tasks", "plan"])
+def test_a_plan_is_still_read_in_each_envelope(envelope: str) -> None:
+    text = '{"' + envelope + '": [{"id": "t1"}]}'
+    assert _extract_task_array(text) == [{"id": "t1"}]
+
+
+@pytest.mark.parametrize("envelope", ["brief", "brief_structure", "brief_structuré"])
+def test_a_brief_is_still_read_in_each_envelope(envelope: str) -> None:
+    text = '{"' + envelope + '": {"objectif": "o"}}'
+    assert _extract_brief_object(text) == {"objectif": "o"}
+    # Bare, the brief is recognised by its `objectif` key.
+    assert _extract_brief_object('{"objectif": "o"}') == {"objectif": "o"}
+
+
+def test_a_recovery_is_still_read_bare_or_in_its_envelope() -> None:
+    # A second object beside it: only the `rattrapage` key can tell which one it is.
+    text = '{"rattrapage": {"geste": "rejouer"}, "contexte": {"tour": 1}}'
+    assert _extract_recovery_object(text) == {"geste": "rejouer"}
+    assert _extract_recovery_object('{"geste": "rejouer"}') == {"geste": "rejouer"}
+
+
+def test_the_playbooks_keep_their_files_and_markers() -> None:
+    # `pyproject.toml` ships them by the `playbook*.md` glob of the package data.
+    assert (PLAYBOOK_PATH.name, BRIEF_PLAYBOOK_PATH.name, RECOVERY_PLAYBOOK_PATH.name) == (
+        "playbook.md",
+        "playbook_brief.md",
+        "playbook_rattrapage.md",
+    )
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"maestro.orchestrator" = ["playbook*.md"]' in pyproject
+    assert 'maestro-orchestrate = "maestro.orchestrator.cli:main"' in pyproject
+    markers = set()
+    for path in (PLAYBOOK_PATH, BRIEF_PLAYBOOK_PATH, RECOVERY_PLAYBOOK_PATH):
+        text = path.read_text(encoding="utf-8")
+        markers |= set(re.findall(r"\{\{\s*([a-z_]+)\s*\}\}", text))
+    assert markers == {"roles", "equipe", "competences", "competences_recrutables"}

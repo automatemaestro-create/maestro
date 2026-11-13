@@ -1443,7 +1443,7 @@ class ServiceExecutions:
             "un nouveau run en porte la suite",
         )
         return await self.lancer(
-            brief.synthese(),
+            brief.summary(),
             plafond_cout_usd=bornes.plafond_cout_usd,
             plafond_tokens=bornes.plafond_tokens,
             timeout_tache_s=bornes.timeout_tache_s,

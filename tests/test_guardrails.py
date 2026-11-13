@@ -567,10 +567,10 @@ def test_une_tache_anodine_ne_declenche_aucune_validation():
 def _task(titre, description="RAS."):
     return Task(
         id="t1",
-        titre=titre,
+        title=titre,
         description=description,
-        competences_requises=("tests",),
-        format_sortie="Note",
+        required_competencies=("tests",),
+        output_format="Note",
     )
 
 

@@ -49,7 +49,7 @@ from maestro.engine.executor import (
     LocalExecutor,
 )
 from maestro.equipe import RoleManquant, competences_non_couvertes, role_manquant
-from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT, prompt_orchestrateur
+from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT, orchestrator_prompt
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
 from maestro.router import Router, assign
@@ -84,12 +84,12 @@ def _agent(nom: str, *competences: str, role: str = "Rôle") -> Agent:
 def _tache(id_: str = "t1", *competences: str, projet_id: str | None = None) -> Task:
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description=f"Faire {id_}.",
-        competences_requises=list(competences),
-        format_sortie="markdown",
-        dependances=[],
-        projet_id=projet_id,
+        required_competencies=list(competences),
+        output_format="markdown",
+        dependencies=[],
+        project_id=projet_id,
     )
 
 
@@ -252,7 +252,7 @@ def test_le_decoupage_se_fait_sur_l_equipe_du_projet() -> None:
     tag proposé au découpage est un tag que quelqu'un sait prendre."""
     equipe = [_agent("dev-du-projet", "comptabilite", role="Comptable")]
 
-    prompt = prompt_orchestrateur(equipe)
+    prompt = orchestrator_prompt(equipe)
 
     assert "comptabilite" in prompt
     assert "dev-du-projet" in prompt

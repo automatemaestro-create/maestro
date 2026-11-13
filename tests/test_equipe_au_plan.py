@@ -54,7 +54,7 @@ from maestro.engine.renfort import (
 )
 from maestro.equipe import manque_au_plan, proposer_renfort, role_manquant
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.prompt import prompt_orchestrateur
+from maestro.orchestrator.prompt import orchestrator_prompt
 from maestro.orchestrator.schema import Task
 from maestro.outillage.modele import Constats, Langage
 from maestro.outillage.recommandation import recommander
@@ -110,10 +110,10 @@ def _agent(nom: str, *competences: str, role: str = "Rôle") -> Agent:
 def _tache(titre: str, *competences: str) -> Task:
     return Task(
         id=titre.lower().replace(" ", "-"),
-        titre=titre,
+        title=titre,
         description=f"Faire {titre}.",
-        competences_requises=competences,
-        format_sortie="markdown",
+        required_competencies=competences,
+        output_format="markdown",
     )
 
 
@@ -145,7 +145,7 @@ def test_le_playbook_offre_les_metiers_que_maestro_sait_recruter() -> None:
     """
     dev = next(a for a in GABARITS_DU_CODE if a.nom == "developpeur")
 
-    prompt = prompt_orchestrateur([dev])
+    prompt = orchestrator_prompt([dev])
 
     assert "Découpe pour le besoin, pas pour l'équipe" in prompt
     assert "nomme-le quand même" in prompt
@@ -162,7 +162,7 @@ def test_le_playbook_ne_propose_aucun_renfort_a_une_equipe_complete() -> None:
     Et le document le **dit** plutôt que de laisser un blanc — un trou dans un
     prompt système se lit comme un marqueur oublié.
     """
-    prompt = prompt_orchestrateur(GABARITS_DU_CODE)
+    prompt = orchestrator_prompt(GABARITS_DU_CODE)
 
     assert "l'équipe couvre déjà tous les métiers" in prompt
 
@@ -174,7 +174,7 @@ def test_le_playbook_dit_ce_qu_il_advient_d_un_metier_nomme() -> None:
     modèle n'a aucune raison de nommer un tag que personne ne prend), et qu'un
     tag ajouté par précaution coûte une attente humaine.
     """
-    prompt = prompt_orchestrateur([_agent("dev", "backend")])
+    prompt = orchestrator_prompt([_agent("dev", "backend")])
 
     assert "confronte l'équipe à ce que tu as demandé" in prompt
     assert "par précaution" in prompt
@@ -188,11 +188,11 @@ def test_un_plan_qui_nomme_un_metier_absent_est_valide_et_conserve_ses_tags() ->
     équipe est une **information**, pas une erreur de forme.
     """
     plan = asyncio.run(
-        Orchestrator(_PlanScripte(), model="m").plan(OBJECTIF, equipe=[_agent("dev", "backend")])
+        Orchestrator(_PlanScripte(), model="m").plan(OBJECTIF, team=[_agent("dev", "backend")])
     )
 
     assert [t.id for t in plan] == ["logo-stylise", "script-animation", "test-lancement"]
-    assert "ui" in plan[0].competences_requises
+    assert "ui" in plan[0].required_competencies
 
 
 # --- ① bis Le manque du plan : calculé, nommé, et un seul ---------------------

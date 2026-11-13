@@ -181,11 +181,11 @@ def test_une_relance_qui_aboutit_ne_tarifie_pas_la_session_tuee_avant_elle(sdk):
 def _tache(identifiant: str) -> Task:
     return Task(
         id=identifiant,
-        titre="Maquette des sections",
+        title="Maquette des sections",
         description="…",
-        competences_requises=("sql",),
-        format_sortie="Maquette",
-        dependances=(),
+        required_competencies=("sql",),
+        output_format="Maquette",
+        dependencies=(),
     )
 
 

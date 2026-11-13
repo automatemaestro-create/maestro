@@ -1,29 +1,26 @@
-"""Schémas de l'orchestrateur et validation (tickets #3, #318).
+"""Orchestrator schemas and validation (#3, #318).
 
-Source unique de vérité : les JSON Schema partagées de
-`packages/shared/schemas/` (cf. son README). Ce module les charge, en dérive des
-validateurs `jsonschema`, et expose les deux contrats que le Chef de projet
-produit.
+Single source of truth: the shared JSON Schemas of `packages/shared/schemas/` (see its
+README). This module loads them, derives `jsonschema` validators from them, and exposes the
+two contracts the orchestrator produces.
 
-Le **plan** (#3) — ce qu'il rend une fois l'intention arrêtée :
+The **plan** (#3), what it returns once the intent is settled:
 
-- `Task` : la forme Python (immuable) d'une tâche, avec `from_dict`/`to_dict` ;
-- `validate_task` : valide un dict brut contre le schéma partagé ;
-- `validate_plan` : valide une liste de tâches **et** les règles inter-tâches que
-  le schéma seul ne peut exprimer (ids uniques, dépendances résolubles, graphe
-  acyclique), et renvoie des `Task` prêtes à l'emploi.
+- `Task`: the immutable Python form of a task, with `from_dict`/`to_dict`;
+- `validate_task`: validates a raw dict against the shared schema;
+- `validate_plan`: validates a list of tasks **and** the cross-task rules the schema alone
+  cannot express (unique ids, resolvable dependencies, acyclic graph), and returns
+  ready-to-use `Task` objects.
 
-Le **brief** (#318) — ce qu'il rend *avant*, pour que l'intention soit arrêtée par
-un humain plutôt que devinée :
+The **brief** (#318), what it returns *before*, so that a human settles the intent rather
+than leaving it guessed:
 
-- `Brief` : la forme Python (immuable) d'un brief structuré, avec sa `synthese`
-  Markdown ;
-- `validate_brief` : valide un dict brut contre le schéma partagé.
+- `Brief`: the immutable Python form of a structured brief, with its Markdown `summary`;
+- `validate_brief`: validates a raw dict against the shared schema.
 
-Les deux cohabitent **ici** plutôt que dans deux modules jumeaux : c'est la même
-plomberie (chargement du fichier, `Draft202012Validator` mis en cache, mise en
-forme des manquements) et la dupliquer ferait diverger les messages d'erreur de
-deux contrats que le même agent produit à cinq minutes d'intervalle.
+Both live **here** rather than in two twin modules: the plumbing is the same (file
+loading, cached `Draft202012Validator`, formatting of violations), and duplicating it would
+let the error messages of two contracts produced by the same agent drift apart.
 """
 
 from __future__ import annotations
@@ -42,24 +39,24 @@ from maestro.appartenance import projet_id_valide
 from maestro.orchestrator.errors import BriefValidationError, TaskValidationError
 from maestro.references import ReferenceTicket
 
-#: Dossier des JSON Schema partagées, relatif à la racine du dépôt.
-#: `schema.py` → `orchestrator` → `maestro` → racine ; puis `packages/shared/...`.
+#: Folder of the shared JSON Schemas, relative to the repository root.
+#: `schema.py` → `orchestrator` → `maestro` → root; then `packages/shared/...`.
 SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "packages" / "shared" / "schemas"
 
-#: Emplacement de la JSON Schema de **tâche** partagée (#3).
+#: Location of the shared **task** JSON Schema (#3).
 SCHEMA_PATH = SCHEMAS_DIR / "task.schema.json"
 
-#: Emplacement de la JSON Schema de **brief** partagée (#318).
+#: Location of the shared **brief** JSON Schema (#318).
 BRIEF_SCHEMA_PATH = SCHEMAS_DIR / "brief.schema.json"
 
 
-def _load_schema(chemin: Path, *, quoi: str, erreur: type[Exception]) -> dict[str, Any]:
-    """Charge une JSON Schema partagée, ou lève `erreur` en nommant le fichier absent."""
+def _load_schema(path: Path, *, what: str, error: type[Exception]) -> dict[str, Any]:
+    """Loads a shared JSON Schema, or raises `error` naming the missing file."""
     try:
-        raw = chemin.read_text(encoding="utf-8")
-    except OSError as exc:  # pragma: no cover - dépend de l'arborescence du dépôt
-        raise erreur(
-            f"Schéma de {quoi} introuvable à {chemin}. Le dépôt est-il complet ?"
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - depends on the repository layout
+        raise error(
+            f"Schéma de {what} introuvable à {path}. Le dépôt est-il complet ?"
         ) from exc
     schema: dict[str, Any] = json.loads(raw)
     return schema
@@ -67,20 +64,20 @@ def _load_schema(chemin: Path, *, quoi: str, erreur: type[Exception]) -> dict[st
 
 @lru_cache(maxsize=1)
 def load_task_schema() -> dict[str, Any]:
-    """Charge (et met en cache) la JSON Schema de tâche partagée."""
-    return _load_schema(SCHEMA_PATH, quoi="tâche", erreur=TaskValidationError)
+    """Loads (and caches) the shared task JSON Schema."""
+    return _load_schema(SCHEMA_PATH, what="tâche", error=TaskValidationError)
 
 
 @lru_cache(maxsize=1)
 def load_brief_schema() -> dict[str, Any]:
-    """Charge (et met en cache) la JSON Schema de brief partagée (#318)."""
-    return _load_schema(BRIEF_SCHEMA_PATH, quoi="brief", erreur=BriefValidationError)
+    """Loads (and caches) the shared brief JSON Schema (#318)."""
+    return _load_schema(BRIEF_SCHEMA_PATH, what="brief", error=BriefValidationError)
 
 
 @lru_cache(maxsize=1)
 def _validator() -> Draft202012Validator:
     schema = load_task_schema()
-    # Fait remonter une schéma malformée tôt et clairement plutôt qu'au 1er usage.
+    # Surfaces a malformed schema early and clearly rather than at first use.
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator(schema)
 
@@ -94,119 +91,110 @@ def _brief_validator() -> Draft202012Validator:
 
 @dataclass(frozen=True)
 class Task:
-    """Forme Python immuable d'une tâche, miroir de `task.schema.json`.
+    """Immutable Python form of a task, mirroring `task.schema.json`.
 
-    Les champs multivalués sont des tuples (immuables) ; `to_dict` les réémet en
-    listes pour un aller-retour JSON fidèle au schéma.
+    Multi-valued fields are tuples (immutable); `to_dict` emits them back as lists, for a
+    JSON round trip faithful to the schema.
 
-    `ticket` (#187) porte le ticket dont relève la tâche — None dans
-    le cas courant, le plan n'en produisant pas de lui-même : elle est posée au
-    lancement d'un run (le run part d'un ticket) ou par un agent en cours
-    d'exécution. `to_dict` **omet** alors la clé plutôt que d'émettre `null` :
-    le schéma refuse les propriétés inconnues comme les objets malformés, et un
-    plan sans référence doit rester sérialisable tel quel.
+    `ticket` (#187) carries the ticket the task belongs to. It is None in the common case,
+    since the plan does not produce one by itself: it is set when a run starts (the run
+    starts from a ticket) or by an agent during execution. `to_dict` then **omits** the key
+    rather than emitting `null`: the schema rejects unknown properties as well as malformed
+    objects, and a plan without a reference must stay serializable as is.
 
-    `projet_id` (#222) porte le **projet** auquel la tâche appartient — même
-    régime que `ticket` : None dans le cas courant (le plan n'en produit pas de
-    lui-même), posé au lancement d'un run et hérité par chaque tâche, et la clé
-    est **omise** de `to_dict` quand il n'y en a pas.
+    `project_id` (#222) carries the **project** the task belongs to, under the same regime
+    as `ticket`: None in the common case, set when a run starts and inherited by each task,
+    and the key is **omitted** from `to_dict` when there is none.
 
-    `etapes` (#489) porte l'**ossature** de la checklist : les libellés des
-    étapes prévues, dans l'ordre, sans aucun état. Le plan dit *ce qu'il y a à
-    faire*, jamais *où l'on en est* — l'avancement se coche en cours
-    d'exécution et n'existe pas au moment où le plan est écrit. Vide dans le cas
-    courant (l'orchestrateur peut n'en déclarer aucune), et la clé est alors
-    **omise** de `to_dict` : un plan sans ossature doit rester sérialisable tel
-    quel, comme pour `ticket` et `projet_id`.
+    `steps` (#489) carries the **skeleton** of the checklist: the labels of the planned
+    steps, in order, without any state. The plan says *what there is to do*, never *where
+    things stand*: progress is checked off during execution and does not exist when the
+    plan is written. Empty in the common case (the orchestrator may declare none), and the
+    key is then **omitted** from `to_dict`, as for `ticket` and `project_id`.
 
-    `acte_accorde` (#1198) porte l'**acte que l'objectif nomme lui-même** et que
-    cette tâche exécute, écrit tel qu'il a été accordé — « supprimer tout le
-    contenu du dossier du projet ». C'est la moitié qui manquait à #1149 : le
-    plan avait cessé d'ajouter une tâche « faire valider », mais rien ne
-    transportait l'accord jusqu'à l'exécution, où l'outil d'exécution classé
-    `ask`/`humain` le redemandait **à chaque commande** (S1 du banc des
-    scénarios, verdict du 2026-09-22 : cinq demandes écartées, run rouge). Vide
-    dans le cas courant — une tâche qui *construit* n'exécute aucun acte accordé
-    d'avance —, et la clé est alors **omise** de `to_dict`, comme les trois
-    au-dessus.
+    `granted_act` (#1198) carries the **act the goal itself names** and that this task
+    executes, written as it was granted ("supprimer tout le contenu du dossier du projet").
+    It carries the consent through to execution, where the execution tool classified
+    `ask`/`humain` would otherwise ask for it again **at every command** (#1149). Empty in
+    the common case, since a task that *builds* executes no act granted in advance, and the
+    key is then **omitted** from `to_dict`, like the three above.
 
-    Ce que ce champ **ne fait pas**, et il faut le lire avant de l'élargir : il
-    ne porte que sur l'**outil d'exécution** (`maestro.engine.executor`), pas sur
-    tout ce qu'une politique classe `ask` — poster dans Slack n'est pas couvert
-    par « vide le dossier » —, il ne lève ni la liste `deny`, ni la frontière
-    d'écriture, ni le périmètre exclu du projet, et il ne dispense pas de la
-    trace : chaque appel qui passe sur cet accord laisse sa ligne au journal et
-    au fil, avec l'acte accordé dedans.
+    What this field does **not** do, to read before widening it: it only covers the
+    **execution tool** (`maestro.engine.executor`), not everything a policy classifies
+    `ask` (posting in Slack is not covered by "empty the folder"); it lifts neither the
+    `deny` list, nor the write boundary, nor the project's excluded perimeter; and it does
+    not exempt from the trace: every call that passes on this consent leaves its line in
+    the journal and in the chat, with the granted act in it.
 
-    `reprend` (#1396) nomme la tâche dont celle-ci **reprend le travail** : sur un
-    projet versionné, sa branche naît de celle de cette tâche plutôt que de la
-    base (`maestro.sandbox.projet`). C'est le **moteur** qui le pose, aux tâches
-    de tête d'un redécoupage (`taches_redecoupees`) — jamais un plan : ce que le
-    modèle écrirait là est retiré à la validation (`validate_plan`). Vide dans le
-    cas courant, et la clé est alors omise de `to_dict`. Il voyage avec la tâche
-    jusqu'au worker de la file, qui la revalide contre le schéma partagé.
+    `resumes_from` (#1396) names the task whose work this one **resumes**: on a versioned
+    project, its branch is born from that task's branch rather than from the base
+    (`maestro.sandbox.projet`). The **engine** sets it, on the leading tasks of a re-split
+    (`resplit_tasks`), never a plan: whatever the model writes there is removed at
+    validation (`validate_plan`). Empty in the common case, and the key is then omitted
+    from `to_dict`. It travels with the task to the queue worker, which revalidates it
+    against the shared schema.
     """
 
     id: str
-    titre: str
+    title: str
     description: str
-    competences_requises: tuple[str, ...]
-    format_sortie: str
-    dependances: tuple[str, ...] = ()
+    required_competencies: tuple[str, ...]
+    output_format: str
+    dependencies: tuple[str, ...] = ()
     ticket: ReferenceTicket | None = None
-    projet_id: str | None = None
-    etapes: tuple[str, ...] = ()
-    acte_accorde: str = ""
-    reprend: str = ""
+    project_id: str | None = None
+    steps: tuple[str, ...] = ()
+    granted_act: str = ""
+    resumes_from: str = ""
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
-        """Construit une `Task` depuis un dict **déjà validé** contre le schéma."""
+        """Builds a `Task` from a dict **already validated** against the schema."""
         return cls(
             id=data["id"],
-            titre=data["titre"],
+            title=data["titre"],
             description=data["description"],
-            competences_requises=tuple(data["competences_requises"]),
-            format_sortie=data["format_sortie"],
-            dependances=tuple(data.get("dependances", ())),
+            required_competencies=tuple(data["competences_requises"]),
+            output_format=data["format_sortie"],
+            dependencies=tuple(data.get("dependances", ())),
             ticket=ReferenceTicket.depuis(data.get("ticket")),
-            projet_id=projet_id_valide(data.get("projet_id")),
-            etapes=tuple(data.get("etapes", ())),
-            acte_accorde=str(data.get("acte_accorde", "") or "").strip(),
-            reprend=str(data.get("reprend", "") or "").strip(),
+            project_id=projet_id_valide(data.get("projet_id")),
+            steps=tuple(data.get("etapes", ())),
+            granted_act=str(data.get("acte_accorde", "") or "").strip(),
+            resumes_from=str(data.get("reprend", "") or "").strip(),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet la tâche en dict JSON-sérialisable, conforme au schéma."""
+        """Emits the task back as a JSON-serializable dict that conforms to the schema."""
         data: dict[str, Any] = {
             "id": self.id,
-            "titre": self.titre,
+            "titre": self.title,
             "description": self.description,
-            "competences_requises": list(self.competences_requises),
-            "format_sortie": self.format_sortie,
-            "dependances": list(self.dependances),
+            "competences_requises": list(self.required_competencies),
+            "format_sortie": self.output_format,
+            "dependances": list(self.dependencies),
         }
         if self.ticket is not None:
             data["ticket"] = self.ticket.to_dict()
-        if self.projet_id is not None:
-            data["projet_id"] = self.projet_id
-        if self.etapes:
-            data["etapes"] = list(self.etapes)
-        if self.acte_accorde:
-            data["acte_accorde"] = self.acte_accorde
-        if self.reprend:
-            data["reprend"] = self.reprend
+        if self.project_id is not None:
+            data["projet_id"] = self.project_id
+        if self.steps:
+            data["etapes"] = list(self.steps)
+        if self.granted_act:
+            data["acte_accorde"] = self.granted_act
+        if self.resumes_from:
+            data["reprend"] = self.resumes_from
         return data
 
 
 def validate_task(data: Mapping[str, Any], *, where: str = "tâche") -> None:
-    """Valide un dict de tâche contre la JSON Schema partagée.
+    """Validates a task dict against the shared JSON Schema.
 
-    Lève `TaskValidationError` avec un message agrégé (tous les manquements) si le
-    dict n'est pas conforme. `where` situe la tâche dans un message de plan.
+    Raises `TaskValidationError` with an aggregated message (every violation) when the dict
+    does not conform. `where` locates the task in a plan message.
     """
-    # Clé de tri en str : un chemin mêle noms de champs (str) et indices (int),
-    # dont la comparaison directe lèverait TypeError.
+    # Sort key as str: a path mixes field names (str) and indices (int), whose direct
+    # comparison would raise TypeError.
     errors = sorted(_validator().iter_errors(data), key=lambda e: str(list(e.path)))
     if errors:
         details = "; ".join(_format_error(e) for e in errors)
@@ -214,16 +202,15 @@ def validate_task(data: Mapping[str, Any], *, where: str = "tâche") -> None:
 
 
 def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
-    """Valide un plan complet et renvoie les `Task` correspondantes.
+    """Validates a complete plan and returns the corresponding `Task` objects.
 
-    Au-delà du schéma par tâche, garantit les invariants inter-tâches : plan non
-    vide, `id` uniques, chaque dépendance résoluble dans le plan, aucune
-    auto-dépendance, et graphe **acyclique**. Lève `TaskValidationError` au premier
-    invariant enfreint.
+    Beyond the per-task schema, guarantees the cross-task invariants: non-empty plan,
+    unique `id`s, every dependency resolvable within the plan, no self-dependency, and an
+    **acyclic** graph. Raises `TaskValidationError` at the first broken invariant.
 
-    Un plan est ce que le modèle écrit — le plan d'un run comme les tâches d'un
-    rattrapage : `reprend`, que le moteur seul pose (#1396), en est retiré. Une
-    tâche planifiée qui le porterait partirait de la branche d'une autre.
+    A plan is what the model writes, the plan of a run as well as the tasks of a recovery:
+    `resumes_from`, which only the engine sets (#1396), is removed from it. A planned task
+    carrying it would start from another task's branch.
     """
     if not tasks:
         raise TaskValidationError("Plan vide : l'orchestrateur doit produire au moins une tâche.")
@@ -232,14 +219,14 @@ def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
     by_id: dict[str, Task] = {}
     for index, raw in enumerate(tasks):
         validate_task(raw, where=f"tâche #{index + 1}")
-        task = replace(Task.from_dict(raw), reprend="")
+        task = replace(Task.from_dict(raw), resumes_from="")
         if task.id in by_id:
             raise TaskValidationError(f"Identifiant de tâche dupliqué : {task.id!r}.")
         by_id[task.id] = task
         parsed.append(task)
 
     for task in parsed:
-        for dep in task.dependances:
+        for dep in task.dependencies:
             if dep == task.id:
                 raise TaskValidationError(f"La tâche {task.id!r} dépend d'elle-même.")
             if dep not in by_id:
@@ -252,22 +239,22 @@ def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
 
 
 def topological_order(tasks: Sequence[Task]) -> list[Task]:
-    """Ordonne les tâches pour que chacune suive ses dépendances (tri de Kahn).
+    """Orders the tasks so that each one follows its dependencies (Kahn's sort).
 
-    Suppose un plan **déjà validé** (`validate_plan`) : dépendances résolubles et
-    graphe acyclique. À rang de dépendance égal, conserve l'ordre du plan (tri
-    stable) pour un résultat déterministe — utile au moteur d'orchestration, qui
-    exécute les tâches dans cet ordre. Lève `TaskValidationError` si un cycle rend
-    l'ordonnancement impossible (ne devrait pas arriver après `validate_plan`).
+    Assumes a plan **already validated** (`validate_plan`): resolvable dependencies and an
+    acyclic graph. At equal dependency rank, keeps the plan order (stable sort) for a
+    deterministic result, which the orchestration engine relies on since it executes the
+    tasks in this order. Raises `TaskValidationError` when a cycle makes the ordering
+    impossible (which cannot happen after `validate_plan`).
     """
     by_id = {task.id: task for task in tasks}
-    indegree = {task.id: len(task.dependances) for task in tasks}
+    indegree = {task.id: len(task.dependencies) for task in tasks}
     dependents: dict[str, list[str]] = {task.id: [] for task in tasks}
     for task in tasks:
-        for dep in task.dependances:
+        for dep in task.dependencies:
             dependents[dep].append(task.id)
 
-    # File des tâches sans prérequis, dans l'ordre du plan (stabilité).
+    # Queue of the tasks without prerequisites, in plan order (stability).
     ready = [task.id for task in tasks if indegree[task.id] == 0]
     ordered: list[Task] = []
     while ready:
@@ -278,7 +265,7 @@ def topological_order(tasks: Sequence[Task]) -> list[Task]:
             if indegree[nxt] == 0:
                 ready.append(nxt)
 
-    if len(ordered) != len(tasks):  # pragma: no cover - garanti acyclique en amont
+    if len(ordered) != len(tasks):  # pragma: no cover - guaranteed acyclic upstream
         raise TaskValidationError(
             "Cycle de dépendances : ordonnancement topologique impossible."
         )
@@ -287,181 +274,173 @@ def topological_order(tasks: Sequence[Task]) -> list[Task]:
 
 @dataclass(frozen=True)
 class Brief:
-    """Forme Python immuable d'un brief structuré, miroir de `brief.schema.json` (#318).
+    """Immutable Python form of a structured brief, mirroring `brief.schema.json` (#318).
 
-    Ce que le Chef de projet rend **avant** de décomposer : l'intention reformulée,
-    ce qui est dedans, ce qui est dehors, sous quelles contraintes, à quoi on saura
-    que c'est fait, ce qu'il a tranché seul et ce qu'il refuse de trancher seul.
+    What the orchestrator returns **before** decomposing: the restated intent, what is in,
+    what is out, under which constraints, how we will know it is done, what it settled
+    alone and what it refuses to settle alone.
 
-    Les champs multivalués sont des tuples (immuables) ; `to_dict` les réémet en
-    listes pour un aller-retour JSON fidèle au schéma. Contrairement à `Task`,
-    aucune clé n'est **omise** : les quatre listes facultatives sont valides vides,
-    donc un brief se réémet toujours entier — c'est ce qui permet à l'écran de
-    validation (#322) de présenter les sept sections sans avoir à distinguer
-    « absent » de « vide ».
+    Multi-valued fields are tuples (immutable); `to_dict` emits them back as lists, for a
+    JSON round trip faithful to the schema. Unlike `Task`, no key is **omitted**: the four
+    optional lists are valid when empty, so a brief is always emitted whole, which lets the
+    approval screen (#322) present the seven sections without telling "absent" from
+    "empty".
 
-    Les champs requis viennent en tête (donc sans valeur par défaut) : l'ordre du
-    dataclass suit la contrainte Python, la **synthèse** suit l'ordre de lecture du
-    schéma.
+    Required fields come first (hence without a default): the dataclass order follows the
+    Python constraint, the **summary** follows the reading order of the schema.
     """
 
-    objectif: str
-    perimetre: tuple[str, ...]
-    hors_perimetre: tuple[str, ...]
-    criteres_acceptation: tuple[str, ...]
-    contraintes: tuple[str, ...] = ()
-    hypotheses: tuple[str, ...] = ()
+    goal: str
+    in_scope: tuple[str, ...]
+    out_of_scope: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    constraints: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
     questions: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Brief:
-        """Construit un `Brief` depuis un dict **déjà validé** contre le schéma."""
+        """Builds a `Brief` from a dict **already validated** against the schema."""
         return cls(
-            objectif=data["objectif"],
-            perimetre=tuple(data["perimetre"]),
-            hors_perimetre=tuple(data["hors_perimetre"]),
-            criteres_acceptation=tuple(data["criteres_acceptation"]),
-            contraintes=tuple(data.get("contraintes", ())),
-            hypotheses=tuple(data.get("hypotheses", ())),
+            goal=data["objectif"],
+            in_scope=tuple(data["perimetre"]),
+            out_of_scope=tuple(data["hors_perimetre"]),
+            acceptance_criteria=tuple(data["criteres_acceptation"]),
+            constraints=tuple(data.get("contraintes", ())),
+            assumptions=tuple(data.get("hypotheses", ())),
             questions=tuple(data.get("questions", ())),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet le brief en dict JSON-sérialisable, conforme au schéma."""
+        """Emits the brief back as a JSON-serializable dict that conforms to the schema."""
         return {
-            "objectif": self.objectif,
-            "perimetre": list(self.perimetre),
-            "hors_perimetre": list(self.hors_perimetre),
-            "contraintes": list(self.contraintes),
-            "criteres_acceptation": list(self.criteres_acceptation),
-            "hypotheses": list(self.hypotheses),
+            "objectif": self.goal,
+            "perimetre": list(self.in_scope),
+            "hors_perimetre": list(self.out_of_scope),
+            "contraintes": list(self.constraints),
+            "criteres_acceptation": list(self.acceptance_criteria),
+            "hypotheses": list(self.assumptions),
             "questions": list(self.questions),
         }
 
     @property
-    def a_des_questions(self) -> bool:
-        """Le brief laisse-t-il des zones d'ombre à lever avant de décomposer (#321) ?"""
+    def has_questions(self) -> bool:
+        """Does the brief leave grey areas to clear before decomposing (#321)?"""
         return bool(self.questions)
 
-    def questions_en_hypotheses(self, motif: str) -> Brief:
-        """Inscrit les questions restées sans réponse en **hypothèses explicites** (#321).
+    def questions_as_assumptions(self, reason: str) -> Brief:
+        """Records the unanswered questions as **explicit assumptions** (#321).
 
-        Ce qu'on fait des zones d'ombre quand le plafond d'allers-retours est
-        atteint : plutôt que de reposer indéfiniment les mêmes questions, le brief
-        part en validation en **assumant par écrit** ce qu'il n'a pas pu lever.
-        `motif` préfixe chaque entrée et dit d'où elle vient (« Sans réponse après
-        2 tour(s) de clarification ») — sans lui, une question muée en hypothèse
-        serait indiscernable d'une hypothèse que le Chef de projet a vraiment
-        tranchée, et l'humain qui valide perdrait la seule information qui compte
-        ici : personne n'a répondu.
+        What becomes of the grey areas once the cap on clarification rounds is reached:
+        rather than asking the same questions forever, the brief goes to approval
+        **assuming in writing** what it could not clear. `reason` prefixes each entry and
+        says where it comes from ("Sans réponse après 2 tour(s) de clarification"): without
+        it, a question turned assumption would be indistinguishable from an assumption the
+        orchestrator really settled, and the human who approves would lose the only
+        information that matters here: nobody answered.
 
-        Transformation **déterministe et faite en Python**, à dessein : c'est la
-        garantie du plafond. La demander au modèle (« au dernier tour, convertis
-        tes questions ») ferait dépendre la borne de sa docilité — un tour où il
-        repose ses questions relancerait la boucle, ce que ce lot existe justement
-        pour empêcher. Le prompt le lui demande quand même (il écrit de meilleures
-        hypothèses que ce préfixe mécanique) ; ceci est le filet qui rattrape le
-        cas où il ne l'a pas fait.
+        The transformation is **deterministic and done in Python** on purpose: it is what
+        guarantees the cap. Asking the model for it would make the bound depend on its
+        compliance, and a round where it asks its questions again would restart the loop.
+        The prompt still asks for it (the model writes better assumptions than this
+        mechanical prefix); this is the net that catches the case where it did not.
 
-        Rend `self` inchangé quand il n'y a rien à convertir — un brief sans
-        question a déjà la forme voulue.
+        Returns `self` unchanged when there is nothing to convert: a brief without questions
+        already has the expected shape.
         """
         if not self.questions:
             return self
         return replace(
             self,
-            hypotheses=self.hypotheses + tuple(f"{motif} : {q}" for q in self.questions),
+            assumptions=self.assumptions + tuple(f"{reason} : {q}" for q in self.questions),
             questions=(),
         )
 
-    def synthese(self) -> str:
-        """Rend le brief en Markdown — les sept sections, dans l'ordre du schéma.
+    def summary(self) -> str:
+        """Renders the brief in Markdown: the seven sections, in schema order.
 
-        Rendue **ici** et non par l'appelant, pour la raison qui a fait rendre son
-        rapport de lecture par l'extraction (#316) : la CLI, l'API et l'écran de
-        validation rendraient sinon chacun à sa façon un même constat, et c'est le
-        texte que l'humain relit pour approuver. Les sections vides sont
-        **affichées** avec la mention « — » plutôt que masquées : un brief sans
-        hors-périmètre est une information, pas une section manquante.
+        Rendered **here** rather than by the caller, for the reason the extraction renders
+        its own reading report (#316): the CLI, the API and the approval screen would
+        otherwise each render the same finding their own way, and this is the text the
+        human rereads to approve. Empty sections are **shown** with "—" rather than hidden:
+        a brief without out-of-scope items is information, not a missing section.
         """
-        lignes = ["# Brief", "", self.objectif, ""]
-        for titre, entrees in (
-            ("Périmètre", self.perimetre),
-            ("Hors périmètre", self.hors_perimetre),
-            ("Contraintes", self.contraintes),
-            ("Critères d'acceptation", self.criteres_acceptation),
-            ("Hypothèses", self.hypotheses),
+        lines = ["# Brief", "", self.goal, ""]
+        for title, entries in (
+            ("Périmètre", self.in_scope),
+            ("Hors périmètre", self.out_of_scope),
+            ("Contraintes", self.constraints),
+            ("Critères d'acceptation", self.acceptance_criteria),
+            ("Hypothèses", self.assumptions),
             ("Questions", self.questions),
         ):
-            lignes.append(f"## {titre}")
-            lignes.append("")
-            lignes.extend(f"- {entree}" for entree in entrees or ("—",))
-            lignes.append("")
-        return "\n".join(lignes).rstrip() + "\n"
+            lines.append(f"## {title}")
+            lines.append("")
+            lines.extend(f"- {entry}" for entry in entries or ("—",))
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
-    def cadre(self) -> str:
-        """Le cadre que chaque tâche du run reçoit à côté de sa description (#1402).
+    def frame(self) -> str:
+        """The frame every task of the run receives next to its description (#1402).
 
-        Pas la synthèse entière : ce qu'une tâche doit savoir du run auquel elle
-        contribue — à quoi il sert (l'objectif), ce qu'il ne fait pas (le
-        hors-périmètre), sous quelles contraintes, et à quoi on saura qu'il est
-        fait (ses critères d'acceptation). Le périmètre, le plan l'a déjà découpé
-        en tâches, et hypothèses et questions sont la matière de l'approbation,
-        pas celle du travail.
+        Not the whole summary: what a task must know about the run it contributes to, that
+        is what the run is for (the goal), what it does not do (out of scope), under which
+        constraints, and how we will know it is done (its acceptance criteria). The plan
+        has already split the scope into tasks, and assumptions and questions are the
+        material of approval, not of the work.
 
-        Rendu **ici**, pour la raison de `synthese` : l'agent qui réalise la tâche
-        et le vérificateur qui juge sa livraison lisent le même cadre, au mot près.
-        Un hors-périmètre vide s'affiche « — » — c'est une information ; des
-        contraintes absentes ne s'affichent pas, la plupart des briefs n'en ont pas.
+        Rendered **here**, for the reason given in `summary`: the agent doing the task and
+        the verifier judging its delivery read the same frame, word for word. An empty
+        out-of-scope shows "—", since that is information; absent constraints are not
+        shown, as most briefs have none.
         """
-        lignes = [f"Objectif : {self.objectif}", "", "Hors périmètre :"]
-        lignes.extend(f"- {entree}" for entree in self.hors_perimetre or ("—",))
-        if self.contraintes:
-            lignes += ["", "Contraintes :"]
-            lignes.extend(f"- {entree}" for entree in self.contraintes)
-        lignes += ["", "Critères d'acceptation du run :"]
-        lignes.extend(f"- {entree}" for entree in self.criteres_acceptation or ("—",))
-        return "\n".join(lignes)
+        lines = [f"Objectif : {self.goal}", "", "Hors périmètre :"]
+        lines.extend(f"- {entry}" for entry in self.out_of_scope or ("—",))
+        if self.constraints:
+            lines += ["", "Contraintes :"]
+            lines.extend(f"- {entry}" for entry in self.constraints)
+        lines += ["", "Critères d'acceptation du run :"]
+        lines.extend(f"- {entry}" for entry in self.acceptance_criteria or ("—",))
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True)
 class Clarification:
-    """Une question du brief et la réponse humaine qui lui a été donnée (#321).
+    """A question of the brief and the human answer given to it (#321).
 
-    La matière d'un tour d'aller-retour : ce que le Chef de projet a refusé de
-    trancher seul, et ce que l'humain lui a répondu. Elle vit **ici**, à côté de
-    `Brief`, et non dans le contrat moteur qui l'orchestre : c'est une valeur du
-    domaine du brief, que le prompt de régénération lit et que la boucle ne fait
-    que transporter — l'inverse obligerait `maestro.orchestrator` à importer
-    `maestro.engine`, à contresens des dépendances du paquet.
+    The material of a clarification round: what the orchestrator refused to settle alone,
+    and what the human answered. It lives **here**, next to `Brief`, rather than in the
+    engine contract that drives the rounds: it is a value of the brief domain, which the
+    regeneration prompt reads and the loop only carries. The reverse would force
+    `maestro.orchestrator` to import `maestro.engine`, against the package's dependency
+    direction.
 
-    Pas d'identifiant de question, et c'est une **décision** (#318, note du
-    schéma) : le brief est régénéré **en entier** à chaque tour, donc une question
-    n'a pas d'identité stable d'une version à l'autre. L'appariement se fait par
-    **position** contre le brief stocké du run, dont la liste de questions est
-    figée entre sa publication et sa réponse — un identifiant laisserait croire à
-    une permanence qui n'existe pas.
+    No question identifier, and that is a **decision** (#318, schema note): the brief is
+    regenerated **whole** at each round, so a question has no stable identity from one
+    version to the next. Pairing is done by **position** against the run's stored brief,
+    whose question list is frozen between its publication and its answer; an identifier
+    would suggest a permanence that does not exist.
 
-    `reponse` vide est un cas nominal, pas une entrée manquante : « je ne sais
-    pas » est une réponse, et le brief doit pouvoir en tirer une hypothèse plutôt
-    que de reposer la question au tour suivant.
+    An empty `answer` is a nominal case, not a missing entry: "I don't know" is an answer,
+    and the brief must be able to derive an assumption from it rather than ask the question
+    again at the next round.
     """
 
     question: str
-    reponse: str
+    answer: str
 
     @property
-    def sans_reponse(self) -> bool:
-        """La question est-elle restée sans réponse (vide ou blanche) ?"""
-        return not self.reponse.strip()
+    def unanswered(self) -> bool:
+        """Was the question left unanswered (empty or blank)?"""
+        return not self.answer.strip()
 
 
 def validate_brief(data: Mapping[str, Any], *, where: str = "brief") -> None:
-    """Valide un dict de brief contre la JSON Schema partagée (#318).
+    """Validates a brief dict against the shared JSON Schema (#318).
 
-    Lève `BriefValidationError` avec un message agrégé (tous les manquements) si le
-    dict n'est pas conforme. Même régime que `validate_task` — un seul message qui
-    dit tout ce qui manque, plutôt qu'un aller-retour par manquement.
+    Raises `BriefValidationError` with an aggregated message (every violation) when the
+    dict does not conform. Same regime as `validate_task`: a single message that states
+    everything missing, rather than one round trip per violation.
     """
     errors = sorted(_brief_validator().iter_errors(data), key=lambda e: str(list(e.path)))
     if errors:
@@ -470,8 +449,8 @@ def validate_brief(data: Mapping[str, Any], *, where: str = "brief") -> None:
 
 
 def _ensure_acyclic(tasks: Sequence[Task]) -> None:
-    """Détecte un cycle dans le graphe de dépendances (DFS à 3 couleurs)."""
-    deps = {task.id: task.dependances for task in tasks}
+    """Detects a cycle in the dependency graph (three-colour DFS)."""
+    deps = {task.id: task.dependencies for task in tasks}
     WHITE, GREY, BLACK = 0, 1, 2
     color = dict.fromkeys(deps, WHITE)
 
@@ -492,7 +471,7 @@ def _ensure_acyclic(tasks: Sequence[Task]) -> None:
 
 
 def _format_error(error: ValidationError) -> str:
-    """Rend un `ValidationError` jsonschema lisible, situé par son chemin."""
+    """Renders a jsonschema `ValidationError` readably, located by its path."""
     location = "".join(f"[{part!r}]" for part in error.path)
     prefix = f"champ {location} : " if location else ""
     return f"{prefix}{error.message}"

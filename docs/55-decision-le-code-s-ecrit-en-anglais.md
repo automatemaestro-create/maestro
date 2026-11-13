@@ -152,14 +152,16 @@ d'autres paquets importent. Un lot se joue quand aucune branche ouverte ne touch
 | 2 | #1650 — **pilote** : `messaging`, `queue`, `router`, `durable` | 3 037 | |
 | 3 | #1651 — `sources`, et `telemetry` hors `usage.py` et `journal.py` | 4 145 | |
 | 4 | #1664 — `telemetry/usage.py` | 553 | ses champs sont lus ≈ 1 000 fois |
-| 5 | #1652 — `projets`, `equipe`, `orchestrator` | 8 979 | |
-| 6 | #1653 — `scenarios` | 8 338 | |
-| 7 | #1654 — `outillage` | 10 294 | |
-| 8 | #1655 — `providers` | 6 864 | aucun lot de #1307 en vol |
-| 9 | #1656 — `sandbox` | 7 605 | après #1515 |
-| 10 | #1657 — `agents` | 12 382 | |
-| 11 | #1658 — la racine de `maestro/` et `lanceur` | 11 669 | après #1647 |
-| 12 | #1665 — `telemetry/journal.py` | 337 | avec le premier lot d'`engine`, ou juste avant |
+| 5 | #1652 — `orchestrator` | 2 033 | ses types sont lus ≈ 3 250 fois hors du paquet |
+| 6 | #1670 — `equipe` | 3 678 | |
+| 7 | #1671 — `projets` | 3 268 | |
+| 8 | #1653 — `scenarios` | 8 338 | |
+| 9 | #1654 — `outillage` | 10 294 | |
+| 10 | #1655 — `providers` | 6 864 | aucun lot de #1307 en vol |
+| 11 | #1656 — `sandbox` | 7 605 | après #1515 |
+| 12 | #1657 — `agents` | 12 382 | |
+| 13 | #1658 — la racine de `maestro/` et `lanceur` | 11 669 | après #1647 |
+| 14 | #1665 — `telemetry/journal.py` | 337 | avec le premier lot d'`engine`, ou juste avant |
 
 Quatre zones **restent à découper après le pilote**, sur la taille de lot qu'il recommande :
 - `engine` (15 463 lignes), après le découpage #1469 ;
@@ -287,7 +289,7 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
   ses champs. Les champs renommés, les clés s'écrivent désormais en toutes lettres, et un aller-retour
   les garde.
 - **Un lot ne renomme que ce qu'il possède.** Les noms des paquets encore en français restent :
-  `Task.titre`, `TaskResult.statut`, les arguments nommés du journal. Un paramètre de méthode
+  `TaskResult.statut`, les arguments nommés du journal. Un paramètre de méthode
   surchargée garde le nom de la classe mère.
 - **mypy ne voit pas les lectures d'attribut sur un double non typé.** Huit tests hors des quatre
   suites lisaient des attributs renommés : `decision.raison`, `message.objet`, `boite.file`,
@@ -296,6 +298,14 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
   `--check-untyped-defs`, qui désigne les lignes là où les types sont connus ; et chercher les
   `getattr(objet, "<champ>")` avant de renommer un champ. Un tel `getattr` lisait le `motif` de
   refus de plusieurs paquets à la fois, et seuls six tests de route l'ont trouvé.
+- **Un utilitaire de test qui transmet ses arguments nommés cache ses appels à mypy** (#1652).
+  `_task(**overrides)` construit un `Task(**data)` : mypy ne relie pas ses mots-clés au type, ni les
+  clés du dictionnaire par défaut. Son corps le désigne, et ses appels se renomment à leur position.
+  Neuf tests ont rougi au passage des suites, dont deux doubles non annotés
+  (`execute(self, task, …)` lisait `task.titre`).
+- **Une lecture tolérante cache sa clé à la garde** (#1652). `_extract_recovery_object` déballe
+  l'enveloppe `rattrapage`, ou à défaut l'unique objet qu'elle contient : saboter la clé ne faisait
+  rien rougir tant que la garde ne mettait qu'un objet dans l'enveloppe. Elle en met deux.
 - **Un receveur `Any` cache la lecture à mypy, même en `--check-untyped-defs`** (#1664). Une
   soixantaine de lectures passaient par le résultat d'un utilitaire non typé
   (`resultat.usage.duree_arbitrage_ms`) ou par un rapport reçu en `Any`
@@ -346,5 +356,7 @@ Pour les zones qui restent à découper :
 | le contrat de l'API | 92 routes | un lot par domaine de routes, Python et TypeScript dans la même PR |
 | `apps/web/` | 115 663 | une vingtaine de lots, par dossier de route |
 
-Sur ce seuil, sept lots du tableau du §6 dépassent la taille d'une session : #1652 à #1658,
-de 6 864 à 12 382 lignes. Chacun se rejuge à son démarrage.
+Sur ce seuil, six lots du tableau du §6 dépassent la taille d'une session : #1653 à #1658,
+de 6 864 à 12 382 lignes. Chacun se rejuge à son démarrage. #1652 l'a été : ses 8 979 lignes et
+les ≈ 3 250 lectures de ses types hors du paquet en ont fait trois lots, un par sous-paquet
+(`orchestrator`, `equipe`, `projets`).

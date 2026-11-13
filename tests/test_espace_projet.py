@@ -1336,11 +1336,11 @@ def test_l_executeur_relit_le_projet_de_la_tache(tmp_path: Path) -> None:
     def _tache(id_: str, projet_id: str | None) -> Task:
         return Task(
             id=id_,
-            titre="Corriger le calcul",
+            title="Corriger le calcul",
             description="d",
-            competences_requises=(),
-            format_sortie="markdown",
-            projet_id=projet_id,
+            required_competencies=(),
+            output_format="markdown",
+            project_id=projet_id,
         )
 
     executeur = LocalExecutor(_FournisseurEcrivain(), projets=depot)
@@ -1435,11 +1435,11 @@ def _tache_routee(id_: str, projet_id: str | None) -> Task:
     """Une tâche que le routeur confie au développeur, seul rôle outillé monté ici."""
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description="d",
-        competences_requises=("backend",),
-        format_sortie="markdown",
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="markdown",
+        project_id=projet_id,
     )
 
 
@@ -1493,7 +1493,7 @@ class _FournisseurQuiRegarde(ModelProvider):
 
 @besoin_de_git
 def test_l_executeur_monte_un_redecoupage_sur_la_branche_de_la_tache(tmp_path: Path) -> None:
-    """De la tâche jusqu'au worktree (#1396) : `Task.reprend` atteint le montage."""
+    """De la tâche jusqu'au worktree (#1396) : `Task.resumes_from` atteint le montage."""
     depot = ProjetStore(tmp_path / "depot")
     projet = depot.creer("Démo", Path(_projet_git(tmp_path).racine))
     assert projet.versionne
@@ -1501,7 +1501,7 @@ def test_l_executeur_monte_un_redecoupage_sur_la_branche_de_la_tache(tmp_path: P
         (ws.path / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
         _commite(ws.path, "le socle, livré")
     fournisseur = _FournisseurQuiRegarde()
-    tache = replace(_tache_routee("socle-r1-init", projet.id), reprend="socle")
+    tache = replace(_tache_routee("socle-r1-init", projet.id), resumes_from="socle")
 
     resultat = asyncio.run(
         _executeur(fournisseur, depot).execute(tache, [], RunJournal(run_id="run-1396"))

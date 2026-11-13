@@ -1,26 +1,23 @@
-"""L'orchestrateur : objectif → brief structuré, puis → liste de tâches (#3, #318).
+"""The orchestrator: goal → structured brief, then → task list (#3, #318).
 
-Pièce maîtresse qui relie les trois autres modules : elle envoie l'objectif au
-modèle **via la couche d'abstraction fournisseur** (`ModelProvider`, ticket #32),
-extrait le JSON de la réponse, puis le valide contre le schéma partagé.
+It sends the goal to the model **through the provider abstraction** (`ModelProvider`, #32),
+extracts the JSON from the response, then validates it against the shared schema.
 
-Deux gestes du même Chef de projet, dans cet ordre :
+Three actions of the same orchestrator (the Chef de projet on screen):
 
-- `brief` (#318) — **cadrer** : l'intention reformulée, son périmètre, son
-  hors-périmètre, ses critères d'acceptation, ses hypothèses et ses questions,
-  validés contre `packages/shared/schemas/brief.schema.json`. C'est ce qu'un humain
-  approuve **avant** toute exécution payante ;
-- `plan` (#3) — **découper** : le tableau de tâches validé contre
-  `task.schema.json`.
+- `brief` (#318) — **frame**: the restated intent, its scope, what lies out of scope, its
+  acceptance criteria, its assumptions and its questions, validated against
+  `packages/shared/schemas/brief.schema.json`. A person approves it **before** any paid
+  execution;
+- `plan` (#3) — **split**: the task array validated against `task.schema.json`;
+- `recovery` (#1178) — **recover**: judge a failed task and decide what comes next.
 
-Les deux sont indépendants et le restent : `plan` continue de partir de l'objectif
-brut, et rien ici n'oblige à passer par le brief. C'est le lot 6 de la Phase 8
-(#320) qui arrêtera le run sur le brief ; ce module ne fait que rendre l'étape
-possible.
+`brief` and `plan` are independent: `plan` takes a raw goal as well as a brief, and nothing
+here forces a run through the brief. Holding a run on its brief is the caller's job (#320).
 
-Le cœur ne dépend que de `ModelProvider` : il reste **agnostique du fournisseur**.
-Le raccourci `Orchestrator.default` résout fournisseur et modèle depuis la config
-(`MAESTRO_PROVIDER`/`MAESTRO_MODEL`, #69), sans polluer le cœur.
+The core depends only on `ModelProvider`, so it stays **provider-agnostic**. The
+`Orchestrator.default` shortcut resolves provider and model from the config
+(`MAESTRO_PROVIDER`/`MAESTRO_MODEL`, #69), outside the core.
 """
 
 from __future__ import annotations
@@ -35,17 +32,17 @@ from maestro.config import Settings, load_settings
 from maestro.orchestrator.errors import (
     BriefParsingError,
     PlanParsingError,
-    RattrapageParsingError,
+    RecoveryParsingError,
 )
 from maestro.orchestrator.prompt import (
     BRIEF_SYSTEM_PROMPT,
     build_brief_user_prompt,
-    build_rattrapage_user_prompt,
+    build_recovery_user_prompt,
     build_user_prompt,
-    prompt_orchestrateur,
-    prompt_rattrapage,
+    orchestrator_prompt,
+    recovery_prompt,
 )
-from maestro.orchestrator.rattrapage import EchecDeTache, Rattrapage, valide_rattrapage
+from maestro.orchestrator.recovery import Recovery, TaskFailure, validate_recovery
 from maestro.orchestrator.schema import (
     Brief,
     Clarification,
@@ -55,29 +52,29 @@ from maestro.orchestrator.schema import (
 )
 from maestro.providers.base import ModelProvider
 
-# Bloc de code Markdown éventuel autour du JSON (```json … ``` ou ``` … ```).
+# Markdown code block that may surround the JSON (```json … ``` or ``` … ```).
 _FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
 class Orchestrator:
-    """Transforme un objectif en langage naturel en une liste de `Task` validées."""
+    """Turns a natural-language goal into a list of validated `Task`."""
 
     def __init__(self, provider: ModelProvider, *, model: str) -> None:
         self._provider = provider
         self._model = model
 
     @property
-    def modele(self) -> str:
-        """Le modèle du Chef de projet — celui auquel la recette du run juge aussi (#1530)."""
+    def model(self) -> str:
+        """The orchestrator's model, which the run's acceptance check also judges with (#1530)."""
         return self._model
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> Orchestrator:
-        """Orchestrateur par défaut : fournisseur et modèle issus de la config (#69).
+        """Default orchestrator: provider and model come from the config (#69).
 
-        Importe la fabrique ici (et non en tête de module) pour ne pas lier le cœur
-        agnostique à un fournisseur concret : le choix vit dans la config
-        (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`), plus dans le code.
+        The factory is imported here, not at the top of the module, so the provider-agnostic
+        core is not bound to a concrete provider: the choice lives in the config
+        (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`), not in the code.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -88,142 +85,134 @@ class Orchestrator:
         self,
         objective: str,
         *,
-        equipe: Sequence[Agent] | None = None,
-        contexte_sources: str = "",
-        outillage: str = "",
-        demande: str = "",
+        team: Sequence[Agent] | None = None,
+        sources_context: str = "",
+        tooling: str = "",
+        request: str = "",
     ) -> list[Task]:
-        """Produit le plan de tâches pour `objective`.
+        """Produce the task plan for `objective`.
 
-        `equipe` (#1041) est l'équipe **du projet** sur laquelle le travail sera
-        réparti : ses rôles et ses compétences entrent dans le prompt système à la
-        place de la liste que le playbook portait en dur
-        (`maestro.orchestrator.prompt.prompt_orchestrateur`). Omise — ou vide —,
-        le découpage retombe sur les gabarits du code, ce qui est le plan d'un
-        objectif sans projet : la CLI `maestro-plan` et les activités durables
-        gardent ainsi exactement le prompt d'avant.
+        `team` (#1041) is the **project's** team the work is spread across: its roles and
+        competencies enter the system prompt (`maestro.orchestrator.prompt.orchestrator_prompt`).
+        Omitted — or empty — the split falls back on the code's templates, which is the plan
+        of a goal without a project: the `maestro-plan` CLI and the durable activities.
 
-        `contexte_sources` (#1172) : les sources d'un run **sans brief**, déjà
-        encadrées par `markdown_context` (cf. `build_user_prompt`).
+        `sources_context` (#1172): the sources of a run **without a brief**, already framed by
+        `markdown_context` (see `build_user_prompt`).
 
-        `outillage` (#1507) : les instructions de l'outillage du projet — ce qu'il
-        prévoit se confie à une tâche (cf. `build_user_prompt`). Vide hors projet.
+        `tooling` (#1507): the instructions of the project's tooling — what it provides for is
+        handed to a task (see `build_user_prompt`). Empty outside a project.
 
-        `demande` (#1580) : quand `objective` est un brief, la demande approuvée dont
-        il est né — le plan la lit à côté de lui (cf. `build_user_prompt`). Vide pour
-        un run sans brief, dont l'objectif est la demande.
+        `request` (#1580): when `objective` is a brief, the approved request it was born
+        from — the plan reads it alongside (see `build_user_prompt`). Empty for a run without
+        a brief, whose goal is the request.
 
-        Lève `ValueError` si l'objectif est vide, `PlanParsingError` si la réponse
-        du modèle n'est pas un tableau JSON exploitable, `TaskValidationError` si le
-        plan enfreint le schéma ou les règles inter-tâches.
+        Raises `ValueError` if the goal is empty, `PlanParsingError` if the model's response
+        is not a usable JSON array, `TaskValidationError` if the plan breaks the schema or the
+        inter-task rules.
         """
         if not objective or not objective.strip():
             raise ValueError("L'objectif est vide.")
 
         response = await self._provider.generate(
-            build_user_prompt(objective, contexte_sources, outillage, demande),
+            build_user_prompt(objective, sources_context, tooling, request),
             model=self._model,
-            system_prompt=prompt_orchestrateur(equipe),
+            system_prompt=orchestrator_prompt(team),
         )
         raw_tasks = _extract_task_array(response)
         return validate_plan(raw_tasks)
 
     async def brief(
         self,
-        objectif: str,
-        contexte_sources: str = "",
+        goal: str,
+        sources_context: str = "",
         clarifications: Sequence[Clarification] = (),
         *,
-        dernier_tour: bool = False,
-        outillage: str = "",
+        last_round: bool = False,
+        tooling: str = "",
     ) -> Brief:
-        """Rédige le **brief structuré** de `objectif`, validé contre son schéma (#318).
+        """Write the **structured brief** of `goal`, validated against its schema (#318).
 
-        L'étape qui précède la décomposition : l'intention est reformulée, cadrée et
-        rendue **relisable par un humain** avant qu'une seule tâche soit payée
-        (EF-40, docs/24 §3.3). C'est le lot 6 (#320) qui arrête le run dessus.
+        The step before the split: the intent is restated, framed and made **reviewable by a
+        person** before a single task is paid for (EF-40, docs/24 §3.3). The run stops on it
+        for approval (#320).
 
-        `contexte_sources` est le contenu des sources **déjà encadré** par
-        `maestro.sources.extraction.markdown_context` (#316) — le seul chemin qui
-        l'encadre comme donnée et non comme consigne (ENF-13). Il arrive encadré et
-        non en rapport de lecture depuis #1172 : un run part chez un hôte, et
-        `Lecture.to_dict` n'emporte pas le contenu (à dessein), si bien qu'un rapport
-        sérialisé arrivait vide. C'est la forme que le chat persiste déjà
-        (`MessageChat.contexte`). Vide, le brief travaille **sur le texte seul**, ce
-        qui est un cas nominal et non une entrée manquante.
+        `sources_context` is the sources' content **already framed** by
+        `maestro.sources.extraction.markdown_context` (#316) — the only path that frames it as
+        data rather than as an instruction (ENF-13). It arrives framed rather than as a reading
+        report (#1172): a run travels to a host, and `Reading.to_dict` leaves the content out
+        (by design), so a serialised report would arrive empty. It is the form the chat already
+        persists (`MessageChat.contexte`). Empty, the brief works **on the text alone**, which
+        is a nominal case, not a missing input.
 
-        `clarifications` (#321) sont les allers-retours **déjà joués**, cumulés depuis
-        le premier tour. Les passer **régénère** le brief au lieu de le rapiécer : la
-        méthode reste sans état, un tour de clarification est un appel de plus avec
-        une entrée plus riche, et le brief rendu est toujours un brief entier, validé
-        contre le même schéma. `dernier_tour` annonce au modèle que le plafond est
-        atteint (cf. `build_brief_user_prompt`) ; la borne, elle, est tenue par
-        l'appelant.
+        `clarifications` (#321) are the round trips **already played**, accumulated since the
+        first round. Passing them **regenerates** the brief instead of patching it: the method
+        stays stateless, a clarification round is one more call with a richer input, and the
+        returned brief is always a whole brief, validated against the same schema.
+        `last_round` tells the model the cap is reached (see `build_brief_user_prompt`); the
+        cap itself is enforced by the caller.
 
-        `outillage` (#1507) : les instructions de l'outillage du projet, que le brief
-        fait entrer dans son périmètre et ses critères. Vide hors projet.
+        `tooling` (#1507): the instructions of the project's tooling, which the brief brings
+        into its scope and its criteria. Empty outside a project.
 
-        Lève `ValueError` si l'objectif est vide, `BriefParsingError` si la réponse du
-        modèle n'est pas un objet JSON exploitable, `BriefValidationError` si le brief
-        enfreint le schéma partagé.
+        Raises `ValueError` if the goal is empty, `BriefParsingError` if the model's response
+        is not a usable JSON object, `BriefValidationError` if the brief breaks the shared
+        schema.
         """
-        if not objectif or not objectif.strip():
+        if not goal or not goal.strip():
             raise ValueError("L'objectif est vide.")
 
         response = await self._provider.generate(
             build_brief_user_prompt(
-                objectif,
-                contexte_sources,
+                goal,
+                sources_context,
                 clarifications,
-                dernier_tour=dernier_tour,
-                outillage=outillage,
+                last_round=last_round,
+                tooling=tooling,
             ),
             model=self._model,
             system_prompt=BRIEF_SYSTEM_PROMPT,
         )
-        donnees = _extract_brief_object(response)
-        validate_brief(donnees)
-        return Brief.from_dict(donnees)
+        data = _extract_brief_object(response)
+        validate_brief(data)
+        return Brief.from_dict(data)
 
-    async def rattrapage(
+    async def recovery(
         self,
-        echec: EchecDeTache,
+        failure: TaskFailure,
         *,
-        equipe: Sequence[Agent] | None = None,
-    ) -> Rattrapage:
-        """Juge l'échec d'une tâche et décide de la suite (#1178).
+        team: Sequence[Agent] | None = None,
+    ) -> Recovery:
+        """Judge a task's failure and decide what comes next (#1178).
 
-        Le troisième geste du Chef de projet, après le cadrage et le découpage :
-        une tâche de son plan a échoué, il lit la cause (`echec.tentatives`), dit
-        ce qui s'est passé — passager, configuration ou approche — et ce qu'on
-        change avant de retenter. `equipe` est celle du projet, pour la même raison
-        qu'au découpage : changer d'agent se fait en nommant les compétences de
-        quelqu'un qui est là.
+        The orchestrator's third action, after framing and splitting: a task of its plan has
+        failed; it reads the cause (`failure.attempts`), says what happened — transient,
+        configuration or approach — and what changes before retrying. `team` is the
+        project's, for the same reason as in the split: switching agents means naming the
+        competencies of someone who is there.
 
-        La méthode est sans état, comme `brief` : un nouveau tour — après un nouvel
-        échec, ou après la réponse de l'utilisateur — est un appel de plus avec une
-        histoire plus longue.
+        The method is stateless, like `brief`: a new round — after a new failure, or after
+        the user's answer — is one more call with a longer history.
 
-        Lève `RattrapageParsingError` si la réponse n'est pas un objet JSON
-        exploitable, `RattrapageValidationError` si elle enfreint ce que
-        l'exécution exige (`valide_rattrapage`).
+        Raises `RecoveryParsingError` if the response is not a usable JSON object,
+        `RecoveryValidationError` if it breaks what execution requires (`validate_recovery`).
         """
         response = await self._provider.generate(
-            build_rattrapage_user_prompt(echec),
+            build_recovery_user_prompt(failure),
             model=self._model,
-            system_prompt=prompt_rattrapage(equipe),
+            system_prompt=recovery_prompt(team),
         )
-        return valide_rattrapage(_extract_rattrapage_object(response), echec)
+        return validate_recovery(_extract_recovery_object(response), failure)
 
 
 def _extract_task_array(text: str) -> list[dict[str, Any]]:
-    """Extrait le tableau de tâches de la réponse brute du modèle.
+    """Extract the task array from the model's raw response.
 
-    Tolérant aux enrobages courants : JSON pur, bloc de code Markdown, objet
-    enveloppe (`{"taches": [...]}`), ou prose entourant le tableau. Renvoie une
-    liste d'objets ; lève `PlanParsingError` si rien d'exploitable n'est trouvé.
+    Tolerates the usual wrappings: plain JSON, a Markdown code block, an envelope object
+    (`{"taches": [...]}`), or prose around the array. Returns a list of objects; raises
+    `PlanParsingError` when nothing usable is found.
     """
-    payload = _loads_first_json(text, erreur=PlanParsingError)
+    payload = _loads_first_json(text, error=PlanParsingError)
     tasks = _unwrap_tasks(payload)
     if not isinstance(tasks, list):
         raise PlanParsingError(
@@ -238,54 +227,54 @@ def _extract_task_array(text: str) -> list[dict[str, Any]]:
 
 
 def _extract_brief_object(text: str) -> dict[str, Any]:
-    """Extrait l'objet brief de la réponse brute du modèle (#318).
+    """Extract the brief object from the model's raw response (#318).
 
-    Le **même** parsing tolérant que `_extract_task_array`, et volontairement le
-    même code : JSON pur, bloc de code Markdown, prose autour du JSON, ou objet
-    enveloppe (`{"brief": {…}}`). Seule change la forme attendue au bout — un
-    objet, là où le plan attend un tableau.
+    The **same** tolerant parsing as `_extract_task_array`, and deliberately the same code:
+    plain JSON, a Markdown code block, prose around the JSON, or an envelope object
+    (`{"brief": {…}}`). Only the shape expected at the end differs — an object, where the
+    plan expects an array.
 
-    Lève `BriefParsingError` quand rien n'est exploitable, avec un message qui
-    nomme le brief : réemployer `PlanParsingError` enverrait chercher un tableau
-    de tâches dans une réponse où personne n'en attendait.
+    Raises `BriefParsingError` when nothing is usable, with a message that names the brief:
+    reusing `PlanParsingError` would send the reader looking for a task array in a response
+    where nobody expected one.
     """
-    payload = _loads_first_json(text, erreur=BriefParsingError)
+    payload = _loads_first_json(text, error=BriefParsingError)
     brief = _unwrap_brief(payload)
     if not isinstance(brief, dict):
         raise BriefParsingError("La réponse du modèle ne contient pas un objet JSON de brief.")
     return brief
 
 
-def _extract_rattrapage_object(text: str) -> dict[str, Any]:
-    """Extrait l'objet de rattrapage de la réponse brute du modèle (#1178).
+def _extract_recovery_object(text: str) -> dict[str, Any]:
+    """Extract the recovery object from the model's raw response (#1178).
 
-    Même parsing tolérant que le plan et le brief. L'objet se reconnaît à sa clé
-    `geste`, requise ; à défaut on cherche une enveloppe (clé `rattrapage`, ou
-    unique valeur objet) — même règle que `_unwrap_brief` avec sa clé `objectif`.
+    Same tolerant parsing as the plan and the brief. The object is recognised by its
+    required `geste` key; failing that, an envelope is looked for (`rattrapage` key, or a
+    single object value) — the same rule as `_unwrap_brief` with its `objectif` key.
     """
-    payload = _loads_first_json(text, erreur=RattrapageParsingError)
+    payload = _loads_first_json(text, error=RecoveryParsingError)
     if isinstance(payload, dict) and "geste" not in payload:
         if isinstance(payload.get("rattrapage"), dict):
             payload = payload["rattrapage"]
         else:
-            objets = [v for v in payload.values() if isinstance(v, dict)]
-            if len(objets) == 1:
-                payload = objets[0]
+            objects = [v for v in payload.values() if isinstance(v, dict)]
+            if len(objects) == 1:
+                payload = objects[0]
     if not isinstance(payload, dict):
-        raise RattrapageParsingError(
+        raise RecoveryParsingError(
             "La réponse du modèle ne contient pas un objet JSON de rattrapage."
         )
     return payload
 
 
-def _loads_first_json(text: str, *, erreur: type[Exception]) -> Any:
-    """Décode le premier document JSON trouvé dans `text` (direct, fence, ou sous-chaîne).
+def _loads_first_json(text: str, *, error: type[Exception]) -> Any:
+    """Decode the first JSON document found in `text` (direct, fence, or substring).
 
-    `erreur` est la classe levée quand rien n'est décodable : le plan et le brief
-    partagent la tolérance mais pas le vocabulaire de l'échec (#318).
+    `error` is the class raised when nothing decodes: the plan and the brief share the
+    tolerance but not the vocabulary of the failure (#318).
     """
     if not text or not text.strip():
-        raise erreur("Réponse du modèle vide : aucun JSON à analyser.")
+        raise error("Réponse du modèle vide : aucun JSON à analyser.")
 
     candidates: list[str] = [text.strip()]
     fence = _FENCE_RE.search(text)
@@ -300,14 +289,14 @@ def _loads_first_json(text: str, *, erreur: type[Exception]) -> Any:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    raise erreur("Impossible de décoder un JSON valide depuis la réponse du modèle.")
+    raise error("Impossible de décoder un JSON valide depuis la réponse du modèle.")
 
 
 def _unwrap_tasks(payload: Any) -> Any:
-    """Déballe un tableau de tâches d'une éventuelle enveloppe objet.
+    """Unwrap a task array from a possible envelope object.
 
-    Accepte un tableau direct, ou un objet dont une clé usuelle (`taches`, `tasks`,
-    `plan`) — ou l'unique valeur tableau — porte les tâches.
+    Accepts a direct array, or an object where a usual key (`taches`, `tâches`, `tasks`,
+    `plan`) — or the single array value — carries the tasks.
     """
     if isinstance(payload, list):
         return payload
@@ -322,13 +311,12 @@ def _unwrap_tasks(payload: Any) -> Any:
 
 
 def _unwrap_brief(payload: Any) -> Any:
-    """Déballe un brief d'une éventuelle enveloppe objet (#318).
+    """Unwrap a brief from a possible envelope object (#318).
 
-    Pendant de `_unwrap_tasks`, avec une difficulté qu'il n'a pas : un brief **est**
-    un objet, donc « objet » ne suffit plus à distinguer le contenu de son
-    emballage. On le reconnaît à sa clé `objectif`, qui est requise par le schéma —
-    et ce n'est qu'à défaut qu'on cherche une enveloppe (clé usuelle, ou unique
-    valeur objet).
+    Counterpart of `_unwrap_tasks`, with a difficulty it does not have: a brief **is** an
+    object, so "object" no longer tells the content from its wrapping. The brief is
+    recognised by its `objectif` key, which the schema requires — and only failing that is
+    an envelope looked for (usual key, or single object value).
     """
     if not isinstance(payload, dict):
         return payload
@@ -344,7 +332,7 @@ def _unwrap_brief(payload: Any) -> Any:
 
 
 def _first_json_substring(text: str) -> str | None:  # noqa: C901
-    """Isole la première sous-chaîne `[...]` ou `{...}` équilibrée, hors chaînes JSON."""
+    """Isolate the first balanced `[...]` or `{...}` substring, outside JSON strings."""
     start = _first_index(text, "[{")
     if start is None:
         return None
@@ -375,7 +363,7 @@ def _first_json_substring(text: str) -> str | None:  # noqa: C901
 
 
 def _first_index(text: str, chars: str) -> int | None:
-    """Index du premier caractère de `text` appartenant à `chars`, ou None."""
+    """Index of the first character of `text` that belongs to `chars`, or None."""
     indices = [text.find(c) for c in chars]
     found = [i for i in indices if i != -1]
     return min(found) if found else None

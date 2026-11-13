@@ -326,11 +326,11 @@ def test_la_relance_rejoue_la_synthese_du_brief_sans_repasser_par_la_validation(
         assert nouveau["run_id"] != MORT  # c'est un nouveau run, pas une résurrection
         # `.strip()` parce que `lancer` élague tout objectif qu'on lui donne, celui-ci
         # comme celui d'un humain : la synthèse finit par un saut de ligne (#318).
-        assert nouveau["objectif"] == BRIEF.synthese().strip()
+        assert nouveau["objectif"] == BRIEF.summary().strip()
         assert nouveau["statut"] == EXECUTION_EN_COURS
 
         _attendre(lambda: moteur.objectifs, "le moteur du run relancé")
-        assert moteur.objectifs == [BRIEF.synthese().strip()]
+        assert moteur.objectifs == [BRIEF.summary().strip()]
         assert moteur.modes_brief == [MODE_BRIEF_SANS]
 
 
@@ -774,7 +774,7 @@ def test_un_run_lance_depuis_le_fil_se_relance_sur_son_brief():
         reponse = client.post(f"/api/executions/{MORT}/relancer")
 
         assert reponse.status_code == 202
-        assert reponse.json()["objectif"] == BRIEF.synthese().strip()
+        assert reponse.json()["objectif"] == BRIEF.summary().strip()
         _attendre(lambda: moteur.objectifs, "le moteur du run relancé")
         # Relancé sur son brief, sans repayer le cadrage : le mode `sans`.
         assert moteur.modes_brief == [MODE_BRIEF_SANS]
@@ -815,5 +815,5 @@ def test_un_run_relance_qui_meurt_a_son_tour_se_relance_encore():
         reponse = client.post(f"/api/executions/{suite}/relancer")
 
         assert reponse.status_code == 202
-        assert reponse.json()["objectif"] == BRIEF.synthese().strip()
+        assert reponse.json()["objectif"] == BRIEF.summary().strip()
         assert reponse.json()["reprise_de"] == suite

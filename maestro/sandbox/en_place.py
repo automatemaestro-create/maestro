@@ -78,7 +78,7 @@ l'agent** — la même réponse qu'à l'atelier ci-dessous, une adresse donnée 
 qu'un refus de plus.
 
 ⚠ Depuis #1198, cette adresse est aussi **la seule chose** qui borne le geste sur
-une tâche qui porte un acte accordé (`Task.acte_accorde`) : l'appel d'exécution ne
+une tâche qui porte un acte accordé (`Task.granted_act`) : l'appel d'exécution ne
 réveille plus personne, puisque l'objectif le nommait et qu'une personne l'a
 approuvé. Ce qui reste est donc entier ici — le périmètre écrit à l'agent, et les
 outils de fichiers confrontés à la frontière — et c'est ce qui rend le **mode

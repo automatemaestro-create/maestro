@@ -178,12 +178,12 @@ def _tache(id_: str, projet_id: str | None, *, dependances: tuple[str, ...] = ()
     """Une tâche confiée au développeur, seul rôle outillé monté ici ; le livrable porte son nom."""
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description=f"livrable:{id_}.md",
-        competences_requises=("backend",),
-        format_sortie="markdown",
-        dependances=dependances,
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="markdown",
+        dependencies=dependances,
+        project_id=projet_id,
     )
 
 

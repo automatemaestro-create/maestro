@@ -59,10 +59,10 @@ _INTERPRETE = ("bash", "-c")
 
 _TACHE = Task(
     id="page",
-    titre="Écrire la page d'accueil",
+    title="Écrire la page d'accueil",
     description="Critères de réussite : la page s'affiche ; le typage passe sur un clone neuf.",
-    competences_requises=("frontend",),
-    format_sortie="Une page",
+    required_competencies=("frontend",),
+    output_format="Une page",
 )
 
 _OUTILLAGE = (
@@ -491,11 +491,11 @@ def _verifie(depot: ProjetStore, projet_id: str) -> _Reponses:
     )
     tache = Task(
         id="page",
-        titre="Écrire la page d'accueil",
+        title="Écrire la page d'accueil",
         description="Critères de réussite : la page s'affiche.",
-        competences_requises=("backend",),
-        format_sortie="Une page",
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="Une page",
+        project_id=projet_id,
     )
     resultat = asyncio.run(executeur.execute(tache, [], RunJournal(run_id="run-1507")))
     assert resultat.ok, resultat.erreur

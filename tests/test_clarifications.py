@@ -348,8 +348,8 @@ def test_au_plafond_les_zones_d_ombre_partent_en_hypotheses_explicites():
 
     soumis = validation.soumis[-1]
     assert soumis.questions == ()  # le brief part en validation sans question
-    assert any("Question jamais levée ?" in h for h in soumis.hypotheses)
-    assert any(motif_sans_reponse(1) in h for h in soumis.hypotheses)
+    assert any("Question jamais levée ?" in h for h in soumis.assumptions)
+    assert any(motif_sans_reponse(1) in h for h in soumis.assumptions)
     # La synthèse **annonce** le nombre d'allers-retours joués (troisième lecture
     # de « borné et annoncé » : celle de qui relit un run terminé).
     assert "1 tour(s) de clarification" in rapport.synthese()
@@ -358,42 +358,42 @@ def test_au_plafond_les_zones_d_ombre_partent_en_hypotheses_explicites():
 def test_conversion_en_hypotheses_est_deterministe_et_sans_perte():
     """Unité : la garantie du plafond ne passe pas par le modèle mais par Python."""
     brief = Brief(
-        objectif="o",
-        perimetre=("p",),
-        hors_perimetre=(),
-        criteres_acceptation=("c",),
-        hypotheses=("déjà là",),
+        goal="o",
+        in_scope=("p",),
+        out_of_scope=(),
+        acceptance_criteria=("c",),
+        assumptions=("déjà là",),
         questions=("q1 ?", "q2 ?"),
     )
 
-    converti = brief.questions_en_hypotheses(motif_sans_reponse(2))
+    converti = brief.questions_as_assumptions(motif_sans_reponse(2))
 
     assert converti.questions == ()
-    assert converti.hypotheses[0] == "déjà là"  # rien n'est écrasé
-    assert converti.hypotheses[1:] == (
+    assert converti.assumptions[0] == "déjà là"  # rien n'est écrasé
+    assert converti.assumptions[1:] == (
         "Sans réponse après 2 tour(s) de clarification : q1 ?",
         "Sans réponse après 2 tour(s) de clarification : q2 ?",
     )
     # Sans question, l'objet est rendu tel quel (et reste un brief valide).
-    assert converti.questions_en_hypotheses("x") is converti
+    assert converti.questions_as_assumptions("x") is converti
 
 
 def test_appariement_des_reponses_tolere_le_trop_et_le_pas_assez():
     """Unité : en plein run, une liste mal dimensionnée ne doit pas coûter le run."""
     brief = Brief(
-        objectif="o",
-        perimetre=("p",),
-        hors_perimetre=(),
-        criteres_acceptation=("c",),
+        goal="o",
+        in_scope=("p",),
+        out_of_scope=(),
+        acceptance_criteria=("c",),
         questions=("q1 ?", "q2 ?"),
     )
 
     manquante = apparie_reponses(brief, ["seule"])
     assert manquante == (Clarification("q1 ?", "seule"), Clarification("q2 ?", ""))
-    assert manquante[1].sans_reponse is True
+    assert manquante[1].unanswered is True
 
     en_trop = apparie_reponses(brief, ["a", "b", "c"])
-    assert [c.reponse for c in en_trop] == ["a", "b"]  # la 3e ne vise rien
+    assert [c.answer for c in en_trop] == ["a", "b"]  # la 3e ne vise rien
 
 
 @pytest.mark.parametrize(
@@ -465,10 +465,10 @@ class MoteurQuiQuestionne:
 @pytest.fixture()
 def brief_a_questions() -> Brief:
     return Brief(
-        objectif="Un CRM minimal",
-        perimetre=("Fiches client",),
-        hors_perimetre=(),
-        criteres_acceptation=("Une fiche se crée",),
+        goal="Un CRM minimal",
+        in_scope=("Fiches client",),
+        out_of_scope=(),
+        acceptance_criteria=("Une fiche se crée",),
         questions=("Interne ou public ?", "Quel volume ?"),
     )
 
@@ -720,7 +720,7 @@ def test_l_arbitre_ignore_les_reponses_visant_un_autre_run(brief_a_questions):
         return await asyncio.wait_for(attente, timeout=5)
 
     reponses = asyncio.run(_scenario())
-    assert [clarification.reponse for clarification in reponses] == ["interne", "50"]
+    assert [clarification.answer for clarification in reponses] == ["interne", "50"]
 
 
 def test_une_question_sans_reponse_est_annoncee_au_lieu_d_etre_tue():
@@ -729,13 +729,13 @@ def test_une_question_sans_reponse_est_annoncee_au_lieu_d_etre_tue():
     Le tour suivant serait dépensé pour rien : le modèle ne peut pas savoir qu'il
     l'a déjà posée si le prompt ne la lui rappelle pas. La dire, c'est lui
     demander d'en faire une hypothèse et d'avancer — le pendant côté prompt de ce
-    que `questions_en_hypotheses` garantit côté Python.
+    que `Brief.questions_as_assumptions` garantit côté Python.
     """
     prompt = build_brief_user_prompt(
         "Un CRM minimal",
         clarifications=[
-            Clarification(question="Interne ou public ?", reponse="Interne"),
-            Clarification(question="Quel volume ?", reponse=""),
+            Clarification(question="Interne ou public ?", answer="Interne"),
+            Clarification(question="Quel volume ?", answer=""),
         ],
     )
     assert "Question : Interne ou public ?" in prompt
@@ -746,10 +746,10 @@ def test_une_question_sans_reponse_est_annoncee_au_lieu_d_etre_tue():
 
 def test_le_dernier_tour_se_dit_dans_le_prompt_et_ferme_les_questions():
     """Une invitation, pas la garantie — celle-ci est tenue en Python, jamais par docilité."""
-    clarifications = [Clarification(question="Quel volume ?", reponse="50")]
+    clarifications = [Clarification(question="Quel volume ?", answer="50")]
     ni_dernier = build_brief_user_prompt("Un CRM", clarifications=clarifications)
     dernier = build_brief_user_prompt(
-        "Un CRM", clarifications=clarifications, dernier_tour=True
+        "Un CRM", clarifications=clarifications, last_round=True
     )
     assert "DERNIER tour" in dernier
     assert "DERNIER tour" not in ni_dernier
@@ -766,7 +766,7 @@ def test_les_reponses_passent_apres_les_sources_donc_au_rang_le_plus_fort():
     prompt = build_brief_user_prompt(
         "Un CRM",
         "## Source lue\n\ncontenu du document",
-        [Clarification(question="Quel volume ?", reponse="50")],
+        [Clarification(question="Quel volume ?", answer="50")],
     )
     assert prompt.index("contenu du document") < prompt.index("Réponse : 50")
 

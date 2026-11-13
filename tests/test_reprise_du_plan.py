@@ -122,12 +122,12 @@ SOCLE, PAGES, TESTS = "socle-projet", "pages-recettes", "tests-recettes"
 def _tache(identifiant: str, *dependances: str) -> Task:
     return Task(
         id=identifiant,
-        titre=f"Tâche {identifiant}",
+        title=f"Tâche {identifiant}",
         description=f"Réaliser {identifiant}.",
-        competences_requises=("frontend",),
-        format_sortie="Texte",
-        dependances=tuple(dependances),
-        projet_id=PROJET,
+        required_competencies=("frontend",),
+        output_format="Texte",
+        dependencies=tuple(dependances),
+        project_id=PROJET,
     )
 
 
@@ -209,14 +209,14 @@ class ExecuteurQuiCoupe(TaskExecutor):
         self.dependances_recues[task.id] = tuple(dependances)
         journal.consigne(
             etape=f"{task.id}:debut",
-            nom=task.titre,
+            nom=task.title,
             agent="dev",
             role="Développeur",
             statut=STATUT_EN_COURS,
             entree=task.description,
             sortie="",
             usage=StepUsage(),
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
         if task.id in self._bloquees:
             self._bloquees.discard(task.id)
@@ -225,14 +225,14 @@ class ExecuteurQuiCoupe(TaskExecutor):
         issue = _issue(task.id, f"LIVRABLE {task.id}" + (f" (lu : {lu})" if lu else ""))
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent="dev",
             role="Développeur",
             statut=issue.statut,
             entree=task.description,
             sortie=issue.sortie,
             usage=issue.usage,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
         )
         return issue
 
@@ -632,7 +632,7 @@ def _journal_du_run(
             type=EVENEMENT_RUN_PLAN,
             run_id=RUN,
             projet_id=PROJET,
-            plan=[NoeudPlan(id=t.id, titre=t.titre, dependances=t.dependances) for t in PLAN],
+            plan=[NoeudPlan(id=t.id, titre=t.title, dependances=t.dependencies) for t in PLAN],
         ),
         Event(
             type=EVENEMENT_TACHE_STATUT,

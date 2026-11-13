@@ -128,7 +128,7 @@ class CeleryExecutor(TaskExecutor):
             )
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=result.agent,
             role=result.role,
             statut=result.statut,

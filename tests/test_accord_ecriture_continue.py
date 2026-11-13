@@ -169,11 +169,11 @@ def _tache(id_: str, projet_id: str, livrable: str) -> Task:
     """Une tâche que le routeur confie au développeur, seul rôle outillé monté ici."""
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description=f"livrable:{livrable}",
-        competences_requises=("backend",),
-        format_sortie="markdown",
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="markdown",
+        project_id=projet_id,
     )
 
 
@@ -397,7 +397,7 @@ def _plan(projet_id: str) -> tuple[Task, ...]:
     """Deux tâches en chaîne : la première fusionne avant l'extinction, la seconde après."""
     return (
         _tache("t1", projet_id, "t1.md"),
-        replace(_tache("t2", projet_id, "t2.md"), dependances=("t1",)),
+        replace(_tache("t2", projet_id, "t2.md"), dependencies=("t1",)),
     )
 
 

@@ -129,11 +129,11 @@ def _message(type_=MESSAGE_HANDOFF, *, from_agent="bdd", to_agent=BROADCAST, tas
 def _task(task_id="t1", title="Schéma", dependencies=()):
     return Task(
         id=task_id,
-        titre=title,
+        title=title,
         description="…",
-        competences_requises=("sql",),
-        format_sortie="SQL",
-        dependances=tuple(dependencies),
+        required_competencies=("sql",),
+        output_format="SQL",
+        dependencies=tuple(dependencies),
     )
 
 
