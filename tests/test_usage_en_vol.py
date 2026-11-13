@@ -302,11 +302,11 @@ def test_l_export_langfuse_ignore_un_releve():
 def _tache() -> Task:
     return Task(
         id="t1",
-        titre="Interface agenda",
+        title="Interface agenda",
         description="…",
-        competences_requises=("python",),
-        format_sortie="Module",
-        dependances=(),
+        required_competencies=("python",),
+        output_format="Module",
+        dependencies=(),
     )
 
 

@@ -35,7 +35,7 @@ et ont différé le reste ici. Ce fichier porte ce reste, en trois blocs :
    (`test_le_cran_par_defaut_d_une_demande_est_humain`) et le fail-safe sans
    validateur juste au-dessus.
 
-④ **l'accord que l'objectif a déjà donné** (#1198, `Task.acte_accorde`). C'est la
+④ **l'accord que l'objectif a déjà donné** (#1198, `Task.granted_act`). C'est la
    moitié que #1149 n'avait pas portée : le plan avait cessé d'ajouter une tâche
    « faire valider », mais l'exécution redemandait une personne **à chaque
    commande** — S1 du banc, le 2026-09-22, cinq demandes écartées à 240 s, dossier
@@ -882,12 +882,12 @@ def test_l_acte_accorde_voyage_avec_la_tache(store):
     from maestro.orchestrator.schema import Task, validate_plan
 
     (tache, _) = validate_plan(json.loads(_plan_s1(accorde=True)))
-    assert tache.acte_accorde == ACTE_ACCORDE
-    assert Task.from_dict(tache.to_dict()).acte_accorde == ACTE_ACCORDE
+    assert tache.granted_act == ACTE_ACCORDE
+    assert Task.from_dict(tache.to_dict()).granted_act == ACTE_ACCORDE
 
     # Et son absence reste une absence : pas de clé posée à la chaîne vide.
     (sans, _) = validate_plan(json.loads(_plan_s1(accorde=False)))
-    assert sans.acte_accorde == ""
+    assert sans.granted_act == ""
     assert "acte_accorde" not in sans.to_dict()
 
 

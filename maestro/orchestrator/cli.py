@@ -1,8 +1,8 @@
-"""Démo en ligne de commande de l'orchestrateur (ticket #3).
+"""Command line of the orchestrator (#3).
 
-`maestro-orchestrate "<objectif>"` → imprime le plan de tâches en JSON. Fine
-couche autour de `Orchestrator.default` : elle sert à *exercer* le flux de bout en
-bout (objectif → tâches JSON validées) contre le vrai fournisseur Claude.
+`maestro-orchestrate "<objectif>"` prints the task plan as JSON. A thin layer around
+`Orchestrator.default`: it *exercises* the flow end to end (goal → validated JSON tasks)
+against the real provider the configuration names.
 """
 
 from __future__ import annotations

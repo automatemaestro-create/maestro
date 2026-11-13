@@ -1,7 +1,7 @@
 """Le plan d'un run, tel qu'il voyage : nœuds et arêtes (ticket #490, lot 2 de #488).
 
 Le graphe d'un run existait **dans le moteur et nulle part ailleurs**.
-`Task.dependances` porte les arêtes, `dependants_directs()` construit la table
+`Task.dependencies` porte les arêtes, `dependants_directs()` construit la table
 inverse, l'exécution les respecte et le parallélisme est réel — mais rien de
 tout cela ne franchissait la frontière : ni `StepRecord`, ni `Event`, ni
 `EtatTache` ne portaient la moindre dépendance, si bien que l'API rendait des
@@ -192,9 +192,9 @@ def noeuds_du_plan(tasks: Sequence[Task]) -> list[NoeudPlan]:
     lus = (
         NoeudPlan(
             id=task.id,
-            titre=task.titre,
-            dependances=tuple(task.dependances),
-            etapes=tuple(task.etapes),
+            titre=task.title,
+            dependances=tuple(task.dependencies),
+            etapes=tuple(task.steps),
         ).valide()
         for task in tasks
     )

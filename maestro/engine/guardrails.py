@@ -199,7 +199,7 @@ def detail_accorde(acte: str) -> str:
     Le pendant de `DETAIL_AUTO` pour l'autre issue que personne n'a prononcée
     *maintenant* — à ceci près qu'ici quelqu'un l'a bel et bien prononcée, plus
     tôt : l'objectif a été montré à une personne qui l'a approuvé, et il nommait
-    cet acte-là (`Task.acte_accorde`). Le texte dit donc les deux moitiés — qui a
+    cet acte-là (`Task.granted_act`). Le texte dit donc les deux moitiés — qui a
     accordé, et **quoi** —, parce que c'est la seule ligne que le journal gardera
     d'un `rm -rf` qui n'a dérangé personne au moment de se faire.
 
@@ -419,7 +419,7 @@ class Guardrails:
         limite — le mot cherché vient souvent du **brief**, donc de toutes les
         tâches qu'on en a tirées, et non de ce que la tâche fera.
         """
-        texte = _normalise(f"{task.titre} {task.description}")
+        texte = _normalise(f"{task.title} {task.description}")
         for mot in self.mots_sensibles:
             if _normalise(mot) in texte:
                 return f"mot sensible « {mot} » détecté dans la tâche"

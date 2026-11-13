@@ -255,7 +255,7 @@ class AreteGraphe:
 
     `de` est l'amont (la tâche qui doit finir), `vers` l'aval (celle qui
     attend) — le sens du **flux de travail**, et non celui de la déclaration :
-    `Task.dependances` se lit « j'attends ceux-ci », un dessin se lit « ceci mène
+    `Task.dependencies` se lit « j'attends ceux-ci », un dessin se lit « ceci mène
     à cela ». Prendre le sens de la déclaration ferait des flèches à rebours sur
     tous les écrans.
 

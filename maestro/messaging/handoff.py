@@ -108,11 +108,11 @@ class HandoffRelay:
         downstream = ", ".join(unblocked)
         if result.ok:
             message_type = MESSAGE_HANDOFF
-            subject = f"Tâche « {task.titre} » terminée — la main passe à l'aval ({downstream})."
+            subject = f"Tâche « {task.title} » terminée — la main passe à l'aval ({downstream})."
         else:
             message_type = MESSAGE_NOTIFICATION
             subject = (
-                f"Tâche « {task.titre} » non aboutie ({result.statut}) — "
+                f"Tâche « {task.title} » non aboutie ({result.statut}) — "
                 f"aval prévenu ({downstream})."
             )
         message = AgentMessage(

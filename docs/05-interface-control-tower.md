@@ -6602,7 +6602,7 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
       "activite": null }
   ],
   // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
-  // déclaration (`Task.dependances` se lit « j'attends ceux-ci »).
+  // déclaration (`Task.dependencies` se lit « j'attends ceux-ci »).
   // `redondante`/`via` (#1297) : l'aval attendait DÉJÀ l'amont par une autre
   // chaîne du plan — `via` en nomme les nœuds intermédiaires (la plus courte).
   "aretes": [

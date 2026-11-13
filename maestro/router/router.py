@@ -186,7 +186,7 @@ class Router:
                     else "aucun agent dans ce catalogue — l'équipe reste à recruter"
                 ),
             )
-        required = frozenset(task.competences_requises)
+        required = frozenset(task.required_competencies)
         targeted = frozenset(recruited) & required
         if targeted:
             # The trade recruited for this plan takes the tasks that required it
@@ -375,7 +375,7 @@ def assign(task: Task, agents: Sequence[Agent]) -> Assignment:
     if not agents:
         raise ValueError("Aucun agent disponible pour le routage.")
 
-    required = frozenset(task.competences_requises)
+    required = frozenset(task.required_competencies)
     best = max(
         (Assignment(task=task, agent=agent, score=agent.couverture(required)) for agent in agents),
         key=lambda a: a.score,

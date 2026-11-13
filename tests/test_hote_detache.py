@@ -517,10 +517,10 @@ def bouchon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
 def brief() -> Brief:
     """Le brief minimal que les deux arbitres transportent."""
     return Brief(
-        objectif="Objectif",
-        perimetre=("dedans",),
-        hors_perimetre=("dehors",),
-        criteres_acceptation=("fait",),
+        goal="Objectif",
+        in_scope=("dedans",),
+        out_of_scope=("dehors",),
+        acceptance_criteria=("fait",),
         questions=("laquelle ?",),
     )
 
@@ -1733,10 +1733,10 @@ def _demande_renfort(run_id: str = RUN, *, attente_s: float = 30.0) -> Any:
         [
             Task(
                 id="logo",
-                titre="Dessiner le logo stylisé",
+                title="Dessiner le logo stylisé",
                 description="…",
-                competences_requises=("ui", "design-system"),
-                format_sortie="SVG",
+                required_competencies=("ui", "design-system"),
+                output_format="SVG",
             )
         ],
         [

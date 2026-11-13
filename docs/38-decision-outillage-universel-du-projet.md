@@ -984,7 +984,7 @@ avant le livrable. Cinq gestes y répondent, chacun à sa place.
   et le modèle n'est pas appelé. Ce que Maestro disait de la fusion passe dans le corps du commit.
   **Limite dite** : le premier commit d'un projet mis sous Git par Maestro (« Maestro : état initial
   du projet ») précède les réponses d'outillage, donc toute convention.
-- **Le Chef de projet lit l'outillage**, au cadrage comme au découpage (`bloc_outillage`), encadré
+- **Le Chef de projet lit l'outillage**, au cadrage comme au découpage (`tooling_block`), encadré
   comme une donnée. Un fichier « prévu » ne se crée que si une tâche le demande (§5.9) : quand
   l'objectif construit le projet, le brief fait entrer ce que l'outillage prévoit dans son périmètre,
   et ses vérifications — sur un clone neuf — et sa convention dans ses critères ; le plan confie

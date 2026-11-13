@@ -198,7 +198,7 @@ identifiant, donc sa branche : elle retrouve son travail. Un **redécoupage**, l
 neuves (`<tâche>-r<tour>-<id>`), et leurs branches partaient de la base — sur le run
 `da0a8ae6f1b2`, le travail réussi de `maestro/socle-nextjs` n'était plus sous les pieds de ses
 remplaçantes, et tout se refaisait de zéro. Les tâches **de tête** d'un redécoupage portent
-désormais la tâche qu'elles reprennent (`Task.reprend`, posé par le moteur seul), et leur branche
+désormais la tâche qu'elles reprennent (`Task.resumes_from`, posé par le moteur seul), et leur branche
 **naît de la sienne** quand elle existe ; les autres partent de la base, où la fusion de celles
 qu'elles attendent a déjà porté ce travail. Une branche qui existe déjà se reprend telle quelle :
 `reprend` ne dit d'où partir qu'à la création.

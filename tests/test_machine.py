@@ -427,10 +427,10 @@ def _tache(id_: str) -> Task:
     """Une tâche que le routeur confie au développeur, seul rôle outillé monté ici."""
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description="d",
-        competences_requises=("backend",),
-        format_sortie="markdown",
+        required_competencies=("backend",),
+        output_format="markdown",
     )
 
 
@@ -489,7 +489,7 @@ def test_l_executeur_sonde_les_programmes_de_l_outillage_du_projet_de_la_tache(
         runtimes={DEVELOPER_PROFILE.nom: AgentRuntime(provider, DEVELOPER_PROFILE)},
         projets=depot,
     )
-    tache = replace(_tache("t1"), projet_id=projet.id)
+    tache = replace(_tache("t1"), project_id=projet.id)
 
     resultat = asyncio.run(executeur.execute(tache, [], RunJournal(run_id="run-1403")))
 

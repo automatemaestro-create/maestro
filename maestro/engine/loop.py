@@ -240,12 +240,12 @@ from maestro.equipe.manque import (
 from maestro.messaging.handoff import HandoffRelay
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.rattrapage import (
-    GESTE_ABANDONNER,
-    Rattrapage,
-    Tentative,
-    tache_reprise,
-    taches_redecoupees,
+from maestro.orchestrator.recovery import (
+    ACTION_ABANDON,
+    Attempt,
+    Recovery,
+    resplit_tasks,
+    reworked_task,
 )
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
 from maestro.outillage.contexte import outillage_du_projet
@@ -1055,14 +1055,14 @@ class OrchestrationEngine:
                 objective, journal, mode_brief, projet_id, contexte_sources
             )
             # L'entrée de la décomposition : le brief retenu, ou l'objectif brut en
-            # mode « sans ». `Brief.synthese()` plutôt que le seul `brief.objectif` —
+            # mode « sans ». `Brief.summary()` plutôt que le seul `brief.objectif` —
             # c'est le texte que l'humain a relu pour approuver, périmètre et
             # critères compris, et décomposer moins que ce qui a été approuvé rendrait
             # l'approbation trompeuse. Les sources suivent la même règle : le brief
             # les a digérées, sinon le plan est le premier à les lire. La demande
             # voyage à côté du brief (#1580) : on ne décompose pas une reformulation
             # sans son original.
-            entree_plan = objective if brief is None else brief.synthese()
+            entree_plan = objective if brief is None else brief.summary()
             plan_usage, tasks = await self._plan(
                 entree_plan,
                 journal,
@@ -1097,8 +1097,8 @@ class OrchestrationEngine:
         if projet_id is not None:
             tasks = [
                 task
-                if task.projet_id is not None
-                else replace(task, projet_id=projet_id)
+                if task.project_id is not None
+                else replace(task, project_id=projet_id)
                 for task in tasks
             ]
         if reprise is None:
@@ -1250,13 +1250,13 @@ class OrchestrationEngine:
             # tableau noir qui la concerne, aucun état partagé entre tâches. Le
             # sémaphore n'est pris qu'une fois les dépendances résolues, pour ne
             # pas occuper un créneau à attendre (ni s'interbloquer).
-            dependances = [await en_vol[dep] for dep in task.dependances]
+            dependances = [await en_vol[dep] for dep in task.dependencies]
             if relais is not None:
                 # Handoff (#44) : la tâche ne démarre qu'une fois le message de
                 # chacune de ses dépendances relevé dans la boîte aux lettres —
                 # sauf d'une dépendance acquise (#1391), dont l'annonce est partie
                 # avant l'interruption et ne repartira pas.
-                for dep in task.dependances:
+                for dep in task.dependencies:
                     if dep not in acquises:
                         await relais.wait_for(dep)
             insatisfaites = [dep for dep in dependances if not dep.ok]
@@ -1352,7 +1352,7 @@ class OrchestrationEngine:
                     projet_id,
                     tuple(resultat_de(task.id) for task in ordered),
                     journal,
-                    modele=self._orchestrator.modele,
+                    modele=self._orchestrator.model,
                 )
         finally:
             if au_plafond is not None:
@@ -1536,7 +1536,7 @@ class OrchestrationEngine:
                         producteur,
                         description=producteur.description + _retour_qa(task, renvoi),
                     ),
-                    [resultat_de(dep) for dep in producteur.dependances],
+                    [resultat_de(dep) for dep in producteur.dependencies],
                 )
                 self._solde_si_suspendue(producteur, refait, journal)
                 # L'usage d'une reprise **s'ajoute** à celui des exécutions
@@ -1664,7 +1664,7 @@ class OrchestrationEngine:
             return cadrage, brief, 0
         clarifications: tuple[Clarification, ...] = ()
         tour = 0
-        while brief.a_des_questions and tour < tours_max:
+        while brief.has_questions and tour < tours_max:
             tour += 1
             reponses = await arbitre(
                 DemandeClarification(
@@ -1691,8 +1691,8 @@ class OrchestrationEngine:
                 tour=tour,
             )
             cadrage = cadrage.merge(usage)
-        if brief.a_des_questions:
-            brief = brief.questions_en_hypotheses(motif_sans_reponse(tour))
+        if brief.has_questions:
+            brief = brief.questions_as_assumptions(motif_sans_reponse(tour))
         return cadrage, brief, tour
 
     async def _plan(
@@ -1739,10 +1739,10 @@ class OrchestrationEngine:
             try:
                 tasks = await self._orchestrator.plan(
                     objective,
-                    equipe=self._equipe(projet_id),
-                    contexte_sources=contexte_sources,
-                    outillage=self._outillage(projet_id),
-                    demande=demande,
+                    team=self._equipe(projet_id),
+                    sources_context=contexte_sources,
+                    tooling=self._outillage(projet_id),
+                    request=demande,
                 )
             except Exception as exc:
                 journal.consigne(
@@ -2242,7 +2242,7 @@ class OrchestrationEngine:
         Une seule règle pour deux lecteurs (#1041) : la même que l'exécuteur
         applique tâche par tâche, appelée ici une fois par run parce qu'un plan se
         découpe une fois. Le repli est **le catalogue du câblage** et non une
-        liste vide : `prompt_orchestrateur` retomberait sinon sur les gabarits du
+        liste vide : `orchestrator_prompt` retomberait sinon sur les gabarits du
         code en ignorant les agents personnalisés que ce moteur a chargés au
         démarrage (#72).
 
@@ -2318,7 +2318,7 @@ class OrchestrationEngine:
         reprise se repropose (« toujours suspendue »), jusqu'à
         `PolitiqueRattrapage.max_propositions`. Une réponse en mots n'est lue par
         aucun motif : elle part au Chef de projet, qui la juge. Et le Chef de
-        projet peut **proposer** lui aussi (`GESTE_PROPOSER`) — c'est ainsi qu'un
+        projet peut **proposer** lui aussi (`ACTION_PROPOSE`) — c'est ainsi qu'un
         blocage que l'agent a signalé devient une chose à donner.
 
         Tant qu'une proposition attend, la carte de la tâche dit « Attente
@@ -2336,13 +2336,13 @@ class OrchestrationEngine:
             return echec
         dossier = juge.ouvre(journal.run_id, task)
         dossier.tentatives.append(
-            Tentative(
-                taches=(task,),
+            Attempt(
+                tasks=(task,),
                 agent=echec.agent,
                 role=echec.role,
-                erreur=echec.erreur or "",
-                blocages=echec.blocages,
-                verification_en_panne=echec.verification_en_panne,
+                error=echec.erreur or "",
+                blockers=echec.blocages,
+                verification_outage=echec.verification_en_panne,
             )
         )
         usage = echec.usage
@@ -2404,10 +2404,10 @@ class OrchestrationEngine:
                         if verdict is None:
                             verdict, cout = await juge.juge(dossier, journal)
                             usage = usage.merge(cout)
-                    elif isinstance(retenu, Rattrapage):
+                    elif isinstance(retenu, Recovery):
                         # Les tentatives sont épuisées : ce que le juge proposait ne
                         # part pas, mais ce qu'il a compris va dans la question.
-                        diagnostic = retenu.diagnostic
+                        diagnostic = retenu.diagnosis
                     # Pourquoi on en vient à demander — c'est ce que l'issue dira si
                     # la question ne peut pas partir, ou ne reçoit pas de réponse.
                     if essais >= politique.max_tentatives:
@@ -2418,9 +2418,9 @@ class OrchestrationEngine:
                         motif = "le Chef de projet n'a pas pu juger l'échec"
                     else:
                         motif = "il faut une réponse de l'utilisateur"
-                if isinstance(verdict, Rattrapage):
-                    diagnostic = verdict.diagnostic
-                    if verdict.execute:
+                if isinstance(verdict, Recovery):
+                    diagnostic = verdict.diagnosis
+                    if verdict.reruns:
                         essais += 1
                         tours += 1
                         resultat, executees, geste = await self._retente(
@@ -2428,17 +2428,17 @@ class OrchestrationEngine:
                         )
                         usage = usage.merge(resultat.usage)
                         if resultat.ok:
-                            ajustements.update(verdict.ajustements)
+                            ajustements.update(verdict.adjustments)
                             return replace(resultat, usage=usage)
                         dossier.tentatives.append(
-                            Tentative(
-                                taches=executees,
+                            Attempt(
+                                tasks=executees,
                                 agent=resultat.agent,
                                 role=resultat.role,
-                                erreur=resultat.erreur or "",
-                                geste=geste,
-                                diagnostic=verdict.diagnostic,
-                                blocages=resultat.blocages,
+                                error=resultat.erreur or "",
+                                action=geste,
+                                diagnosis=verdict.diagnosis,
+                                blockers=resultat.blocages,
                             )
                         )
                         dernier = resultat
@@ -2446,17 +2446,17 @@ class OrchestrationEngine:
                             derniere_tache = executees[0]
                             suspendue = self._executor.suspendue(resultat)
                         continue
-                    if verdict.geste == GESTE_ABANDONNER:
+                    if verdict.action == ACTION_ABANDON:
                         issue = (
                             "abandonnée sur la réponse de l'utilisateur — "
                             f"« {(dossier.reponse or '').strip()} »"
                         )
                         break
-                    if verdict.prerequis is not None:
+                    if verdict.prerequisite is not None:
                         # Le Chef de projet nomme ce qui manque (#1181) — souvent ce
                         # que l'agent a signalé. Il se propose comme un constat ; à
                         # défaut de pouvoir le proposer, il devient la question.
-                        nomme = self._prerequis_nomme(task, verdict.prerequis)
+                        nomme = self._prerequis_nomme(task, verdict.prerequisite)
                         if propositions < politique.max_propositions and self._peut_proposer(
                             task, nomme
                         ):
@@ -2488,11 +2488,11 @@ class OrchestrationEngine:
                             # à l'agent qui a buté.
                             derniere_tache = replace(
                                 derniere_tache,
-                                competences_requises=tuple(
+                                required_competencies=tuple(
                                     dict.fromkeys(
                                         (
                                             *(a_proposer.couvre or a_proposer.competences),
-                                            *derniere_tache.competences_requises,
+                                            *derniere_tache.required_competencies,
                                         )
                                     )
                                 ),
@@ -2504,16 +2504,16 @@ class OrchestrationEngine:
                         suspendue = self._executor.suspendue(resultat)
                         if resultat.ok:
                             return replace(
-                                resultat, task_id=task.id, titre=task.titre, usage=usage
+                                resultat, task_id=task.id, titre=task.title, usage=usage
                             )
                         dossier.tentatives.append(
-                            Tentative(
-                                taches=(derniere_tache,),
+                            Attempt(
+                                tasks=(derniere_tache,),
                                 agent=resultat.agent,
                                 role=resultat.role,
-                                erreur=resultat.erreur or "",
-                                geste=f"reprise après le prérequis « {a_proposer.objet} »",
-                                blocages=resultat.blocages,
+                                error=resultat.erreur or "",
+                                action=f"reprise après le prérequis « {a_proposer.objet} »",
+                                blockers=resultat.blocages,
                             )
                         )
                         dernier = resultat
@@ -2554,7 +2554,7 @@ class OrchestrationEngine:
                     accepte = await self._executor.accepte_la_livraison(
                         derniere_tache, dernier, journal
                     )
-                    return replace(accepte, task_id=task.id, titre=task.titre, usage=usage)
+                    return replace(accepte, task_id=task.id, titre=task.title, usage=usage)
                 dossier.question, dossier.reponse = texte, reponse
                 essais = 0
         finally:
@@ -2567,7 +2567,7 @@ class OrchestrationEngine:
         return replace(
             dernier,
             task_id=task.id,
-            titre=task.titre,
+            titre=task.title,
             statut=STATUT_ECHEC,
             erreur=erreur,
             usage=usage,
@@ -2593,7 +2593,7 @@ class OrchestrationEngine:
         """
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=dernier.agent,
             role=dernier.role,
             statut=statut,
@@ -2602,7 +2602,7 @@ class OrchestrationEngine:
             erreur=erreur,
             usage=StepUsage(),
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             description=task.description,
         )
 
@@ -2619,13 +2619,13 @@ class OrchestrationEngine:
         """
         if prerequis.genre != GENRE_ROLE or prerequis.gabarit:
             return prerequis
-        equipe = catalogue_du_projet(self._agents_store, task.projet_id, self._modele)
+        equipe = catalogue_du_projet(self._agents_store, task.project_id, self._modele)
         if equipe is None:
             return prerequis
         manque = role_manquant(competences_non_couvertes(prerequis.competences, equipe))
         if manque is None or manque.gabarit is None:
             return prerequis
-        return replace(prerequis_du_role(manque, task.titre), raison=prerequis.raison)
+        return replace(prerequis_du_role(manque, task.title), raison=prerequis.raison)
 
     def _peut_proposer(self, task: Task, prerequis: PrerequisManquant) -> bool:
         """Y a-t-il un fil où proposer ce prérequis ? (#1181)
@@ -2640,7 +2640,7 @@ class OrchestrationEngine:
         return (
             prerequis.recrutable
             and self._arbitre_renfort is not None
-            and task.projet_id is not None
+            and task.project_id is not None
         )
 
     async def _propose(
@@ -2667,7 +2667,7 @@ class OrchestrationEngine:
         if (
             prerequis.recrutable
             and self._arbitre_renfort is not None
-            and task.projet_id is not None
+            and task.project_id is not None
         ):
             return await self._propose_un_role(task, prerequis, journal, constate=constate)
         texte = question_du_prerequis(task, prerequis, rang)
@@ -2720,16 +2720,16 @@ class OrchestrationEngine:
         le second cas — il n'y a rien à reprendre sans réponse.
         """
         arbitre = self._arbitre_renfort
-        if arbitre is None or task.projet_id is None:  # pragma: no cover — vérifié avant
+        if arbitre is None or task.project_id is None:  # pragma: no cover — vérifié avant
             return _Proposition(issue="personne n'est branché sur ce run pour le proposer")
         objectif = self._juge.objectif(journal.run_id) if self._juge is not None else ""
         demande = DemandeRenfort(
             run_id=journal.run_id,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             objectif=objectif,
-            manque=ManqueAuPlan(manque=prerequis.role_manquant(), taches=(task.titre,)),
+            manque=ManqueAuPlan(manque=prerequis.role_manquant(), taches=(task.title,)),
             attente_s=self._bornes_renfort.attente_s,
-            tache=task.titre,
+            tache=task.title,
         )
         verrou = self._verrous_renfort.setdefault(journal.run_id, asyncio.Lock())
         async with verrou:
@@ -2781,13 +2781,13 @@ class OrchestrationEngine:
                 f"(décliné d'un geste) pas de recrutement du rôle « {prerequis.objet} »"
                 + (f" — {detail}" if detail else "")
             ),
-            texte=f"Recruter le rôle « {prerequis.objet} » pour la tâche « {task.titre} » ?",
+            texte=f"Recruter le rôle « {prerequis.objet} » pour la tâche « {task.title} » ?",
         )
 
     async def _retente(
         self,
         task: Task,
-        verdict: Rattrapage,
+        verdict: Recovery,
         dependances: Sequence[TaskResult],
         journal: RunJournal,
         executer: _Executer,
@@ -2802,16 +2802,16 @@ class OrchestrationEngine:
         **redécoupée** en plusieurs. Rend aussi ce qui a été exécuté et comment,
         pour la ligne d'histoire d'un nouvel échec.
         """
-        if verdict.rejoue:
+        if verdict.replays:
             dossier.en_cours = "rejouée à l'identique (jugée passagère)"
             if self._relance is not None:
                 await asyncio.sleep(self._relance.attente_s(tour))
             return await executer(task, dependances), (task,), dossier.en_cours
-        if len(verdict.taches) == 1:
+        if len(verdict.tasks) == 1:
             dossier.en_cours = "reprise autrement"
-            reprise = tache_reprise(task, verdict.taches[0])
+            reprise = reworked_task(task, verdict.tasks[0])
             return await executer(reprise, dependances), (reprise,), dossier.en_cours
-        sous = taches_redecoupees(task, verdict.taches, tour)
+        sous = resplit_tasks(task, verdict.tasks, tour)
         dossier.en_cours = f"redécoupée en {len(sous)} tâches"
         resultat = await self._redecoupe(task, sous, dependances, journal, executer)
         return resultat, sous, dossier.en_cours
@@ -2840,7 +2840,7 @@ class OrchestrationEngine:
         issues: dict[str, asyncio.Task[TaskResult]] = {}
 
         async def une(sous_tache: Task) -> TaskResult:
-            propres = [await issues[dep] for dep in sous_tache.dependances]
+            propres = [await issues[dep] for dep in sous_tache.dependencies]
             insatisfaites = [dep for dep in propres if not dep.ok]
             if insatisfaites:
                 return _consigne_blocage(sous_tache, insatisfaites, journal)
@@ -2871,10 +2871,10 @@ class OrchestrationEngine:
         if echecs:
             return TaskResult(
                 task_id=task.id,
-                titre=task.titre,
+                titre=task.title,
                 agent=echecs[0].agent,
                 role=echecs[0].role,
-                competences_requises=task.competences_requises,
+                competences_requises=task.required_competencies,
                 score=echecs[0].score,
                 statut=STATUT_ECHEC,
                 sortie="",
@@ -2886,7 +2886,7 @@ class OrchestrationEngine:
         sortie = "\n\n".join(f"— [{r.titre}]\n{r.sortie}" for r in resultats)
         journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=derniere.agent,
             role=derniere.role,
             statut=STATUT_TERMINEE,
@@ -2894,15 +2894,15 @@ class OrchestrationEngine:
             sortie=sortie,
             usage=StepUsage(),
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             description=task.description,
         )
         return TaskResult(
             task_id=task.id,
-            titre=task.titre,
+            titre=task.title,
             agent=derniere.agent,
             role=derniere.role,
-            competences_requises=task.competences_requises,
+            competences_requises=task.required_competencies,
             score=derniere.score,
             statut=STATUT_TERMINEE,
             sortie=sortie,
@@ -2959,11 +2959,11 @@ class OrchestrationEngine:
             hypothese=hypothese,
             choix=choix,
             tache_id=task.id,
-            titre=task.titre,
+            titre=task.title,
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
             run_id=journal.run_id,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             attente_s=attente_s,
             retirer_sans_reponse=True,
         )
@@ -3020,8 +3020,8 @@ class OrchestrationEngine:
                     objectif,
                     contexte_sources,
                     clarifications,
-                    dernier_tour=dernier_tour,
-                    outillage=self._outillage(projet_id),
+                    last_round=dernier_tour,
+                    tooling=self._outillage(projet_id),
                 )
             except Exception as exc:
                 journal.consigne(
@@ -3046,7 +3046,7 @@ class OrchestrationEngine:
             statut=STATUT_TERMINEE,
             entree=objectif,
             sortie=(
-                f"{len(brief.criteres_acceptation)} critère(s) d'acceptation, "
+                f"{len(brief.acceptance_criteria)} critère(s) d'acceptation, "
                 f"{len(brief.questions)} question(s)"
             ),
             usage=usage,
@@ -3126,7 +3126,7 @@ def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
     """
     dependants: dict[str, list[str]] = {task.id: [] for task in tasks}
     for task in tasks:
-        for dep in task.dependances:
+        for dep in task.dependencies:
             dependants[dep].append(task.id)
     return dependants
 
@@ -3209,7 +3209,7 @@ class _AuPlafond:
         if self._arrete:
             return self._arret
         if commencee:
-            self._mises_de_cote[task.id] = task.titre
+            self._mises_de_cote[task.id] = task.title
         try:
             while True:
                 if self._arrete:
@@ -3260,7 +3260,7 @@ class _AuPlafond:
         role = result.role if result is not None else "non exécutée"
         self._journal.consigne(
             etape=task.id,
-            nom=task.titre,
+            nom=task.title,
             agent=agent,
             role=role,
             statut=STATUT_ECHEC,
@@ -3269,15 +3269,15 @@ class _AuPlafond:
             erreur=cause,
             usage=StepUsage(),
             ticket=task.ticket,
-            projet_id=task.projet_id,
+            projet_id=task.project_id,
             description=task.description,
         )
         return TaskResult(
             task_id=task.id,
-            titre=task.titre,
+            titre=task.title,
             agent=agent,
             role=role,
-            competences_requises=task.competences_requises,
+            competences_requises=task.required_competencies,
             score=result.score if result is not None else 0,
             statut=STATUT_ECHEC,
             sortie="",
@@ -3318,7 +3318,7 @@ class _AuPlafond:
         restantes = tuple(
             TacheRestante(
                 tache_id=tache.id,
-                titre=tache.titre,
+                titre=tache.title,
                 interrompue=tache.id in self._mises_de_cote,
             )
             for tache in self._restantes()
@@ -3450,7 +3450,7 @@ def _retour_qa(juge: Task, renvoi: Renvoi) -> str:
     """Ce qui suit la description d'une tâche renvoyée par la QA — les défauts, et la consigne."""
     return (
         "\n\n## Renvoyé par la QA\n\n"
-        f"La tâche « {juge.titre} » a jugé ton livrable NON CONFORME "
+        f"La tâche « {juge.title} » a jugé ton livrable NON CONFORME "
         f"({renvoi.defauts} défaut(s) bloquant(s)). Ses constats, preuves à l'appui :\n\n"
         f"{renvoi.motif}\n\n"
         "Corrige ton livrable pour lever ces défauts. La QA évalue, elle ne réécrit "
@@ -3466,7 +3466,7 @@ def _verdict_de_renvoi(juge: Task, renvoi: Renvoi) -> VerdictVerification:
                 critere=CRITERE_QA,
                 etat=CONSTAT_NON_TENU,
                 preuve=(
-                    f"« {juge.titre} » : {renvoi.defauts} défaut(s) bloquant(s) — "
+                    f"« {juge.title} » : {renvoi.defauts} défaut(s) bloquant(s) — "
                     f"{renvoi.motif}"
                 ),
             ),
@@ -3486,15 +3486,15 @@ def _consigne_renvoi(
     verdict = _verdict_de_renvoi(juge, renvoi)
     journal.consigne(
         etape=f"{producteur.id}{SUFFIXE_ETAPE_VERIFICATION}",
-        nom=f"Vérification — {producteur.titre}",
+        nom=f"Vérification — {producteur.title}",
         agent=dernier.agent,
         role=dernier.role,
         statut=verdict.statut,
-        entree=f"verdict de « {juge.titre} »",
-        sortie=f"non conforme selon « {juge.titre} » — renvoyée à {dernier.role}",
+        entree=f"verdict de « {juge.title} »",
+        sortie=f"non conforme selon « {juge.title} » — renvoyée à {dernier.role}",
         description=verdict.preuves(),
         usage=StepUsage(),
-        projet_id=producteur.projet_id,
+        projet_id=producteur.project_id,
         verification={**verdict.to_dict(), "renvoi": juge.id},
     )
 
@@ -3513,27 +3513,27 @@ def _consigne_non_conforme(
     """
     verdict = _verdict_de_renvoi(juge, renvoi)
     erreur = (
-        f"non conforme selon « {juge.titre} » — {renvoi.defauts} défaut(s) bloquant(s), "
+        f"non conforme selon « {juge.title} » — {renvoi.defauts} défaut(s) bloquant(s), "
         "et la dernière reprise n'en a levé aucun de plus.\n"
         f"{verdict.preuves()}"
     )
     journal.consigne(
         etape=f"{producteur.id}{SUFFIXE_ETAPE_VERIFICATION}",
-        nom=f"Vérification — {producteur.titre}",
+        nom=f"Vérification — {producteur.title}",
         agent=dernier.agent,
         role=dernier.role,
         statut=verdict.statut,
-        entree=f"verdict de « {juge.titre} »",
-        sortie=f"non conforme selon « {juge.titre} » — aucun défaut levé de plus",
+        entree=f"verdict de « {juge.title} »",
+        sortie=f"non conforme selon « {juge.title} » — aucun défaut levé de plus",
         description=verdict.preuves(),
         usage=StepUsage(),
-        projet_id=producteur.projet_id,
+        projet_id=producteur.project_id,
         verification={**verdict.to_dict(), "renvoi": juge.id},
     )
     echec = replace(dernier, statut=STATUT_ECHEC, sortie="", erreur=erreur, renvois=())
     journal.consigne(
         etape=producteur.id,
-        nom=producteur.titre,
+        nom=producteur.title,
         agent=echec.agent,
         role=echec.role,
         statut=echec.statut,
@@ -3542,7 +3542,7 @@ def _consigne_non_conforme(
         erreur=erreur,
         usage=StepUsage(),
         ticket=producteur.ticket,
-        projet_id=producteur.projet_id,
+        projet_id=producteur.project_id,
         description=producteur.description,
     )
     return echec
@@ -3561,10 +3561,10 @@ def _consigne_blocage(
     causes = ", ".join(f"{dep.task_id} ({dep.statut})" for dep in insatisfaites)
     result = TaskResult(
         task_id=task.id,
-        titre=task.titre,
+        titre=task.title,
         agent="—",
         role="non exécutée",
-        competences_requises=task.competences_requises,
+        competences_requises=task.required_competencies,
         score=0,
         statut=STATUT_BLOQUEE,
         sortie="",
@@ -3575,7 +3575,7 @@ def _consigne_blocage(
     )
     journal.consigne(
         etape=task.id,
-        nom=task.titre,
+        nom=task.title,
         agent=result.agent,
         role=result.role,
         statut=result.statut,
@@ -3584,6 +3584,6 @@ def _consigne_blocage(
         erreur=result.erreur,
         usage=StepUsage(),
         ticket=task.ticket,
-        projet_id=task.projet_id,
+        projet_id=task.project_id,
     )
     return result

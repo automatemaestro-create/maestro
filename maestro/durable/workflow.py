@@ -165,7 +165,7 @@ class MaestroRunWorkflow:
         in_flight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
         async def _when_ready(task: Task) -> dict[str, Any]:
-            dependencies = [await in_flight[dep] for dep in task.dependances]
+            dependencies = [await in_flight[dep] for dep in task.dependencies]
             unmet = [dep for dep in dependencies if dep["statut"] != STATUT_TERMINEE]
             result: dict[str, Any]
             if unmet:

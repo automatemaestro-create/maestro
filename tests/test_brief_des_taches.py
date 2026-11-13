@@ -305,17 +305,17 @@ def test_le_verificateur_de_fin_de_tache_lit_le_meme_brief():
     assert len(agent.verifications) == 3
     assert "Recette du run" in agent.verifications[-1]
     for prompt in agent.verifications:
-        assert f"<brief>\n{BRIEF.cadre()}\n</brief>" in prompt
+        assert f"<brief>\n{BRIEF.frame()}\n</brief>" in prompt
         # La tâche d'abord, son contrat ; le brief ensuite, son cadre.
         assert prompt.index("</tache>") < prompt.index("<brief>")
 
 
 _TACHE = Task(
     id="t",
-    titre="Écrire le salut",
+    title="Écrire le salut",
     description=f"Critères de réussite : {_CRITERE}.",
-    competences_requises=("backend",),
-    format_sortie="Un fichier",
+    required_competencies=("backend",),
+    output_format="Un fichier",
 )
 
 
@@ -365,7 +365,7 @@ def test_chaque_prompt_du_verificateur_porte_le_brief_encadre_comme_donnee(tmp_p
     assert "<non_tenues>" in contre_expertise
     (relire,) = relecture.prompts
     for prompt in (etablir, contre_expertise, relire):
-        assert f"<brief>\n{BRIEF.cadre()}\n</brief>" in prompt
+        assert f"<brief>\n{BRIEF.frame()}\n</brief>" in prompt
 
 
 def test_sans_brief_le_prompt_du_verificateur_est_celui_d_avant(tmp_path):
@@ -437,7 +437,7 @@ def test_un_run_relance_sur_son_brief_le_donne_a_ses_taches_sans_le_repayer():
     """#349 : la relance décompose la synthèse en mode `sans` — et garde le brief."""
     agent, cadrage = AgentEtJuge(), Cadrage()
 
-    asyncio.run(_moteur(agent, cadrage).run(BRIEF.synthese(), brief_approuve=BRIEF))
+    asyncio.run(_moteur(agent, cadrage).run(BRIEF.summary(), brief_approuve=BRIEF))
 
     assert cadrage.briefs == []  # le cadrage n'est pas repayé
     assert len(cadrage.plans) == 1
@@ -649,7 +649,7 @@ def test_la_relance_donne_le_brief_approuve_au_moteur_du_nouveau_run():
 
     (run,) = moteur.runs
     assert run["brief_approuve"] == BRIEF
-    assert run["objectif"] == BRIEF.synthese().strip()
+    assert run["objectif"] == BRIEF.summary().strip()
 
 
 # --------------------------------------------------------------------------- #

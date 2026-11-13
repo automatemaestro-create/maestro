@@ -168,7 +168,7 @@ d'un autre rôle : elle le **renvoie**.
 ## Le brief du run, à côté de la tâche (#1402)
 
 Le vérificateur lit le **brief approuvé du run** quand il y en a un — le même cadre
-que l'agent a reçu dans son message (`Brief.cadre`) : l'objectif, le
+que l'agent a reçu dans son message (`Brief.frame`) : l'objectif, le
 hors-périmètre, les contraintes, les critères d'acceptation du run. Sans lui, il
 « déduisait » les critères qu'une tâche n'écrivait pas de sa seule description, et
 l'agent d'une tâche de vérification « reconstituait » ceux du run (p4, run
@@ -1464,17 +1464,17 @@ def _bloc_tache(tache: Task, brief: Brief | None = None) -> str:
     """La tâche, contrat de la vérification — suivie du brief du run, son cadre (#1402)."""
     bloc = (
         "La tâche, telle que le plan l'a confiée à l'agent :\n"
-        f"<tache>\nTitre : {tache.titre}\n\n{tache.description}\n\n"
-        f"Format de sortie attendu : {tache.format_sortie}\n</tache>"
+        f"<tache>\nTitre : {tache.title}\n\n{tache.description}\n\n"
+        f"Format de sortie attendu : {tache.output_format}\n</tache>"
     )
     return bloc if brief is None else f"{bloc}\n\n{_bloc_brief(brief)}"
 
 
 def _bloc_brief(brief: Brief) -> str:
-    """Le brief approuvé du run, tel que l'agent l'a lu dans son message (`Brief.cadre`)."""
+    """Le brief approuvé du run, tel que l'agent l'a lu dans son message (`Brief.frame`)."""
     return (
         "Le brief approuvé du run dont cette tâche fait partie — son cadre, pas son "
-        f"contrat :\n<brief>\n{brief.cadre()}\n</brief>"
+        f"contrat :\n<brief>\n{brief.frame()}\n</brief>"
     )
 
 

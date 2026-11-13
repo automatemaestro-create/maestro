@@ -23,7 +23,7 @@ constater sans rien deviner :
 
 Le troisième — le blocage signalé — n'a pas de constat mécanique, et c'est voulu :
 « il me manque le jeton Stripe » ne se reconnaît à aucun motif. C'est le **Chef de
-projet** qui le lit et le nomme (`maestro.orchestrator.rattrapage`, geste
+projet** qui le lit et le nomme (`maestro.orchestrator.recovery`, geste
 `proposer`), dans la même forme.
 
 Le module vit à la racine du paquet, comme `maestro.references` : le moteur

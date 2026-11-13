@@ -99,11 +99,11 @@ def _task(**overrides) -> Task:
     """Tâche minimale routable par ses compétences requises."""
     champs = {
         "id": "t1",
-        "titre": "Documenter l'API",
+        "title": "Documenter l'API",
         "description": "Rédiger la page de documentation.",
-        "competences_requises": frozenset({"redaction"}),
-        "format_sortie": "Markdown",
-        "dependances": (),
+        "required_competencies": frozenset({"redaction"}),
+        "output_format": "Markdown",
+        "dependencies": (),
     }
     champs.update(overrides)
     return Task(**champs)
@@ -274,7 +274,7 @@ def test_a_score_egal_l_ordre_du_depot_departage(store):
     store.ecrire(_definition(nom="aaa-verificateur", competences=("tests", "review")))
     store.ecrire(_definition(nom="zzz-doublure", competences=("tests", "review")))
 
-    assignation = assign(_task(competences_requises=frozenset({"tests"})), catalogue(store))
+    assignation = assign(_task(required_competencies=frozenset({"tests"})), catalogue(store))
 
     assert assignation.agent.nom == "aaa-verificateur"
 

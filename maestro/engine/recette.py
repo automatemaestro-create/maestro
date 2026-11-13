@@ -150,10 +150,10 @@ def tache_de_recette(criteres: Sequence[str]) -> Task:
     ]
     return Task(
         id=ID_TACHE_RECETTE,
-        titre="Recette du run — les critères d'acceptation du brief",
+        title="Recette du run — les critères d'acceptation du brief",
         description="\n".join(lignes),
-        competences_requises=("qa",),
-        format_sortie="Le livrable intégré du run, dans la racine du projet.",
+        required_competencies=("qa",),
+        output_format="Le livrable intégré du run, dans la racine du projet.",
     )
 
 

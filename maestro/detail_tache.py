@@ -44,7 +44,7 @@ appelé par personne. Trois réponses étaient possibles, et deux ne tiennent pa
   d'avance, n8n déclare ses nœuds, et c'est la déclaration préalable qui rend la
   vue lisible ;
 - **ossature au plan, complétée et cochée par l'agent** — celle qui est retenue.
-  Le plan (`Task.etapes`, `task.schema.json`) donne de quoi lire la tâche
+  Le plan (`Task.steps`, `task.schema.json`) donne de quoi lire la tâche
   **avant** qu'elle démarre ; l'agent donne la vérité **pendant** qu'elle tourne.
   Chacun répond de ce qu'il sait, et aucun des deux ne répond de ce qu'il ignore.
 

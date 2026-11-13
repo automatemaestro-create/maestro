@@ -46,7 +46,7 @@ les intégrant. Deux différences avec l'arrêt de validation, qui expliquent le
 distinct : il peut se produire **plusieurs fois** (jusqu'à `tours_clarification`),
 et ce qui revient n'est pas une décision mais du **texte libre**. Le plafond est ce
 qui empêche la boucle sans fin — atteint, les questions restantes deviennent des
-**hypothèses explicites** (`Brief.questions_en_hypotheses`) et le brief part en
+**hypothèses explicites** (`Brief.questions_as_assumptions`) et le brief part en
 validation, où un humain les verra et pourra encore les corriger.
 """
 
@@ -277,7 +277,7 @@ def apparie_reponses(
     return tuple(
         Clarification(
             question=question,
-            reponse=reponses[rang] if rang < len(reponses) else "",
+            answer=reponses[rang] if rang < len(reponses) else "",
         )
         for rang, question in enumerate(brief.questions)
     )

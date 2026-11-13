@@ -94,7 +94,7 @@ from maestro.orchestrator import (
     build_brief_user_prompt,
     validate_brief,
 )
-from maestro.orchestrator.prompt import bloc_outillage, prompt_orchestrateur
+from maestro.orchestrator.prompt import orchestrator_prompt, tooling_block
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
@@ -286,7 +286,7 @@ def test_l_outillage_choisi_entre_dans_le_perimetre_et_les_criteres_du_brief():
 def test_le_plan_confie_ce_que_l_outillage_prevoit_a_une_tache_nommee():
     """#1507 : un fichier « prévu » ne s'écrit que si une tâche le demande (#1404) — et
     sur p5 aucune ne l'a demandé. C'est au plan de le confier."""
-    texte = " ".join(prompt_orchestrateur().replace("**", "").split())
+    texte = " ".join(orchestrator_prompt().replace("**", "").split())
 
     assert "L'outillage du projet" in texte
     assert "confie chaque fichier prévu, nommément, à la tâche qui le livre" in texte
@@ -312,7 +312,7 @@ def test_le_plan_lit_la_demande_a_cote_du_brief_qui_fait_autorite():
     """#1580 : le plan reçoit la demande d'origine avec le brief (cf. la boucle, plus bas).
     Le document dit comment les lire ensemble : le brief tranche, la demande garde ce
     qu'il a tu — jamais ce qu'il a mis hors périmètre."""
-    texte = " ".join(prompt_orchestrateur().replace("**", "").split())
+    texte = " ".join(orchestrator_prompt().replace("**", "").split())
 
     assert "la demande dont il est né" in texte
     assert "Le brief fait autorité sur ce qu'il tranche" in texte
@@ -415,19 +415,19 @@ def test_les_sept_cles_sont_toujours_emises():
 def test_les_champs_multivalues_sont_immuables():
     """Tuples : un brief approuvé ne se réécrit pas dans le dos de qui l'a approuvé."""
     b = brief()
-    assert isinstance(b.perimetre, tuple)
+    assert isinstance(b.in_scope, tuple)
     with pytest.raises(AttributeError):
-        b.objectif = "autre chose"  # type: ignore[misc]
+        b.goal = "autre chose"  # type: ignore[misc]
 
 
 def test_a_des_questions_dit_s_il_reste_des_zones_d_ombre():
-    assert brief().a_des_questions is True
-    assert brief(questions=[]).a_des_questions is False
+    assert brief().has_questions is True
+    assert brief(questions=[]).has_questions is False
 
 
 def test_la_synthese_rend_les_sept_sections_dans_l_ordre_du_schema():
     """C'est le texte que l'humain relit pour approuver — donc son ordre compte."""
-    rendu = brief().synthese()
+    rendu = brief().summary()
     titres = [ligne for ligne in rendu.splitlines() if ligne.startswith("## ")]
     assert titres == [
         "## Périmètre",
@@ -444,7 +444,7 @@ def test_la_synthese_rend_les_sept_sections_dans_l_ordre_du_schema():
 
 def test_une_section_vide_s_affiche_au_lieu_de_disparaitre():
     """Un brief sans hors-périmètre est une information, pas une section manquante."""
-    rendu = Brief.from_dict(BRIEF_MINIMAL).synthese()
+    rendu = Brief.from_dict(BRIEF_MINIMAL).summary()
     assert "## Hors périmètre\n\n- —\n" in rendu
     assert "## Contraintes\n\n- —\n" in rendu
 
@@ -603,7 +603,7 @@ def test_mode_humain_soumet_l_objectif_d_origine_avec_le_brief():
     assert len(soumis) == 1
     assert soumis[0].objectif == "Prototyper un mini-CRM"
     assert soumis[0].run_id == journal.run_id
-    assert soumis[0].brief.objectif == BRIEF_COMPLET["objectif"]
+    assert soumis[0].brief.goal == BRIEF_COMPLET["objectif"]
 
 
 def test_un_brief_corrige_est_celui_qui_est_decompose_et_rapporte():
@@ -831,7 +831,7 @@ def test_sans_outillage_le_chef_de_projet_ne_lit_que_l_objectif():
     asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_AUTO))
     assert "<outillage>" not in cadrage.prompts_brief[0]
     assert "<outillage>" not in cadrage.prompts_plan[0]
-    assert bloc_outillage("   ") == ""
+    assert tooling_block("   ") == ""
 
 
 def test_les_sources_entrent_par_le_prompt_en_dernier_et_jamais_comme_consigne():
@@ -1191,7 +1191,7 @@ def test_un_brief_corrige_valide_remplace_le_propose(client, etat):
     execution = etat.execution(RUN)
     assert execution is not None
     assert execution.brief is not None
-    assert execution.brief.objectif == "Version relue par un humain"
+    assert execution.brief.goal == "Version relue par un humain"
 
 
 def test_un_refus_n_emporte_jamais_de_brief(client, etat):

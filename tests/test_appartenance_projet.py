@@ -183,22 +183,22 @@ def test_la_tache_omet_la_cle_quand_elle_ne_releve_d_aucun_projet() -> None:
     """Un plan sans projet doit rester sérialisable tel quel (le schéma refuse `null`)."""
     tache = Task.from_dict(_tache("t1"))
 
-    assert tache.projet_id is None
+    assert tache.project_id is None
     assert "projet_id" not in tache.to_dict()
 
 
 def test_la_tache_transporte_le_projet_en_aller_retour() -> None:
     tache = Task.from_dict(_tache("t1", projet_id=PROJET))
 
-    assert tache.projet_id == PROJET
+    assert tache.project_id == PROJET
     assert tache.to_dict()["projet_id"] == PROJET
-    assert Task.from_dict(tache.to_dict()).projet_id == PROJET
+    assert Task.from_dict(tache.to_dict()).project_id == PROJET
 
 
 def test_un_projet_mal_forme_dans_un_plan_est_ecarte_sans_faire_echouer_le_plan() -> None:
     tache = Task.from_dict(_tache("t1", projet_id="../evasion"))
 
-    assert tache.projet_id is None
+    assert tache.project_id is None
 
 
 def test_l_evenement_transporte_le_projet_et_le_normalise_au_retour() -> None:

@@ -78,9 +78,18 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | appartenance | `ownership` | le rattachement d'un travail à un projet (`projet_id` sur le fil) |
 | objectif | `goal` | ce que la personne demande à un run |
 | brief | `brief` | l'objectif structuré, validé avant la décomposition |
+| périmètre, hors-périmètre (d'un brief) | `in_scope`, `out_of_scope` | ce que le brief fait entrer dans le travail, et ce qu'il laisse dehors. À distinguer du périmètre d'un projet (`perimeter`) |
+| critères d'acceptation | `acceptance_criteria` | ce à quoi le brief dit qu'on saura que le run est fait |
+| hypothèse | `assumption` | ce que le brief tranche seul, faute de réponse |
+| synthèse (d'un brief) | `summary` | le brief rendu en Markdown pour la personne qui l'approuve |
+| cadre (d'un run) | `frame` | ce que chaque tâche reçoit du brief : objectif, hors-périmètre, contraintes, critères |
 | cadrage | `framing` | les échanges qui précisent l'objectif avant le brief |
 | clarification | `clarification` | une question posée pour cadrer |
+| tour (de clarification) | `round` | un aller-retour de questions et de réponses avant le brief. À distinguer du tour d'un modèle (`turn`) |
 | tâche | `task` | l'unité de travail assignée à un agent |
+| acte accordé | `granted_act` | l'acte que l'objectif nomme lui-même, et qu'une tâche exécute sans le redemander |
+| reprendre (le travail d'une tâche) | `resumes_from` | la tâche dont une autre repart : sa branche naît de la sienne |
+| tâches aval | `downstream` | les tâches qui attendent une tâche, directement ou non |
 | référence de ticket | `ticket_reference` | le ticket externe qu'une tâche porte |
 | étape | `step` | un moment d'une tâche ou d'un run, tel que le journal le consigne |
 | tentative | `attempt` | un essai d'exécution d'une tâche |
@@ -184,6 +193,10 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | état acquis | `checkpoint` | ce qu'un run a payé, et qu'une reprise ne refait pas |
 | pause, annulation, relance | `pause`, `cancellation`, `retry` | les gestes sur un run. `retry` désigne aussi la relance automatique d'un échec transitoire |
 | rattrapage | `recovery` | une tâche en échec, reprise par le Chef de projet |
+| nature (d'un échec) | `nature` | le jugement du Chef de projet : passager, configuration ou approche (`NATURE_TRANSIENT`…). Ces valeurs ne changent pas |
+| geste (d'un rattrapage) | `action` | ce que le Chef de projet décide d'une tâche en échec : rejouer, retenter, demander, abandonner, proposer (`ACTION_REPLAY`…). Ces valeurs ne changent pas |
+| reprise (d'une tâche, autrement) | `rework` | la tâche du plan reprise sous son identifiant, avec une autre approche ou un autre métier |
+| redécoupage | `resplit` | une tâche en échec remplacée par plusieurs |
 | battement | `heartbeat` | le signal qui dit qu'un run vit encore |
 | signe de vie | `liveness` | ce qui montre qu'une tâche travaille |
 | souffrance | `stall` | le verdict d'un run suspendu trop longtemps |

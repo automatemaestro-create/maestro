@@ -158,10 +158,10 @@ def run_en_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     projet = _projet(racine)
     tache = Task(
         id="somme",
-        titre="Écrire la fonction somme et son test",
+        title="Écrire la fonction somme et son test",
         description="Critères de réussite : les tests passent ; le code passe le linter.",
-        competences_requises=("backend",),
-        format_sortie="somme.py et test_somme.py",
+        required_competencies=("backend",),
+        output_format="somme.py et test_somme.py",
     )
     double = _AgentEtVerificateur()
     recette = Recette(
@@ -288,10 +288,10 @@ def test_un_service_demarre_et_sonde_dans_le_miroir_lit_son_env_et_ne_laisse_rie
     projet = _projet(racine)
     tache = Task(
         id="service",
-        titre="Écrire le service",
+        title="Écrire le service",
         description="Critère de réussite : le service répond le message de son .env.",
-        competences_requises=("backend",),
-        format_sortie="serveur.py",
+        required_competencies=("backend",),
+        output_format="serveur.py",
     )
     recette = Recette(
         verificateur=VerificateurTaches(_VerificateurDuService(), interprete=interprete),
@@ -581,10 +581,10 @@ class _Verificateur(ModelProvider):
 def _recette(joueur) -> Recette:
     tache = Task(
         id="somme",
-        titre="Écrire somme",
+        title="Écrire somme",
         description="Critères de réussite : les tests passent.",
-        competences_requises=("backend",),
-        format_sortie="somme.ts",
+        required_competencies=("backend",),
+        output_format="somme.ts",
     )
     return Recette(
         verificateur=VerificateurTaches(_Verificateur(), joueur=joueur, interprete=_INTERPRETE),

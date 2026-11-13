@@ -349,12 +349,12 @@ def _tache(id_: str, projet_id: str, livrable: str, *, dependances: tuple[str, .
     """Une tâche que le routeur confie au développeur, seul rôle outillé monté ici."""
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description=f"livrable:{livrable}",
-        competences_requises=("backend",),
-        format_sortie="markdown",
-        dependances=dependances,
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="markdown",
+        dependencies=dependances,
+        project_id=projet_id,
     )
 
 
@@ -384,7 +384,7 @@ def _joue(executeur: LocalExecutor, journal: RunJournal, *taches: Task):
         acquis = {}
         resultats = []
         for tache in taches:
-            dependances = [acquis[d] for d in tache.dependances]
+            dependances = [acquis[d] for d in tache.dependencies]
             resultat = await executeur.execute(tache, dependances, journal)
             acquis[tache.id] = resultat
             resultats.append(resultat)
@@ -687,7 +687,7 @@ def _ecrit_la_recette(executeur: LocalExecutor, projet: Projet, run_id: str):
         approuve=True, detail="approuvée par le validateur humain", tache_id="t1"
     )
     brief = Brief(
-        objectif="Un agenda", perimetre=(), hors_perimetre=(), criteres_acceptation=("C1",)
+        goal="Un agenda", in_scope=(), out_of_scope=(), acceptance_criteria=("C1",)
     )
     return asyncio.run(
         executeur._ecrit_la_recette(RecetteDuRun(constats=()), projet, run_id, brief)

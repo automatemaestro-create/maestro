@@ -119,9 +119,9 @@ def build_classifier_prompt(task: Task, candidates: Sequence[Agent]) -> str:
     """Compose the classifier's message: the task, then the candidates and their competencies."""
     lines = [
         "Tâche à assigner :",
-        f"- Titre : {task.titre}",
+        f"- Titre : {task.title}",
         f"- Description : {task.description}",
-        f"- Compétences requises : {', '.join(task.competences_requises) or 'aucune'}",
+        f"- Compétences requises : {', '.join(task.required_competencies) or 'aucune'}",
         "",
         "Agents candidats :",
     ]

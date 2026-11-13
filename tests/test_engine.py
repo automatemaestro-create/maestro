@@ -873,10 +873,10 @@ class ScriptedExecutor(TaskExecutor):
         en_echec = task.id in self._echecs
         return TaskResult(
             task_id=task.id,
-            titre=task.titre,
+            titre=task.title,
             agent="factice",
             role="Factice",
-            competences_requises=task.competences_requises,
+            competences_requises=task.required_competencies,
             score=1,
             statut=STATUT_ECHEC if en_echec else STATUT_TERMINEE,
             sortie="" if en_echec else f"LIVRABLE {task.id}",

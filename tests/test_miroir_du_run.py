@@ -244,11 +244,11 @@ def _moteur(agent: ModelProvider, depot: ProjetStore, joueur: _Joueur, plan: str
 def _tache(id_: str, projet_id: str) -> Task:
     return Task(
         id=id_,
-        titre=f"Tâche {id_}",
+        title=f"Tâche {id_}",
         description=f"livrable:{id_}.md — critères : le livrable existe.",
-        competences_requises=("backend",),
-        format_sortie="markdown",
-        projet_id=projet_id,
+        required_competencies=("backend",),
+        output_format="markdown",
+        project_id=projet_id,
     )
 
 

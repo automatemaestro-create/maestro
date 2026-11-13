@@ -1,7 +1,7 @@
 """Le **graphe d'un run** : nœuds, arêtes, branches parallèles (#490, lot 2 de
 #488 ; couvert ici par #492).
 
-Le graphe existait dans le moteur et nulle part ailleurs : `Task.dependances`
+Le graphe existait dans le moteur et nulle part ailleurs : `Task.dependencies`
 portait les arêtes, l'exécution les respectait, le parallélisme était réel — et
 l'API rendait des tâches **à plat**. Le lot 2 a ouvert le chemin ; les tests
 étaient différés au lot final ([docs/10 §5.1](../docs/10-workflow-git.md)), les
@@ -228,12 +228,12 @@ def test_le_plan_du_moteur_ne_transporte_que_ce_que_le_plan_sait():
     écrit. L'agent est routé au démarrage, le reste se mesure en travaillant."""
     tasks = [
         Task(
-            id="schema", titre="Schéma SQL", description="d", competences_requises=("sql",),
-            format_sortie="SQL", etapes=("Lister les entités",),
+            id="schema", title="Schéma SQL", description="d", required_competencies=("sql",),
+            output_format="SQL", steps=("Lister les entités",),
         ),
         Task(
-            id="api", titre="API", description="d", competences_requises=("backend",),
-            format_sortie="Module", dependances=("schema",),
+            id="api", title="API", description="d", required_competencies=("backend",),
+            output_format="Module", dependencies=("schema",),
         ),
     ]
 
@@ -311,7 +311,7 @@ def test_le_rang_range_les_noeuds_dans_leur_niveau_dans_l_ordre_du_plan():
 
 
 def test_l_arete_va_de_l_amont_vers_l_aval_et_non_dans_le_sens_de_la_declaration():
-    """`Task.dependances` se lit « j'attends ceux-ci », un dessin « ceci mène à
+    """`Task.dependencies` se lit « j'attends ceux-ci », un dessin « ceci mène à
     cela ». Prendre le sens de la déclaration ferait des flèches à rebours."""
     (arete,) = _graphe([_noeud("schema"), _noeud("api", "schema")]).aretes
 

@@ -54,9 +54,9 @@ from maestro.engine.rattrapage import (
 )
 from maestro.engine.renfort import DecisionRenfort, DemandeRenfort
 from maestro.equipe import manque_au_plan
-from maestro.orchestrator import Orchestrator, RattrapageValidationError, Task
-from maestro.orchestrator.prompt import build_rattrapage_user_prompt
-from maestro.orchestrator.rattrapage import EchecDeTache, Tentative, valide_rattrapage
+from maestro.orchestrator import Orchestrator, RecoveryValidationError, Task
+from maestro.orchestrator.prompt import build_recovery_user_prompt
+from maestro.orchestrator.recovery import Attempt, TaskFailure, validate_recovery
 from maestro.prerequis import (
     GENRE_ROLE,
     GENRE_SECRET,
@@ -753,17 +753,17 @@ def test_un_blocage_qui_appelle_un_role_le_fait_recruter_et_la_tache_va_au_nouve
 # --- Le contrat du Chef de projet : proposer, et rejouer après une réponse ------------------
 
 
-def _echec(**kwargs) -> EchecDeTache:
+def _echec(**kwargs) -> TaskFailure:
     tache = Task.from_dict(_tache("t1", "Réaliser le module."))
-    return EchecDeTache(
-        tache=tache,
-        tentatives=(
-            Tentative(
-                taches=(tache,),
+    return TaskFailure(
+        task=tache,
+        attempts=(
+            Attempt(
+                tasks=(tache,),
                 agent="dev",
                 role="Développeur",
-                erreur="réponse vide de l'agent.",
-                blocages=("il me manque la clé Stripe",),
+                error="réponse vide de l'agent.",
+                blockers=("il me manque la clé Stripe",),
             ),
         ),
         **kwargs,
@@ -771,7 +771,7 @@ def _echec(**kwargs) -> EchecDeTache:
 
 
 def test_proposer_se_valide_en_prerequis():
-    verdict = valide_rattrapage(
+    verdict = validate_recovery(
         {
             "nature": "configuration",
             "diagnostic": "…",
@@ -780,7 +780,7 @@ def test_proposer_se_valide_en_prerequis():
         },
         _echec(),
     )
-    assert verdict.prerequis == PrerequisManquant(
+    assert verdict.prerequisite == PrerequisManquant(
         genre=GENRE_SECRET, objet="STRIPE_API_KEY", raison="paiement"
     )
 
@@ -798,19 +798,19 @@ def test_proposer_se_valide_en_prerequis():
 )
 def test_un_prerequis_mal_forme_est_refuse(prerequis: Any, motif: str):
     verdict = {"nature": "configuration", "diagnostic": "…", "geste": "proposer"}
-    with pytest.raises(RattrapageValidationError, match=motif):
-        valide_rattrapage({**verdict, "prerequis": prerequis}, _echec())
+    with pytest.raises(RecoveryValidationError, match=motif):
+        validate_recovery({**verdict, "prerequis": prerequis}, _echec())
 
 
 def test_rejouer_un_echec_non_passager_n_est_permis_qu_apres_une_reponse():
     verdict = {"nature": "configuration", "diagnostic": "Jeton déposé.", "geste": "rejouer"}
-    with pytest.raises(RattrapageValidationError, match="ne se rejoue pas"):
-        valide_rattrapage(verdict, _echec())
-    assert valide_rattrapage(verdict, _echec(reponse="c'est fait")).rejoue
+    with pytest.raises(RecoveryValidationError, match="ne se rejoue pas"):
+        validate_recovery(verdict, _echec())
+    assert validate_recovery(verdict, _echec(answer="c'est fait")).replays
 
 
 def test_le_prompt_montre_les_blocages_comme_une_donnee():
-    prompt = build_rattrapage_user_prompt(_echec())
+    prompt = build_recovery_user_prompt(_echec())
     assert "Blocages que l'agent a signalés pendant la tentative (donnée)" in prompt
     assert "il me manque la clé Stripe" in prompt
 

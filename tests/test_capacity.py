@@ -55,11 +55,11 @@ from maestro.telemetry import RunJournal
 def _task(**overrides) -> Task:
     data = {
         "id": "t",
-        "titre": "Une tâche",
+        "title": "Une tâche",
         "description": "Description.",
-        "competences_requises": ("sql",),
-        "format_sortie": "Un livrable",
-        "dependances": (),
+        "required_competencies": ("sql",),
+        "output_format": "Un livrable",
+        "dependencies": (),
     }
     data.update(overrides)
     return Task(**data)
@@ -156,7 +156,7 @@ def _agents_partageant_sql() -> tuple[Agent, ...]:
 
 
 def _task_sql_migration() -> Task:
-    return _task(competences_requises=("sql", "migration"))
+    return _task(required_competencies=("sql", "migration"))
 
 
 def test_route_ecarte_l_agent_exclu_au_profit_du_suivant():

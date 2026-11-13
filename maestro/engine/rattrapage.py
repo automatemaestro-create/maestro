@@ -10,7 +10,7 @@ seule issue était de relancer le run entier, brief et plan repayés.
 
 ## Deux étages, un seul juge
 
-Le **Chef de projet** juge l'échec (`Orchestrator.rattrapage`) : il lit la cause,
+Le **Chef de projet** juge l'échec (`Orchestrator.recovery`) : il lit la cause,
 dit sa nature — passager, configuration ou approche — et décide du geste. Il est
 consulté aux deux étages où l'on retente, et c'est le même jugement qui sert aux
 deux :
@@ -55,7 +55,7 @@ Quand l'agent **a livré** et que c'est le vérificateur qui est resté en panne
 Le run `da0a8ae6f1b2` l'avait pourtant redécoupé de zéro, sur des branches neuves :
 le Chef de projet ne lisait que le texte de l'erreur, et le « Prompt is too long »
 du juge disait « tâche trop grosse ». Le fait voyage désormais dans la tentative
-(`Tentative.verification_en_panne`), et la boucle n'en demande aucun diagnostic :
+(`Attempt.verification_outage`), et la boucle n'en demande aucun diagnostic :
 le vérificateur a déjà été relancé seul, l'espace encore ouvert, et il reste à
 **demander** (`question_de_la_livraison`) — prendre la livraison telle quelle, d'un
 geste (`CHOIX_LIVRAISON_ACCEPTEE`), ou répondre en mots, que le Chef de projet lit
@@ -81,9 +81,9 @@ from maestro.engine.executor import (
 )
 from maestro.engine.plafond import Plafonds
 from maestro.engine.questions import DemandeQuestion
-from maestro.orchestrator.errors import RattrapageValidationError
+from maestro.orchestrator.errors import RecoveryValidationError
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.rattrapage import EchecDeTache, Rattrapage, Tentative
+from maestro.orchestrator.recovery import Attempt, Recovery, TaskFailure
 from maestro.orchestrator.schema import Task
 from maestro.prerequis import PrerequisManquant
 from maestro.telemetry import (
@@ -207,7 +207,7 @@ class Refus:
 
 
 #: Ce que le juge rend : un rattrapage à exécuter, ou une proposition refusée.
-Verdict = Rattrapage | Refus
+Verdict = Recovery | Refus
 
 
 @dataclass
@@ -224,7 +224,7 @@ class Dossier:
     """
 
     tache: Task
-    tentatives: list[Tentative] = field(default_factory=list)
+    tentatives: list[Attempt] = field(default_factory=list)
     question: str = ""
     reponse: str | None = None
     en_cours: str = "telle que planifiée"
@@ -273,7 +273,7 @@ class JugeDesEchecs:
         _, taches = self._runs.get(run_id, ("", ()))
         attendent = {tache_id}
         for tache in taches:  # le plan est dans l'ordre topologique : un passage suffit
-            if attendent.intersection(tache.dependances):
+            if attendent.intersection(tache.dependencies):
                 attendent.add(tache.id)
         attendent.discard(tache_id)
         return tuple(tache for tache in taches if tache.id in attendent)
@@ -323,13 +323,13 @@ class JugeDesEchecs:
         geste = dossier.en_cours if dossier is not None else "telle que planifiée"
         if tentative > 1:
             geste = f"{geste}, rejouée {tentative - 1} fois à l'identique"
-        courante = Tentative(
-            taches=(task,),
+        courante = Attempt(
+            tasks=(task,),
             agent=agent.nom,
             role=agent.role,
-            erreur=erreur,
-            geste=geste,
-            blocages=tuple(blocages),
+            error=erreur,
+            action=geste,
+            blockers=tuple(blocages),
         )
         base = dossier if dossier is not None else Dossier(tache=task)
         verdict, _ = await self._juge(
@@ -341,11 +341,11 @@ class JugeDesEchecs:
         )
         if verdict is None:
             return None
-        if isinstance(verdict, Rattrapage) and verdict.rejoue:
-            return True, verdict.diagnostic
+        if isinstance(verdict, Recovery) and verdict.replays:
+            return True, verdict.diagnosis
         self._retenus[(journal.run_id, task.id)] = verdict
         return False, (
-            verdict.diagnostic if isinstance(verdict, Rattrapage) else verdict.raison
+            verdict.diagnosis if isinstance(verdict, Recovery) else verdict.raison
         )
 
     async def juge(
@@ -370,21 +370,21 @@ class JugeDesEchecs:
         self,
         tache_id: str,
         dossier: Dossier,
-        tentatives: tuple[Tentative, ...],
+        tentatives: tuple[Attempt, ...],
         journal: RunJournal,
         *,
         compte_a_part: bool,
     ) -> tuple[Verdict | None, StepUsage]:
         objectif, _ = self._runs.get(journal.run_id, ("", ()))
-        echec = EchecDeTache(
-            tache=dossier.tache,
-            tentatives=tentatives,
-            objectif=objectif,
-            aval=self.aval(journal.run_id, dossier.tache.id),
+        echec = TaskFailure(
+            task=dossier.tache,
+            attempts=tentatives,
+            goal=objectif,
+            downstream=self.aval(journal.run_id, dossier.tache.id),
             question=dossier.question,
-            reponse=dossier.reponse,
+            answer=dossier.reponse,
         )
-        equipe = self._equipe(dossier.tache.projet_id)
+        equipe = self._equipe(dossier.tache.project_id)
         debut = perf_counter()
         usage = StepUsage()
         verdict: Verdict | None = None
@@ -393,14 +393,14 @@ class JugeDesEchecs:
             if compte_a_part:
                 with collect_usage(spending_cap=self._plafond(journal)) as recolte:
                     try:
-                        verdict = await self._orchestrator.rattrapage(echec, equipe=equipe)
+                        verdict = await self._orchestrator.recovery(echec, team=equipe)
                     finally:
                         usage = recolte.total.with_duration(_ecoule_ms(debut))
             else:
-                verdict = await self._orchestrator.rattrapage(echec, equipe=equipe)
+                verdict = await self._orchestrator.recovery(echec, team=equipe)
         except asyncio.CancelledError:
             raise
-        except RattrapageValidationError as exc:
+        except RecoveryValidationError as exc:
             verdict = Refus(str(exc))
         except Exception as exc:  # noqa: BLE001 — un juge muet ne condamne pas la tâche
             panne = str(exc) or type(exc).__name__
@@ -408,7 +408,7 @@ class JugeDesEchecs:
             journal,
             tache_id,
             dossier.tache,
-            echec.derniere.erreur,
+            echec.latest.error,
             verdict,
             panne,
             usage if compte_a_part else StepUsage(),
@@ -437,9 +437,9 @@ def consigne_diagnostic(
     décide de la suite. `tache_id` est la tâche **exécutée** — celle du plan, ou
     une tâche de redécoupage jugée seule.
     """
-    if isinstance(verdict, Rattrapage):
-        statut = statut_du_geste(verdict.geste)
-        sortie = f"{verdict.nature} — {verdict.diagnostic} → {_geste_en_clair(verdict)}"
+    if isinstance(verdict, Recovery):
+        statut = statut_du_geste(verdict.action)
+        sortie = f"{verdict.nature} — {verdict.diagnosis} → {_geste_en_clair(verdict)}"
     elif isinstance(verdict, Refus):
         statut = STATUT_RATTRAPAGE_REFUSE
         sortie = f"proposition refusée : {verdict.raison}"
@@ -448,7 +448,7 @@ def consigne_diagnostic(
         sortie = f"diagnostic impossible : {panne}"
     journal.consigne(
         etape=f"{tache_id}{SUFFIXE_ETAPE_RATTRAPAGE}",
-        nom=f"Rattrapage — {tache.titre}",
+        nom=f"Rattrapage — {tache.title}",
         agent=ACTEUR_ORCHESTRATEUR,
         role=ROLE_ORCHESTRATEUR,
         statut=statut,
@@ -456,27 +456,27 @@ def consigne_diagnostic(
         sortie=sortie,
         usage=usage,
         ticket=tache.ticket,
-        projet_id=tache.projet_id,
+        projet_id=tache.project_id,
     )
 
 
-def _geste_en_clair(verdict: Rattrapage) -> str:
+def _geste_en_clair(verdict: Recovery) -> str:
     """Le geste décidé, dit comme on le lirait dans le fil d'activité."""
-    if verdict.rejoue:
+    if verdict.replays:
         return "rejouée telle quelle"
-    if verdict.geste == "retenter":
-        if len(verdict.taches) > 1:
-            titres = ", ".join(f"« {t.titre} »" for t in verdict.taches)
-            texte = f"redécoupée en {len(verdict.taches)} tâches : {titres}"
+    if verdict.action == "retenter":
+        if len(verdict.tasks) > 1:
+            titres = ", ".join(f"« {t.title} »" for t in verdict.tasks)
+            texte = f"redécoupée en {len(verdict.tasks)} tâches : {titres}"
         else:
             texte = "reprise autrement"
-        if verdict.ajustements:
-            texte += " ; tâches aval ajustées : " + ", ".join(i for i, _ in verdict.ajustements)
+        if verdict.adjustments:
+            texte += " ; tâches aval ajustées : " + ", ".join(i for i, _ in verdict.adjustments)
         return texte
-    if verdict.geste == "demander":
+    if verdict.action == "demander":
         return f"question à l'utilisateur : {verdict.question}"
-    if verdict.prerequis is not None:
-        return f"prérequis proposé à l'utilisateur : {verdict.prerequis.phrase()}"
+    if verdict.prerequisite is not None:
+        return f"prérequis proposé à l'utilisateur : {verdict.prerequisite.phrase()}"
     return "abandonnée sur la réponse de l'utilisateur"
 
 
@@ -484,7 +484,7 @@ def consigne_issue(journal: RunJournal, tache: Task, cause: str, issue: str) -> 
     """Écrit au journal que le rattrapage de `tache` n'a pas abouti, et pourquoi."""
     journal.consigne(
         etape=f"{tache.id}{SUFFIXE_ETAPE_RATTRAPAGE}",
-        nom=f"Rattrapage — {tache.titre}",
+        nom=f"Rattrapage — {tache.title}",
         agent=ACTEUR_ORCHESTRATEUR,
         role=ROLE_ORCHESTRATEUR,
         statut=STATUT_RATTRAPAGE_ECHOUE,
@@ -492,7 +492,7 @@ def consigne_issue(journal: RunJournal, tache: Task, cause: str, issue: str) -> 
         sortie=f"la tâche reste en échec : {issue}",
         usage=StepUsage(),
         ticket=tache.ticket,
-        projet_id=tache.projet_id,
+        projet_id=tache.project_id,
     )
 
 
@@ -513,7 +513,7 @@ def consigne_question(
     repondue = reponse is not None
     journal.consigne(
         etape=f"{tache.id}{SUFFIXE_ETAPE_QUESTION}",
-        nom=f"Question du Chef de projet — {tache.titre}",
+        nom=f"Question du Chef de projet — {tache.title}",
         agent=ACTEUR_ORCHESTRATEUR,
         role=ROLE_ORCHESTRATEUR,
         statut=STATUT_QUESTION_REPONDUE if repondue else STATUT_QUESTION_SANS_REPONSE,
@@ -521,7 +521,7 @@ def consigne_question(
         sortie=reponse if reponse is not None else demande.hypothese,
         description=motif,
         usage=StepUsage(),
-        projet_id=tache.projet_id,
+        projet_id=tache.project_id,
     )
 
 
@@ -538,13 +538,13 @@ def question_du_rattrapage(
     modèle : une question qui oublierait la cause ferait répondre à l'aveugle.
     """
     entete = question.strip() or (
-        f"La tâche « {tache.titre} » échoue et je ne sais pas la faire aboutir seul : "
+        f"La tâche « {tache.title} » échoue et je ne sais pas la faire aboutir seul : "
         "que dois-je faire ?"
     )
-    lignes = [entete, "", f"Tâche en échec : « {tache.titre} »", "Tentatives :"]
+    lignes = [entete, "", f"Tâche en échec : « {tache.title} »", "Tentatives :"]
     lignes += [
-        f"{rang}. {tentative.geste} — {tentative.role or 'non routée'} : "
-        f"{_erreur_courte(tentative.erreur)}"
+        f"{rang}. {tentative.action} — {tentative.role or 'non routée'} : "
+        f"{_erreur_courte(tentative.error)}"
         for rang, tentative in enumerate(dossier.tentatives, start=1)
     ]
     if diagnostic.strip():
@@ -567,7 +567,7 @@ def question_du_prerequis(tache: Task, prerequis: PrerequisManquant, rang: int) 
     à « et si je le donne, je dois tout relancer ? ».
     """
     etat = "est suspendue" if rang <= 1 else "est toujours suspendue"
-    lignes = [f"La tâche « {tache.titre} » {etat} : {prerequis.phrase()}"]
+    lignes = [f"La tâche « {tache.title} » {etat} : {prerequis.phrase()}"]
     if prerequis.procedure.strip():
         lignes += ["", "Pour le lui donner :", prerequis.procedure.strip()]
     lignes += [
@@ -594,7 +594,7 @@ def consigne_proposition(
     """
     journal.consigne(
         etape=f"{tache.id}{SUFFIXE_ETAPE_RATTRAPAGE}",
-        nom=f"Prérequis — {tache.titre}",
+        nom=f"Prérequis — {tache.title}",
         agent=ACTEUR_ORCHESTRATEUR,
         role=ROLE_ORCHESTRATEUR,
         statut=statut,
@@ -602,7 +602,7 @@ def consigne_proposition(
         sortie=issue,
         usage=StepUsage(),
         ticket=tache.ticket,
-        projet_id=tache.projet_id,
+        projet_id=tache.project_id,
     )
 
 
@@ -621,7 +621,7 @@ def question_de_la_livraison(tache: Task) -> str:
     faux, mais tout n'a pas été jugé.
     """
     return (
-        f"La tâche « {tache.titre} » a livré, mais sa vérification n'a pas abouti : "
+        f"La tâche « {tache.title} » a livré, mais sa vérification n'a pas abouti : "
         "personne n'a pu juger si sa livraison tient en entier. La prendre telle "
         "quelle, ou que dois-je en faire ?"
     )
@@ -636,7 +636,7 @@ def hypothese_du_rattrapage(aval: Sequence[Task], *, livree: bool = False) -> st
     reste = "la tâche reste en échec avec sa livraison" if livree else "la tâche reste en échec"
     if not aval:
         return f"{reste} ; aucune autre tâche n'en dépend"
-    titres = ", ".join(f"« {tache.titre} »" for tache in aval)
+    titres = ", ".join(f"« {tache.title} »" for tache in aval)
     return f"{reste}, et les tâches qui l'attendent ne s'exécutent pas : {titres}"
 
 
