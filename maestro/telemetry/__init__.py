@@ -66,14 +66,14 @@ from maestro.telemetry.langfuse import (
 )
 from maestro.telemetry.redact import SECRET_MARKER, redact_secrets, register_secret
 from maestro.telemetry.usage import (
-    ConsigneDepenseDuRun,
+    RunSpendRecorder,
     StepUsage,
     UsageCollector,
     collect_usage,
-    depenses_du_run,
+    current_usage,
+    report_run_usage,
     report_usage,
-    report_usage_du_run,
-    usage_en_cours,
+    run_spend_channel,
 )
 
 __all__ = [
@@ -87,10 +87,10 @@ __all__ = [
     "STEP_PROBE",
     "STEP_SPENDING_CAP",
     "STEP_TEAM",
-    "ConsigneDepenseDuRun",
     "SUFFIXE_ETAPE_USAGE",
     "RunCost",
     "RunJournal",
+    "RunSpendRecorder",
     "SpendingCap",
     "SpendingCapExceeded",
     "StepRecord",
@@ -98,17 +98,17 @@ __all__ = [
     "TaskCost",
     "UsageCollector",
     "collect_usage",
-    "depenses_du_run",
+    "current_usage",
     "enable_langfuse_export",
     "est_releve_usage",
     "interval_from",
     "redact_secrets",
     "register_secret",
+    "report_run_usage",
     "report_usage",
-    "report_usage_du_run",
+    "run_spend_channel",
     "score_run_langfuse",
     "scores_from_journal",
     "spending_control_summary",
     "union_ms",
-    "usage_en_cours",
 ]

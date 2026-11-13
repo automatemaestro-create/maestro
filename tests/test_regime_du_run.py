@@ -106,7 +106,7 @@ OBJECTIF_S4 = (
     "que contient le projet."
 )
 
-#: Ce que le moteur de S4 a levé, au mot près (`SpendingCap.verifie`).
+#: Ce que le moteur de S4 a levé, au mot près (`SpendingCap.check`).
 ARRET_SUR_LA_BORNE = (
     "plafond de tokens dépassé : 38053 tokens consommés sur l'exécution pour un "
     "plafond de 1 — tâche stoppée."

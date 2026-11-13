@@ -81,15 +81,15 @@ COUPEE = "page-liste"
 #: tokens que ce coût ne couvre pas encore (le tour en vol n'est tarifé qu'à son
 #: résultat, qui ne viendra jamais — #1280).
 RELEVE_COUPE = StepUsage(
-    appels=3,
-    tokens_entree=180_000,
-    tokens_sortie=6_000,
-    cout_usd=1.4464,
-    tokens_non_tarifes=40_000,
+    calls=3,
+    input_tokens=180_000,
+    output_tokens=6_000,
+    cost_usd=1.4464,
+    unpriced_tokens=40_000,
 )
 
 #: L'issue de la tentative reprise, qui aboutit.
-ISSUE_REPRISE = StepUsage(appels=2, tokens_entree=90_000, tokens_sortie=4_000, cout_usd=0.5)
+ISSUE_REPRISE = StepUsage(calls=2, input_tokens=90_000, output_tokens=4_000, cost_usd=0.5)
 
 
 class HoteDouble(HoteRun):
@@ -161,7 +161,7 @@ def _tache(state: ControlTowerState, run_id: str, statut: str, usage: StepUsage 
             role="Développeur",
             statut=statut,
             usage=usage,
-            cout_usd=usage.cout_usd if usage is not None else None,
+            cout_usd=usage.cost_usd if usage is not None else None,
         )
     )
 
@@ -176,7 +176,7 @@ def _releve(state: ControlTowerState, run_id: str, usage: StepUsage) -> None:
             agent="dev",
             role="Développeur",
             usage=usage,
-            cout_usd=usage.cout_usd,
+            cout_usd=usage.cost_usd,
         )
     )
 
@@ -222,7 +222,7 @@ def test_la_tentative_coupee_en_vol_garde_ce_qu_elle_a_coute() -> None:
         assert soldage.cout_usd == pytest.approx(1.4464)
 
         assert execution.cout_usd == pytest.approx(1.4464)
-        assert execution.cout.total.cout_usd == pytest.approx(1.4464)
+        assert execution.cout.total.cost_usd == pytest.approx(1.4464)
         assert execution.cout_partiel is True
         assert _analytics(client)["total"]["cout_usd"] == pytest.approx(1.4464)
         assert _analytics(client)["total"]["tokens_non_tarifes"] == 40_000
@@ -240,14 +240,14 @@ def test_la_reprise_de_la_tache_n_efface_pas_la_tentative_coupee() -> None:
         run_id = _couper_en_vol(client, state)
 
         _tache(state, run_id, STATUT_EN_COURS, None)
-        _releve(state, run_id, StepUsage(appels=1, tokens_entree=30_000, cout_usd=0.2))
+        _releve(state, run_id, StepUsage(calls=1, input_tokens=30_000, cost_usd=0.2))
         _tache(state, run_id, "terminee", ISSUE_REPRISE)
 
         execution = state.execution(run_id)
         assert execution is not None
         attendu = 1.4464 + 0.5
         assert execution.cout_usd == pytest.approx(attendu)
-        assert execution.cout.total.cout_usd == pytest.approx(attendu)
+        assert execution.cout.total.cost_usd == pytest.approx(attendu)
         assert _analytics(client)["total"]["cout_usd"] == pytest.approx(attendu)
         # La carte de la tâche cumule ses deux tentatives (#1177).
         tache = state.tache(COUPEE)
@@ -259,7 +259,7 @@ def test_la_reprise_de_la_tache_n_efface_pas_la_tentative_coupee() -> None:
 
 
 #: Ce qu'un tour du fil coûte au modèle, dans ces tests.
-TOUR_DU_FIL = StepUsage(appels=1, tokens_entree=12_000, tokens_sortie=800, cout_usd=0.05)
+TOUR_DU_FIL = StepUsage(calls=1, input_tokens=12_000, output_tokens=800, cost_usd=0.05)
 
 
 class BusQuiRetient(EventBus):
@@ -303,12 +303,12 @@ def test_au_compte_du_fil_publie_ce_que_le_bloc_a_depense() -> None:
     assert depense.titre == "déclaration du projet"
     assert depense.cout_usd == pytest.approx(0.10)
     assert depense.usage is not None
-    assert depense.usage.tokens_total == 25_600
+    assert depense.usage.total_tokens == 25_600
     # Le montant en clair, écrit comme l'écran l'écrit : le journal requêtable ne
     # garde que le texte.
     assert depense.detail == "0,10 $US · 25 600 tokens"
-    assert en_clair(StepUsage(tokens_entree=900, cout_usd=0.004)) == "< 0,01 $US · 900 tokens"
-    assert en_clair(StepUsage(tokens_entree=900)) == "900 tokens · coût pas encore tarifé"
+    assert en_clair(StepUsage(input_tokens=900, cost_usd=0.004)) == "< 0,01 $US · 900 tokens"
+    assert en_clair(StepUsage(input_tokens=900)) == "900 tokens · coût pas encore tarifé"
 
 
 def test_au_compte_du_fil_publie_meme_quand_l_echange_echoue_et_se_tait_sans_mesure() -> None:
@@ -339,7 +339,7 @@ def _depense(agent: str, conversation: str, projet_id: str | None, cout: float) 
         titre="réponse du fil",
         projet_id=projet_id,
         conversation=conversation,
-        usage=StepUsage(appels=1, tokens_entree=1000, cout_usd=cout),
+        usage=StepUsage(calls=1, input_tokens=1000, cost_usd=cout),
         cout_usd=cout,
         horodatage="2026-10-15T09:00:00+00:00",
     )
@@ -382,7 +382,7 @@ def test_couts_et_analytics_rangent_le_fil_a_part_du_run() -> None:
             agent="dev",
             statut="terminee",
             projet_id="prj-recettes",
-            usage=StepUsage(appels=2, tokens_entree=5000, cout_usd=1.0),
+            usage=StepUsage(calls=2, input_tokens=5000, cost_usd=1.0),
             cout_usd=1.0,
             horodatage="2026-10-15T10:00:00+00:00",
         )
@@ -397,11 +397,11 @@ def test_couts_et_analytics_rangent_le_fil_a_part_du_run() -> None:
         pas=PAS_AUTO,
     )
 
-    assert vue.total.cout_usd == pytest.approx(1.30)
+    assert vue.total.cost_usd == pytest.approx(1.30)
     assert vue.fil is not None
-    assert vue.fil.usage.cout_usd == pytest.approx(0.30)
-    assert [e.usage.cout_usd for e in vue.executions] == [pytest.approx(1.0)]
-    assert sum(p.usage.cout_usd or 0.0 for p in vue.serie) == pytest.approx(1.30)
+    assert vue.fil.usage.cost_usd == pytest.approx(0.30)
+    assert [e.usage.cost_usd for e in vue.executions] == [pytest.approx(1.0)]
+    assert sum(p.usage.cost_usd or 0.0 for p in vue.serie) == pytest.approx(1.30)
     assert vue.to_dict()["fil"]["usage"]["cout_usd"] == pytest.approx(0.30)
     # Une fenêtre où le fil n'a rien dépensé n'a pas de poste : « 0,00 $ » dirait faux.
     assert agrege_couts(state.executions(), portee=PorteeProjet.aucun()).fil is None
@@ -458,7 +458,7 @@ def test_une_reponse_du_fil_entre_au_grand_livre_par_la_vraie_route(tmp_path: Pa
 # ------------------------------------------------- les gestes d'atelier (#1538)
 
 #: Ce qu'un geste d'atelier coûte : un appel, signalé comme le ferait un fournisseur.
-APPEL_D_ATELIER = StepUsage(appels=1, tokens_entree=9_000, tokens_sortie=1_200, cout_usd=0.07)
+APPEL_D_ATELIER = StepUsage(calls=1, input_tokens=9_000, output_tokens=1_200, cost_usd=0.07)
 
 #: La réponse que chaque voie sait lire : un en-tête de définition (lu par la seule
 #: génération), le marqueur, puis le document intégral (lu par les trois).

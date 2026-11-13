@@ -741,7 +741,7 @@ def _projection_du_run_livre(
         journal.consigne(
             etape=tache_id, nom=titre, agent="dev", role="Développeur",
             statut="terminee", entree="la consigne de la tâche", sortie=rendu,
-            usage=StepUsage(cout_usd=0.01), projet_id=projet_id,
+            usage=StepUsage(cost_usd=0.01), projet_id=projet_id,
         )
     for record in journal.records:
         for event in evenements_depuis_step(record.to_dict()):

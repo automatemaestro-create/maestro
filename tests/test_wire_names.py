@@ -1,4 +1,4 @@
-"""The names that travel or are stored keep their value when the code is renamed (#1650, #1651).
+"""The names that travel or are stored keep their value when the code is renamed (#1649).
 
 Translating the code into English renames constants, functions and fields, never
 what goes over a wire or into a store: a Redis key, a Celery task name, a Temporal
@@ -12,6 +12,7 @@ would prove nothing.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,9 @@ from maestro.telemetry.costs import (
 )
 from maestro.telemetry.langfuse import SCORE_RUN_SUCCEEDED, SCORE_SUCCESS_RATE
 from maestro.telemetry.redact import SECRET_MARKER
+from maestro.telemetry.usage import StepUsage
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_mailbox_channels_keep_their_redis_names() -> None:
@@ -271,3 +275,99 @@ def test_the_cost_ledger_keeps_its_json_keys_and_the_steps_it_reads() -> None:
 def test_langfuse_scores_and_the_secret_marker_keep_their_values() -> None:
     assert (SCORE_RUN_SUCCEEDED, SCORE_SUCCESS_RATE) == ("run-reussi", "taux-reussite")
     assert SECRET_MARKER == "[secret masqué]"
+
+
+#: The keys `StepUsage.to_dict` writes. The run journal, the cost ledger, the API
+#: and `apps/web` read them, and journals on disk still hold them.
+STEP_USAGE_KEYS = {
+    "appels",
+    "tokens_entree",
+    "tokens_sortie",
+    "tokens_total",
+    "cout_usd",
+    "duree_ms",
+    "duree_api_ms",
+    "duree_arbitrage_ms",
+    "duree_attente_creneau_ms",
+    "duree_attente_atelier_ms",
+    "duree_attente_ms",
+    "duree_execution_ms",
+    "tours",
+    "outils",
+    "tokens_non_tarifes",
+    "tokens_cache_lus",
+    "tokens_cache_ecrits",
+    "contexte_max",
+    "tokens_hors_cache_lu",
+}
+
+
+def test_a_step_usage_keeps_its_json_keys() -> None:
+    # Every field holds a distinct value, so that two swapped keys fail too.
+    usage = StepUsage(
+        calls=2,
+        input_tokens=1000,
+        output_tokens=50,
+        cost_usd=0.25,
+        duration_ms=9000,
+        api_duration_ms=7000,
+        approval_duration_ms=1000,
+        slot_wait_duration_ms=500,
+        workshop_wait_duration_ms=250,
+        turns=3,
+        tools=("Read", "Write"),
+        unpriced_tokens=40,
+        cache_read_tokens=600,
+        cache_write_tokens=100,
+        max_context=800,
+    )
+    assert usage.to_dict() == {
+        "appels": 2,
+        "tokens_entree": 1000,
+        "tokens_sortie": 50,
+        "tokens_total": 1050,
+        "cout_usd": 0.25,
+        "duree_ms": 9000,
+        "duree_api_ms": 7000,
+        "duree_arbitrage_ms": 1000,
+        "duree_attente_creneau_ms": 500,
+        "duree_attente_atelier_ms": 250,
+        "duree_attente_ms": 1750,
+        "duree_execution_ms": 7250,
+        "tours": 3,
+        "outils": ["Read", "Write"],
+        "tokens_non_tarifes": 40,
+        "tokens_cache_lus": 600,
+        "tokens_cache_ecrits": 100,
+        "contexte_max": 800,
+        "tokens_hors_cache_lu": 450,
+    }
+    assert set(usage.to_dict()) == STEP_USAGE_KEYS
+    # A measure written by an older version reads back field for field.
+    assert StepUsage.from_dict(usage.to_dict()) == usage
+
+
+def test_a_journal_line_without_the_recent_keys_still_reads_back() -> None:
+    line = {
+        "appels": 1,
+        "tokens_entree": 10,
+        "tokens_sortie": 2,
+        "cout_usd": None,
+        "duree_ms": 5,
+        "tours": 1,
+        "outils": ["Bash"],
+    }
+    usage = StepUsage.from_dict(line)
+    assert (usage.calls, usage.input_tokens, usage.output_tokens) == (1, 10, 2)
+    assert (usage.duration_ms, usage.turns, usage.tools) == (5, 1, ("Bash",))
+    # Unknown stays unknown: no measured wait, no context, every token unpriced.
+    assert usage.approval_duration_ms is None and usage.max_context is None
+    assert usage.unpriced_tokens == 12
+
+
+def test_the_screen_reads_the_usage_keys_the_api_writes() -> None:
+    types = (ROOT / "apps" / "web" / "lib" / "types.ts").read_text(encoding="utf-8")
+    block = re.search(r"^export type Usage = \{\n(.*?)^\};", types, re.MULTILINE | re.DOTALL)
+    assert block is not None, "the `Usage` type of apps/web/lib/types.ts is gone"
+    keys = set(re.findall(r"^  (\w+)\??:", block.group(1), re.MULTILINE))
+    assert keys == STEP_USAGE_KEYS

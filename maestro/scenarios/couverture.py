@@ -241,9 +241,9 @@ class JugeCouvertureModele:
                 )
             except Exception as echec:  # quota, fournisseur injoignable : aucun avis
                 return non_jugee(
-                    criteres, f"juge injoignable : {echec}", cout_usd=depense.total.cout_usd
+                    criteres, f"juge injoignable : {echec}", cout_usd=depense.total.cost_usd
                 )
-        return couverture_depuis(brut, criteres, cout_usd=depense.total.cout_usd)
+        return couverture_depuis(brut, criteres, cout_usd=depense.total.cost_usd)
 
     def _resolu(self) -> tuple[ModelProvider, str]:
         from maestro.providers.factory import default_model, provider_from_settings

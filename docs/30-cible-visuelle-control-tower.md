@@ -767,7 +767,7 @@ d'une tâche **vivante mais partie trop loin** — celle qui enchaîne des geste
 sur un sujet qui en demandait deux. Deux choses ont suivi, sur la même ligne du même composant :
 
 - **La valeur n'existait pas, et le ticket a tranché sur pièces.** La ligne chrono est alimentée par
-  `usage.duree_ms`, que le moteur ne pose qu'à l'**issue** de la tâche (`StepUsage.avec_duree`) : un
+  `usage.duree_ms`, que le moteur ne pose qu'à l'**issue** de la tâche (`StepUsage.with_duration`) : un
   relevé en cours (#835) porte des tokens et un coût, jamais une durée, si bien que la place
   affichait « — » ou rien pendant tout le travail. Elle est donc **dérivée du début de la tâche
   côté projection** (`EtatTache.debut`, l'horodatage du passage `en_cours`) et **jointe au signe de

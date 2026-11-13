@@ -256,7 +256,7 @@ def test_a_queued_task_is_executed_and_its_result_comes_back(app):
     assert result.sortie == "LIVRABLE distribué"
     assert result.agent == "developpeur"  # routed on the worker side (backend competency)
     assert result.worker == "agent1@maestro"
-    assert result.usage.duree_ms is not None  # usage measured on the worker side
+    assert result.usage.duration_ms is not None  # usage measured on the worker side
 
 
 def test_the_blackboard_travels_with_the_task(app):
@@ -621,7 +621,7 @@ def test_task_result_round_trips_through_json():
         statut="terminee",
         sortie="LIVRABLE",
         fichiers=(ProducedFile(chemin="livrable.txt", contenu="contenu"),),
-        usage=StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01),
+        usage=StepUsage(calls=1, input_tokens=100, output_tokens=20, cost_usd=0.01),
         worker="agent1@maestro",
         playbook_version=3,
     )
@@ -644,7 +644,7 @@ def test_task_result_tolerates_a_missing_playbook_version():
 def test_step_usage_from_dict_tolerates_derived_and_missing_fields():
     usage = StepUsage.from_dict({"appels": 2, "tokens_total": 999, "outils": ["Bash"]})
 
-    assert usage.appels == 2
-    assert usage.outils == ("Bash",)
-    assert usage.tokens_total == 0  # derived field recomputed, not read back
-    assert usage.cout_usd is None
+    assert usage.calls == 2
+    assert usage.tools == ("Bash",)
+    assert usage.total_tokens == 0  # derived field recomputed, not read back
+    assert usage.cost_usd is None

@@ -570,7 +570,7 @@ def test_le_manque_est_consigne_meme_sans_personne_a_qui_le_proposer(
     assert lignes[0].agent == "orchestrateur"
     assert lignes[0].projet_id == PROJET
     assert "Dessiner le logo stylisé" in lignes[0].sortie
-    assert lignes[0].usage.appels == 0
+    assert lignes[0].usage.calls == 0
 
 
 def test_accepter_recrute_et_les_taches_vont_au_nouveau_role(tmp_path: Path) -> None:

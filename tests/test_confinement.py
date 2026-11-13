@@ -792,7 +792,7 @@ def test_un_processus_qui_n_a_pas_pu_etre_arrete_est_dit_au_journal_du_run():
     assert ligne.etape == f"maquette{SUFFIXE_ETAPE_PROCESSUS}"
     assert ligne.statut == STATUT_PROCESSUS_SURVIVANTS
     assert "msedge.exe (PID 37484)" in ligne.sortie
-    assert ligne.usage.appels == 0
+    assert ligne.usage.calls == 0
     # Le pont la range avec sa tâche, en activité d'agent — jamais en tâche fantôme.
     (evenement,) = evenements_depuis_step(ligne.to_dict())
     assert evenement.type == EVENEMENT_AGENT_ACTIVITE

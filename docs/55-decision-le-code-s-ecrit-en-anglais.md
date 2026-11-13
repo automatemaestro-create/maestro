@@ -286,6 +286,15 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
   `--check-untyped-defs`, qui désigne les lignes là où les types sont connus ; et chercher les
   `getattr(objet, "<champ>")` avant de renommer un champ. Un tel `getattr` lisait le `motif` de
   refus de plusieurs paquets à la fois, et seuls six tests de route l'ont trouvé.
+- **Un receveur `Any` cache la lecture à mypy, même en `--check-untyped-defs`** (#1664). Une
+  soixantaine de lectures passaient par le résultat d'un utilitaire non typé
+  (`resultat.usage.duree_arbitrage_ms`) ou par un rapport reçu en `Any`
+  (`report.usage_totale.resume_court()`, jusque dans `maestro/supervision.py`). Elles se trouvent
+  par les noms qui n'appartiennent qu'au type renommé, cherchés derrière `.`. Un nom partagé
+  (`cout_usd`, `appels`) ne se suit derrière un receveur qu'une fois sa classe vérifiée : un `Event`
+  porte aussi `cout_usd`.
+- **Les erreurs de mypy sur les tests se comparent à leur relevé sans les colonnes.** Un nom plus
+  court déplace la fin d'une erreur déjà là, qui se lit alors comme une erreur neuve.
 - **Les numéros de ligne cités dans `docs/` bougent avec la réécriture.** Ils se suivent comme les
   noms.
 - **Le sha d'un lot n'existe qu'après son merge**, puisque le merge se fait en squash. Le pilote a

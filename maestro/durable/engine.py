@@ -259,11 +259,11 @@ def _record_resume(journal: RunJournal, *, reason: str, acquired: dict[str, Any]
     steps = 0
     planning = acquired.get("planification")
     if isinstance(planning, dict):
-        recovered = recovered.fusion(StepUsage.from_dict(planning))
+        recovered = recovered.merge(StepUsage.from_dict(planning))
         steps += 1
     results = acquired.get("resultats", [])
     for raw in results if isinstance(results, list) else []:
-        recovered = recovered.fusion(TaskResult.from_dict(raw).usage)
+        recovered = recovered.merge(TaskResult.from_dict(raw).usage)
         steps += 1
     journal.consigne(
         etape=STEP_RESUME,
@@ -274,7 +274,7 @@ def _record_resume(journal: RunJournal, *, reason: str, acquired: dict[str, Any]
         entree=reason,
         sortie=(
             f"{steps} étape(s) déjà acquise(s), non ré-exécutées — "
-            f"usage récupéré : {recovered.resume_court()}"
+            f"usage récupéré : {recovered.short_summary()}"
         ),
         usage=StepUsage(),
     )

@@ -151,7 +151,7 @@ def _issue(
         statut=statut,
         sortie=sortie or (f"LIVRABLE {identifiant}" if statut == STATUT_TERMINEE else ""),
         erreur=None if statut == STATUT_TERMINEE else "panne",
-        usage=StepUsage(appels=1, tokens_entree=100, tokens_sortie=50, cout_usd=cout_usd),
+        usage=StepUsage(calls=1, input_tokens=100, output_tokens=50, cost_usd=cout_usd),
     )
 
 
@@ -287,7 +287,7 @@ def test_le_magasin_rend_le_plan_et_les_seules_issues_reussies(
     assert etat.acquises == (SOCLE,)
     assert etat.a_reprendre == (PAGES, TESTS)
     assert etat.resultats[SOCLE].sortie == "le socle Next.js"
-    assert etat.resultats[SOCLE].usage.cout_usd == pytest.approx(0.25)
+    assert etat.resultats[SOCLE].usage.cost_usd == pytest.approx(0.25)
 
 
 @pytest.mark.parametrize("support", ["memoire", "redis", "sqlite"])
@@ -543,7 +543,7 @@ def test_la_reprise_se_dit_au_fil_du_run_et_compte_ce_qui_est_paye() -> None:
     assert "2 à faire" in cesure["sortie"]
     assert SOCLE not in {e["etape"] for e in emises}
     # 0,40 $ acquis + 2 × 0,25 $ refaits ou neufs.
-    assert RunCost.from_journal(journal).total.cout_usd == pytest.approx(0.90)
+    assert RunCost.from_journal(journal).total.cost_usd == pytest.approx(0.90)
 
 
 def test_une_ecriture_refusee_ne_fait_jamais_echouer_le_run() -> None:

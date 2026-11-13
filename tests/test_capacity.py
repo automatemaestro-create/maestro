@@ -23,7 +23,7 @@ Couvre les trois critères d'acceptation, couche par couche :
 Depuis #989, ② couvre aussi ce que cette attente **coûte à la lecture** : le
 temps passé à attendre un créneau n'est pas du travail, le moteur le disait
 déjà sans le compter, et c'est maintenant une part mesurée de la durée de la
-tâche (`StepUsage.duree_attente_creneau_ms`).
+tâche (`StepUsage.slot_wait_duration_ms`).
 """
 
 import asyncio
@@ -310,15 +310,15 @@ def test_la_tache_qui_attend_son_creneau_ne_compte_pas_cette_attente_en_travail(
     resultats = asyncio.run(_deux_taches_bdd(executor))
     assert all(r.ok for r in resultats)
 
-    attentes = [r.usage.duree_attente_creneau_ms for r in resultats]
+    attentes = [r.usage.slot_wait_duration_ms for r in resultats]
     # Mesurées des deux côtés : ici on a regardé, et mesurer qu'on n'a pas
     # attendu n'est pas ne pas savoir (la distinction de `cout_usd`).
     assert all(attente is not None for attente in attentes)
     # L'une des deux a réellement attendu que l'autre libère le créneau.
-    qui_a_attendu = max(resultats, key=lambda r: r.usage.duree_attente_creneau_ms or 0)
-    assert (qui_a_attendu.usage.duree_attente_creneau_ms or 0) > 0
+    qui_a_attendu = max(resultats, key=lambda r: r.usage.slot_wait_duration_ms or 0)
+    assert (qui_a_attendu.usage.slot_wait_duration_ms or 0) > 0
     # Et cette attente sort de son temps de travail, qui est ce que l'écran rend.
-    assert qui_a_attendu.usage.duree_execution_ms < qui_a_attendu.usage.duree_ms
+    assert qui_a_attendu.usage.work_duration_ms < qui_a_attendu.usage.duration_ms
 
 
 def test_une_tache_qui_n_attend_rien_le_dit_par_des_attentes_nulles(tmp_path):
@@ -331,10 +331,10 @@ def test_une_tache_qui_n_attend_rien_le_dit_par_des_attentes_nulles(tmp_path):
     resultat = asyncio.run(executor.execute(_task(id="t1"), [], RunJournal()))
 
     assert resultat.ok
-    assert resultat.usage.duree_attente_creneau_ms == 0
-    assert resultat.usage.duree_attente_atelier_ms == 0
-    assert resultat.usage.duree_attente_ms == 0
-    assert resultat.usage.duree_execution_ms == resultat.usage.duree_ms
+    assert resultat.usage.slot_wait_duration_ms == 0
+    assert resultat.usage.workshop_wait_duration_ms == 0
+    assert resultat.usage.wait_duration_ms == 0
+    assert resultat.usage.work_duration_ms == resultat.usage.duration_ms
 
 
 # --- L'événement `agent.capacite` voyage en JSON ------------------------------------------

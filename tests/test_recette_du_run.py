@@ -169,10 +169,10 @@ class _Verificateur(ModelProvider):
                 # La contre-expertise de la commande qui n'a pas tenu : le défaut est au
                 # livrable, rien ne se réécrit.
                 self.contre_expertises.append(prompt)
-                report_usage(StepUsage(appels=1, tokens_entree=300, cout_usd=0.05))
+                report_usage(StepUsage(calls=1, input_tokens=300, cost_usd=0.05))
                 return json.dumps({"commandes": []})
             self.recettes.append(prompt)
-            report_usage(StepUsage(appels=1, tokens_entree=900, cout_usd=0.25))
+            report_usage(StepUsage(calls=1, input_tokens=900, cost_usd=0.25))
             return json.dumps(self._recette, ensure_ascii=False)
         self.taches.append(prompt)
         return json.dumps({"controles": [{"critere": "le livrable existe", "commande": "ls"}]})
@@ -555,10 +555,10 @@ def test_a_la_fin_du_run_chaque_critere_du_brief_est_verifie_sur_le_livrable_int
     assert etape.statut == STATUT_RECETTE_NON_TENUE
     assert etape.sortie == recette.resume()
     assert etape.verification == recette.to_dict()
-    assert etape.usage.duree_ms is not None
+    assert etape.usage.duration_ms is not None
     grand_livre = RunCost.from_journal(journal)
-    assert grand_livre.acceptance.cout_usd == pytest.approx(0.30)
-    assert grand_livre.acceptance.appels == 2
+    assert grand_livre.acceptance.cost_usd == pytest.approx(0.30)
+    assert grand_livre.acceptance.calls == 2
     assert all(t.task_id != STEP_ACCEPTANCE for t in grand_livre.tasks)
     # Et le rapport la dit avant les tâches.
     assert "Recette : 2/4 critère(s) du brief tenu(s)" in rapport.synthese()
@@ -595,7 +595,7 @@ def test_un_run_dont_aucune_tache_n_aboutit_ne_paie_pas_sa_recette(tmp_path: Pat
     assert verificateur.recettes == []
     assert rapport.recette.statut == STATUT_RECETTE_IMPOSSIBLE
     assert "aucune tâche du run n'a abouti" in rapport.recette.empechement
-    assert RunCost.from_journal(journal).acceptance.cout_usd is None
+    assert RunCost.from_journal(journal).acceptance.cost_usd is None
 
 
 # --------------------------------------------------------------------------- #
@@ -626,7 +626,7 @@ def _recette_consignee() -> tuple[RunJournal, RecetteDuRun]:
         statut=recette.statut,
         entree="2 critère(s)",
         sortie=recette.resume(),
-        usage=StepUsage(appels=1, cout_usd=0.3, duree_ms=105_000),
+        usage=StepUsage(calls=1, cost_usd=0.3, duration_ms=105_000),
         verification=recette.to_dict(),
     )
     return journal, recette
@@ -643,8 +643,8 @@ def test_la_projection_garde_la_recette_au_run_et_son_cout_sur_sa_ligne() -> Non
     assert execution_ is not None
     assert execution_.recette == recette.to_dict()
     assert execution_.to_dict()["recette"] == recette.to_dict()
-    assert execution_.cout.acceptance.cout_usd == pytest.approx(0.3)
-    assert execution_.cout.planning.cout_usd is None
+    assert execution_.cout.acceptance.cost_usd == pytest.approx(0.3)
+    assert execution_.cout.planning.cost_usd is None
     # Une étape du run, jamais une carte : aucune tâche fantôme « recette ».
     assert execution_.cout.tasks == ()
     assert state.taches() == []

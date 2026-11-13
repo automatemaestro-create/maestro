@@ -1332,7 +1332,7 @@ def _ligne_de_run(etape: str, nom: str, cout_usd: float | None = None) -> dict[s
         "agent": "orchestrateur",
         "role": "Orchestrateur",
         "statut": "terminee",
-        "usage": StepUsage(appels=1, cout_usd=cout_usd).to_dict(),
+        "usage": StepUsage(calls=1, cost_usd=cout_usd).to_dict(),
         "horodatage": "2026-09-20T10:00:00+00:00",
     }
 
@@ -1372,7 +1372,7 @@ def test_une_etape_de_tache_ne_porte_aucune_etape_de_run():
             "agent": "developpeur",
             "role": "Développeur",
             "statut": "terminee",
-            "usage": StepUsage(appels=1, cout_usd=0.4).to_dict(),
+            "usage": StepUsage(calls=1, cost_usd=0.4).to_dict(),
             "horodatage": "2026-09-20T10:00:00+00:00",
         }
     )
@@ -1402,10 +1402,10 @@ def test_le_grand_livre_separe_le_cadrage_de_la_planification():
 
     # Les deux tours de cadrage se cumulent dans **un** poste, comme le grand
     # livre du moteur les cumule déjà (#318).
-    assert cout.brief.cout_usd == pytest.approx(0.03)
-    assert cout.brief.appels == 2
-    assert cout.planning.cout_usd == pytest.approx(0.05)
-    assert cout.total.cout_usd == pytest.approx(0.08)
+    assert cout.brief.cost_usd == pytest.approx(0.03)
+    assert cout.brief.calls == 2
+    assert cout.planning.cost_usd == pytest.approx(0.05)
+    assert cout.total.cost_usd == pytest.approx(0.08)
 
 
 def test_une_reprise_n_est_ni_un_cadrage_ni_une_planification():

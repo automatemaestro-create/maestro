@@ -398,7 +398,7 @@ def _met_de_cote(event: Event) -> bool:
 def _laisse_des_tokens_sans_cout(event: Event) -> bool:
     """Cet événement porte-t-il des tokens qu'aucun coût ne couvre (#1280) ?
 
-    La part vient de la mesure (`StepUsage.tokens_non_tarifes`) : tous les tokens
+    La part vient de la mesure (`StepUsage.unpriced_tokens`) : tous les tokens
     d'une mesure sans coût, ceux d'une session tuée avant son résultat même quand
     une relance a fini tarifée. Écrite une fois pour les deux lecteurs de
     `_solde_le_cout` — la carte de la tâche et le cumul du run —, et pour la même
@@ -406,7 +406,7 @@ def _laisse_des_tokens_sans_cout(event: Event) -> bool:
     tuile se contrediraient sur le même écran. C'est le constat du ticket : un run
     à 1,17 $ se déclarait complet avec 2 M de tokens sans prix.
     """
-    return event.usage is not None and event.usage.tokens_non_tarifes > 0
+    return event.usage is not None and event.usage.unpriced_tokens > 0
 
 
 def _pose_debut(tache: EtatTache, statut: str, horodatage: str) -> None:
@@ -465,12 +465,12 @@ def _avec_anterieur(tache: EtatTache, usage: StepUsage) -> StepUsage:
     """`usage` augmenté de ce que les exécutions précédentes du run ont soldé (#1177)."""
     if tache.usage_anterieure is None:
         return usage
-    return tache.usage_anterieure.fusion(usage)
+    return tache.usage_anterieure.merge(usage)
 
 
 def _cout_avec_anterieur(tache: EtatTache, cout: float | None) -> float | None:
     """Le coût de la carte, cumulé comme son usage (#1177) — inconnu ne s'ajoute pas."""
-    anterieur = tache.usage_anterieure.cout_usd if tache.usage_anterieure else None
+    anterieur = tache.usage_anterieure.cost_usd if tache.usage_anterieure else None
     if anterieur is None:
         return cout
     return anterieur if cout is None else anterieur + cout
@@ -492,7 +492,7 @@ def _met_la_tentative_de_cote(tache: EtatTache, event: Event) -> None:
         tache.usage_anterieure = None
     tache.usage = _avec_anterieur(tache, event.usage)
     tache.usage_anterieure = tache.usage
-    tache.cout_usd = tache.usage.cout_usd
+    tache.cout_usd = tache.usage.cost_usd
     tache.cout_partiel = True
 
 
@@ -513,7 +513,7 @@ class EtatTache:
     tâche en cours dont le fournisseur n'a **pas encore tarifé** la dépense
     (les tokens sont dans `usage`) ; `None` non partiel, un coût **inconnu**.
     Depuis #1280, une tâche **soldée** peut rester partielle : son issue a porté
-    des tokens qu'aucun coût ne couvre (`usage.tokens_non_tarifes`) — session
+    des tokens qu'aucun coût ne couvre (`usage.unpriced_tokens`) — session
     tuée avant son résultat, relances comprises, ou fournisseur qui ne tarife
     pas. Soldé ne veut pas dire complet, et la carte ne le prétend plus.
     La ventilation par exécution
@@ -540,7 +540,7 @@ class EtatTache:
     jamais rafraîchi tant qu'elle y reste (une relance qui ré-émet `en_cours`
     ne rajeunit pas une tâche partie depuis vingt minutes). Il ne pouvait pas se
     lire ailleurs : `horodatage` est celui du **dernier** changement d'état, et
-    `usage.duree_ms` n'existe qu'à l'issue — un relevé en cours (#835) porte des
+    `usage.duration_ms` n'existe qu'à l'issue — un relevé en cours (#835) porte des
     tokens et un coût, jamais une durée. Servi, lui aussi, par le seul
     `signe_de_vie`.
     `verification` (#1177) est la **dernière vérification** de la tâche — son
@@ -1313,21 +1313,21 @@ class EtatExecution:
                 )
             usage = event.usage
             if usage is None and event.cout_usd is not None:
-                usage = StepUsage(cout_usd=event.cout_usd)
+                usage = StepUsage(cost_usd=event.cout_usd)
             if usage is None:
                 continue
             if event.etape_run == STEP_ASSESSMENT:
                 # Le bilan (#1284) : une dépense du run, rendue après sa fin —
                 # comptée à part, et hors du temps de mur, que le run avait fini
                 # d'occuper.
-                bilan = bilan.fusion(usage)
+                bilan = bilan.merge(usage)
                 continue
             # Un relevé en cours (#835) n'entre pas au grand livre et n'occupe
             # donc rien : son type est hors des lecteurs comptables, et la
             # branche qui l'écarterait ici est celle du `elif` plus bas — on
             # relève l'intervalle **avec** l'usage qu'on va compter.
             if event.type in _TYPES_COMPTABLES:
-                intervalle = interval_from(event.horodatage, usage.duree_ms)
+                intervalle = interval_from(event.horodatage, usage.duration_ms)
                 if intervalle is not None:
                     intervalles.append(intervalle)
             if event.type == EVENEMENT_TACHE_STATUT and event.tache_id:
@@ -1338,7 +1338,7 @@ class EtatExecution:
                     agent=event.agent,
                     role=event.role,
                     status=event.statut,
-                    usage=entree.usage.fusion(usage),
+                    usage=entree.usage.merge(usage),
                 )
             elif event.type == EVENEMENT_AGENT_ACTIVITE and not event.tache_id:
                 # Le **cadrage** à part de la planification (#989, défaut S9) :
@@ -1350,24 +1350,24 @@ class EtatExecution:
                 # devinée de son titre ; un événement d'avant ce ticket n'en
                 # porte pas, et son cadrage reste donc compté en planification.
                 if event.etape_run == STEP_BRIEF:
-                    brief = brief.fusion(usage)
+                    brief = brief.merge(usage)
                 elif event.etape_run == STEP_PROBE:
                     # La sonde du point de contrôle (#1398) : sa propre ligne,
                     # ni la tâche qui l'a armée, ni le cadrage.
-                    sonde = sonde.fusion(usage)
+                    sonde = sonde.merge(usage)
                 elif event.etape_run == STEP_ACCEPTANCE:
                     # La recette du run (#1530) : sa propre ligne, dans le temps
                     # de mur — elle est sur le chemin du run.
-                    recette = recette.fusion(usage)
+                    recette = recette.merge(usage)
                 else:
-                    planification = planification.fusion(usage)
+                    planification = planification.merge(usage)
             elif (
                 event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}
                 and event.tache_id
             ):
                 entree = entrees.get(event.tache_id) or TaskCost(task_id=event.tache_id)
                 entrees[event.tache_id] = replace(
-                    entree, usage=entree.usage.fusion(usage)
+                    entree, usage=entree.usage.merge(usage)
                 )
         return RunCost(
             run_id=self.run_id,
@@ -1704,14 +1704,14 @@ class ControlTowerState:
             role=tache.role,
             cout_usd=tache.cout_usd,
             cout_partiel=tache.cout_partiel,
-            duree_ms=tache.usage.duree_ms if tache.usage is not None else None,
+            duree_ms=tache.usage.duration_ms if tache.usage is not None else None,
             # Le travail de la tâche (#989), à côté de son horloge : c'est lui
             # que la boîte affiche, l'horloge contenant les attentes que le
             # moteur range déjà hors du travail (créneau #86, atelier #839,
             # arbitrage #584). La décomposition vit dans `StepUsage`, jamais
             # ici : la projection transporte, elle ne recalcule pas.
             duree_execution_ms=(
-                tache.usage.duree_execution_ms if tache.usage is not None else None
+                tache.usage.work_duration_ms if tache.usage is not None else None
             ),
             etapes=tuple(tache.etapes),
             activite=tache.signe_de_vie,
@@ -2016,7 +2016,7 @@ class ControlTowerState:
                 tache,
                 event.cout_usd
                 if event.cout_usd is not None or event.usage is None
-                else event.usage.cout_usd,
+                else event.usage.cost_usd,
             )
             tache.cout_partiel = _laisse_des_tokens_sans_cout(event)
         if event.ticket is not None:

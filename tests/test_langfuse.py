@@ -99,7 +99,7 @@ def _record(journal: RunJournal, **overrides):
 
 
 def test_planning_upserts_the_trace_with_goal_and_timestamp():
-    usage = StepUsage(appels=1, tokens_entree=100, tokens_sortie=10).avec_duree(10_000)
+    usage = StepUsage(calls=1, input_tokens=100, output_tokens=10).with_duration(10_000)
     line = _line(
         etape=STEP_PLANNING, nom="Planification de l'objectif",
         agent="orchestrateur", role="Orchestrateur",
@@ -124,7 +124,7 @@ def test_planning_upserts_the_trace_with_goal_and_timestamp():
 
 def test_a_task_with_model_calls_becomes_a_priced_generation():
     usage = StepUsage(
-        appels=2, tokens_entree=100, tokens_sortie=25, cout_usd=0.0375, outils=("Read",)
+        calls=2, input_tokens=100, output_tokens=25, cost_usd=0.0375, tools=("Read",)
     )
     line = _line(usage=usage.to_dict())
 
@@ -165,7 +165,7 @@ def test_a_step_without_model_call_becomes_a_span():
 
 def test_an_unknown_cost_stays_absent_from_the_native_usage():
     # A provider silent on cost (#55): no totalCost, rather than a false 0.
-    line = _line(usage=StepUsage(appels=1, tokens_entree=10).to_dict())
+    line = _line(usage=StepUsage(calls=1, input_tokens=10).to_dict())
 
     _, observation = events_from_step(line)
 
@@ -185,11 +185,11 @@ def test_the_step_status_carries_the_langfuse_level(status, level):
 
 
 def test_without_duration_or_with_an_unreadable_timestamp_the_observation_is_a_point():
-    no_duration = _line(usage=StepUsage(appels=1).to_dict())
+    no_duration = _line(usage=StepUsage(calls=1).to_dict())
     _, obs = events_from_step(no_duration)
     assert obs["body"]["startTime"] == obs["body"]["endTime"]
 
-    unreadable = _line(horodatage="pas-une-date", usage=StepUsage().avec_duree(500).to_dict())
+    unreadable = _line(horodatage="pas-une-date", usage=StepUsage().with_duration(500).to_dict())
     _, obs = events_from_step(unreadable)
     assert obs["body"]["startTime"] == "pas-une-date"
 
@@ -224,7 +224,7 @@ def test_the_handler_publishes_each_recorded_step(trace_logger):
     trace_logger.addHandler(LangfuseExportHandler(lambda events: batches.append(list(events))))
 
     journal = RunJournal(run_id="run-handler")
-    _record(journal, usage=StepUsage(appels=1))
+    _record(journal, usage=StepUsage(calls=1))
     _record(journal, etape="t2", statut="echec", erreur="boum")
 
     assert len(batches) == 2  # one batch (trace + observation) per recorded step
@@ -500,8 +500,8 @@ def test_end_to_end_traces_then_scores_on_the_same_trace(trace_logger, local_lan
     try:
         journal = RunJournal(run_id="run-complet")
         _record(journal, etape=STEP_PLANNING, agent="orchestrateur",
-                role="Orchestrateur", usage=StepUsage(appels=1, cout_usd=0.01))
-        _record(journal, etape="t1", usage=StepUsage(appels=1, cout_usd=0.02))
+                role="Orchestrateur", usage=StepUsage(calls=1, cost_usd=0.01))
+        _record(journal, etape="t1", usage=StepUsage(calls=1, cost_usd=0.02))
         score_run_langfuse(journal, settings)
     finally:
         trace_logger.removeHandler(handler)

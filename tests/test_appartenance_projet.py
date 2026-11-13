@@ -291,7 +291,7 @@ def test_le_grand_livre_recolle_le_projet_sur_les_lignes_de_tache() -> None:
     state = ControlTowerState()
     state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=PROJET))
     state.appliquer(
-        _evenement(tache_id="t1", run_id="run-1", usage=StepUsage(cout_usd=0.5))
+        _evenement(tache_id="t1", run_id="run-1", usage=StepUsage(cost_usd=0.5))
     )
 
     livre = state.execution("run-1").cout
@@ -390,15 +390,15 @@ def client(projets: ServiceProjets, ids: tuple[str, str]) -> TestClient:
     state = ControlTowerState()
     state.appliquer(
         _evenement(
-            tache_id="t1", run_id="run-1", projet_id=projet, usage=StepUsage(cout_usd=1.0)
+            tache_id="t1", run_id="run-1", projet_id=projet, usage=StepUsage(cost_usd=1.0)
         )
     )
     state.appliquer(
         _evenement(
-            tache_id="t2", run_id="run-2", projet_id=autre, usage=StepUsage(cout_usd=2.0)
+            tache_id="t2", run_id="run-2", projet_id=autre, usage=StepUsage(cost_usd=2.0)
         )
     )
-    state.appliquer(_evenement(tache_id="t3", run_id="run-3", usage=StepUsage(cout_usd=4.0)))
+    state.appliquer(_evenement(tache_id="t3", run_id="run-3", usage=StepUsage(cost_usd=4.0)))
     with TestClient(
         create_app(bus=InMemoryEventBus(), state=state, projets=projets)
     ) as client:
@@ -497,14 +497,14 @@ def test_un_travail_sans_projet_n_entre_dans_le_total_d_aucun() -> None:
     state = ControlTowerState()
     state.appliquer(
         _evenement(
-            tache_id="t1", run_id="run-1", projet_id=PROJET, usage=StepUsage(cout_usd=1.0)
+            tache_id="t1", run_id="run-1", projet_id=PROJET, usage=StepUsage(cost_usd=1.0)
         )
     )
-    state.appliquer(_evenement(tache_id="t3", run_id="run-1", usage=StepUsage(cout_usd=4.0)))
+    state.appliquer(_evenement(tache_id="t3", run_id="run-1", usage=StepUsage(cost_usd=4.0)))
 
     agrege = agrege_couts(state.executions(), portee=PorteeProjet.projet(PROJET))
 
-    assert agrege.total.cout_usd == pytest.approx(1.0)
+    assert agrege.total.cost_usd == pytest.approx(1.0)
     assert [t.tache_id for t in agrege.taches] == ["t1"]
 
 

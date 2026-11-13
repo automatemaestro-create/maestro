@@ -725,8 +725,8 @@ def test_le_serveur_maestro_sert_le_verbe_des_qu_un_canal_l_attend(
 
 
 def test_un_appel_d_outil_reste_un_geste_compte_au_grand_livre(flux_sdk):
-    """Ne plus lire un outil n'est pas le taire : `outils` compte toujours ce que
-    l'agent a employé, verbe de checklist compris (`StepUsage.outils`)."""
+    """Ne plus lire un outil n'est pas le taire : `tools` compte toujours ce que
+    l'agent a employé, verbe de checklist compris (`StepUsage.tools`)."""
     outils: list[str] = []
 
     claude_mod._absorbe(

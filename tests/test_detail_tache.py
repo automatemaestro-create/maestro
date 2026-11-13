@@ -178,7 +178,7 @@ def test_poser_un_detail_ne_depense_rien():
     consigne_detail(journal, "t1", description="Gratuit.")
 
     (record,) = journal.records
-    assert record.usage.cout_usd in (None, 0, 0.0)
+    assert record.usage.cost_usd in (None, 0, 0.0)
 
 
 @pytest.mark.parametrize(

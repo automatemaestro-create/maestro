@@ -102,7 +102,7 @@ def statut_tache(tache_id: str, *, titre: str, cout_usd: float) -> Event:
         role="Développeur",
         statut="terminee",
         cout_usd=cout_usd,
-        usage=StepUsage(appels=1, tokens_entree=500, tokens_sortie=60, cout_usd=cout_usd),
+        usage=StepUsage(calls=1, input_tokens=500, output_tokens=60, cost_usd=cout_usd),
     )
 
 
@@ -163,7 +163,7 @@ def test_un_evenement_complet_fait_l_aller_retour_sans_rien_perdre(tmp_path: Pat
 
     assert relu == Event.from_json(original.to_json())
     assert relu.titre == original.titre  # accents et guillemets compris
-    assert relu.usage is not None and relu.usage.tokens_entree == 500
+    assert relu.usage is not None and relu.usage.input_tokens == 500
 
 
 def test_un_journal_qui_n_existe_pas_encore_se_relit_vide(tmp_path: Path) -> None:
@@ -324,7 +324,7 @@ def test_le_grand_livre_survit_au_redemarrage_sans_aucun_service(tmp_path: Path)
                 agent="orchestrateur",
                 role="Orchestrateur",
                 statut="terminee",
-                usage=StepUsage(appels=1, tokens_entree=200, tokens_sortie=20, cout_usd=0.1),
+                usage=StepUsage(calls=1, input_tokens=200, output_tokens=20, cost_usd=0.1),
             )
         )
         await bus.publish(statut_tache("t1", titre="Schéma", cout_usd=0.4))

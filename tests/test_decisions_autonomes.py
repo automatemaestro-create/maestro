@@ -425,7 +425,7 @@ def test_la_trace_separe_la_decision_de_son_motif():
     assert etape.description == RAISON
     assert etape.agent and etape.role
     assert etape.run_id == RUN
-    assert etape.usage.cout_usd in (None, 0.0)
+    assert etape.usage.cost_usd in (None, 0.0)
 
 
 def test_une_decision_consignee_ne_change_pas_le_statut_de_la_tache():

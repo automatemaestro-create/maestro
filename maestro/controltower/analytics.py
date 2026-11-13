@@ -332,7 +332,7 @@ def _usage_de(event: Event) -> StepUsage | None:
     if event.usage is not None:
         return event.usage
     if event.cout_usd is not None:
-        return StepUsage(cout_usd=event.cout_usd)
+        return StepUsage(cost_usd=event.cout_usd)
     return None
 
 
@@ -343,7 +343,7 @@ def _usage_du_fil(event: Event) -> StepUsage | None:
     if event.usage is not None:
         return event.usage
     if event.cout_usd is not None:
-        return StepUsage(cout_usd=event.cout_usd)
+        return StepUsage(cost_usd=event.cout_usd)
     return None
 
 
@@ -373,7 +373,7 @@ class _Accumulateur:
 
 def _tri_par_cout(usage: StepUsage) -> tuple[float, int]:
     """Clé de tri décroissant des vues : coût rapporté d'abord, tokens ensuite."""
-    return (usage.cout_usd or 0.0, usage.tokens_total)
+    return (usage.cost_usd or 0.0, usage.total_tokens)
 
 
 def agrege_couts(  # noqa: C901
@@ -468,8 +468,8 @@ def agrege_couts(  # noqa: C901
             if usage is None:
                 continue
 
-            total = total.fusion(usage)
-            run.usage = run.usage.fusion(usage)
+            total = total.merge(usage)
+            run.usage = run.usage.merge(usage)
             if date is not None:
                 usages_dates.append((date, usage))
 
@@ -485,20 +485,20 @@ def agrege_couts(  # noqa: C901
                 # la fenêtre où Maestro n'a rien coûté rendrait « 0,00 $ » plutôt
                 # que rien (même convention que `cout_usd: None`).
                 orchestration.agent = ACTEUR_RUN
-                orchestration.usage = orchestration.usage.fusion(usage)
+                orchestration.usage = orchestration.usage.merge(usage)
                 orchestration.role = event.role or orchestration.role
                 if event.tache_id:
                     orchestration.taches.add(event.tache_id)
             elif event.agent not in _AGENTS_NON_EXECUTANTS:
                 acteur = par_agent.setdefault(event.agent, _Accumulateur())
-                acteur.usage = acteur.usage.fusion(usage)
+                acteur.usage = acteur.usage.merge(usage)
                 acteur.role = event.role or acteur.role
                 if event.tache_id:
                     acteur.taches.add(event.tache_id)
 
             if event.tache_id:
                 tache = par_tache.setdefault(event.tache_id, _Accumulateur())
-                tache.usage = tache.usage.fusion(usage)
+                tache.usage = tache.usage.merge(usage)
                 tache.executions.add(execution.run_id)
                 if event.type == EVENEMENT_TACHE_STATUT:
                     # L'étape de la tâche elle-même fait foi pour l'identité,
@@ -536,13 +536,13 @@ def agrege_couts(  # noqa: C901
         usage = _usage_du_fil(depense)
         if usage is None:
             continue
-        total = total.fusion(usage)
+        total = total.merge(usage)
         if date is not None:
             usages_dates.append((date, usage))
         # Même témoin que l'orchestration : le poste n'existe que s'il a été vu
         # dépenser, sans quoi « 0,00 $ » dirait ce que l'API ignore.
         poste_fil.agent = POSTE_FIL
-        poste_fil.usage = poste_fil.usage.fusion(usage)
+        poste_fil.usage = poste_fil.usage.merge(usage)
 
     # Le pas retenu, puis la mise en seaux (#991). `auto` se résout sur l'étendue
     # **couverte par la série** — premier et dernier usage daté —, et non sur
@@ -556,7 +556,7 @@ def agrege_couts(  # noqa: C901
     par_seau: dict[str, StepUsage] = {}
     for date, usage in usages_dates:
         seau = _seau(date, pas)
-        par_seau[seau] = par_seau.get(seau, StepUsage()).fusion(usage)
+        par_seau[seau] = par_seau.get(seau, StepUsage()).merge(usage)
 
     return AnalyticsCouts(
         depuis=depuis.isoformat() if depuis is not None else None,

@@ -228,7 +228,7 @@ def test_un_depassement_du_plafond_de_cout_n_est_jamais_relance():
     # Le fournisseur rapporte une dépense au-delà du plafond : le garde-fou lève
     # SpendingCapExceeded pendant l'appel — échec immédiat, aucune relance.
     provider = FlakyProvider(
-        pannes=99, usage_par_appel=StepUsage(appels=1, cout_usd=0.5)
+        pannes=99, usage_par_appel=StepUsage(calls=1, cost_usd=0.5)
     )
     journal = RunJournal()
     engine = _engine(
@@ -348,7 +348,7 @@ def test_le_grand_livre_agrege_l_usage_de_toutes_les_tentatives():
     # additionne les deux appels — l'échec transitoire n'est pas « gratuit ».
     provider = FlakyProvider(
         pannes=1,
-        usage_par_appel=StepUsage(appels=1, tokens_entree=10, tokens_sortie=5, cout_usd=0.01),
+        usage_par_appel=StepUsage(calls=1, input_tokens=10, output_tokens=5, cost_usd=0.01),
     )
     journal = RunJournal()
     engine = _engine(
@@ -358,13 +358,13 @@ def test_le_grand_livre_agrege_l_usage_de_toutes_les_tentatives():
 
     (resultat,) = report.resultats
     assert resultat.ok
-    assert resultat.usage.appels == 2
-    assert resultat.usage.tokens_entree == 20
-    assert resultat.usage.cout_usd == pytest.approx(0.02)
+    assert resultat.usage.calls == 2
+    assert resultat.usage.input_tokens == 20
+    assert resultat.usage.cost_usd == pytest.approx(0.02)
     # L'étape de relance porte un usage nul : pas de double compte au journal.
     (relance,) = _relances(journal)
     assert relance.usage == StepUsage()
-    assert journal.usage_totale.cout_usd == pytest.approx(0.02)
+    assert journal.usage_totale.cost_usd == pytest.approx(0.02)
 
 
 def test_une_reponse_vide_est_un_echec_transitoire_relance():

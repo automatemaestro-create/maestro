@@ -506,7 +506,7 @@ def test_l_hypothese_est_ecrite_au_journal_a_la_borne_dans_deux_champs():
 
     # Demander ne dépense pas : le coût de la tâche est porté par son étape
     # finale, et rendre compte de soi ne doit rien coûter.
-    assert etape.usage.cout_usd in (None, 0.0)
+    assert etape.usage.cost_usd in (None, 0.0)
     assert etape.run_id == "run-1027"
 
 
@@ -527,7 +527,7 @@ def test_une_reponse_recue_est_consignee_dans_les_memes_champs():
     assert etape.statut == STATUT_QUESTION_REPONDUE
     assert etape.sortie == REPONSE
     assert QUESTION in etape.description
-    assert etape.usage.cout_usd in (None, 0.0)
+    assert etape.usage.cost_usd in (None, 0.0)
 
 
 def test_une_question_ne_fait_pas_changer_la_tache_de_colonne():

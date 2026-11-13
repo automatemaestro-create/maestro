@@ -192,6 +192,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | limite d'usage | `usage_limit` | la limite du fournisseur, qui met un run en pause |
 | délai | `timeout` | le temps au-delà duquel on arrête |
 | cadence | `cadence` | pourquoi les tâches passent une à une |
+| attente (durée) | `wait` | le temps qu'une tâche passe à attendre un arbitrage, un créneau ou un atelier. À distinguer de `pending_item`, ce qui attend quelqu'un |
+| créneau (d'instance) | `slot` | la place d'une instance d'agent, qu'une tâche attend avant de travailler |
 | progression | `progress` | l'avancement d'un run par statut de tâche |
 | frise | `timeline` | ce que les agents font et se disent, dans l'ordre |
 | activité (d'un agent) | `agent_activity` | ce qu'un agent fait pendant qu'il le fait. À distinguer des activités Temporal (`activities`, nom imposé par la bibliothèque) |
@@ -215,6 +217,13 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | grand livre | `ledger` | la comptabilité de coût d'une exécution |
 | estimation | `estimate` | l'ordre de grandeur de ce qu'un run proposé coûterait |
 | usage | `usage` | tokens, coût, durée et outils d'un appel modèle |
+| tour (d'un modèle) | `turn` | un aller-retour du modèle dans une session d'agent, que l'usage compte à part des appels |
+| tokens non tarifés | `unpriced_tokens` | la part des tokens qu'aucun coût ne couvre : au-dessus de zéro, le coût n'est qu'un plancher |
+| cache relu, cache écrit | `cache_read`, `cache_write` | les deux parts des tokens d'entrée que le cache du fournisseur sert, puis écrit |
+| contexte atteint | `max_context` | le plus grand prompt d'un seul appel au modèle. Il se fusionne par maximum, jamais par somme |
+| temps de travail | `work_duration` | la durée horloge d'une tâche moins ses attentes |
+| contrôle de dépense | `spending_control` | ce que le collecteur d'usage consulte à chaque mesure : le plafond de dépense, vu sans la comptabilité |
+| dépense du run | `run_spend` | ce que le run dépense hors de toute tâche, comme la sonde de démarrage |
 | événement | `event` | ce qui est poussé en temps réel aux écrans. Doublet `events` / `evenements` tranché |
 | magasin (d'événements) | `event_store` | où les événements de l'API sont gardés |
 | journal | `journal` | le journal structuré d'exécution, une ligne par étape |

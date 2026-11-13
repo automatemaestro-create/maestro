@@ -232,7 +232,7 @@ def _tache(task_id: str, statut: str = STATUT_TERMINEE, **surcharges) -> TaskRes
         score=1,
         statut=statut,
         sortie="livré" if statut == STATUT_TERMINEE else "",
-        usage=StepUsage(appels=1, tokens_entree=10, tokens_sortie=5, cout_usd=0.01),
+        usage=StepUsage(calls=1, input_tokens=10, output_tokens=5, cost_usd=0.01),
     )
     champs.update(surcharges)
     return TaskResult(**champs)
@@ -300,7 +300,7 @@ def test_fin_de_run_poste_le_bilan_du_rapport(store):
     assert "2/4 réussie(s)" in mission
     assert "1 en échec" in mission
     assert "1 bloquée(s)" in mission
-    assert report.usage_totale.resume_court() in mission
+    assert report.usage_totale.short_summary() in mission
     assert "run_id : run-202" in mission
 
 
@@ -339,7 +339,7 @@ def test_fin_de_run_consigne_l_etape_notification_au_journal(store):
     assert ligne.sortie == "posté sur #maestro-runs (ts 42)"
     assert ligne.entree.startswith(":checkered_flag: Run Maestro terminé")
     # Le coût de la supervision est consigné sur son étape propre, durée comprise.
-    assert ligne.usage.duree_ms is not None
+    assert ligne.usage.duration_ms is not None
 
 
 def test_la_mission_de_supervision_remplace_le_prompt_du_role(store):
@@ -500,7 +500,7 @@ def test_un_echec_de_publication_est_consigne_sans_lever(store):
     assert ligne.statut == STATUT_ECHEC
     assert ligne.erreur == "serveur MCP slack injoignable"
     assert ligne.sortie == ""
-    assert ligne.usage.duree_ms is not None
+    assert ligne.usage.duration_ms is not None
 
 
 def test_un_token_absent_rend_le_serveur_indisponible_sans_casser_le_run(store, monkeypatch):
@@ -555,7 +555,7 @@ def test_l_echec_de_notification_n_altere_pas_l_issue_du_run(store):
         statut=STATUT_TERMINEE,
         entree="fais X",
         sortie="fait",
-        usage=StepUsage(appels=1, cout_usd=0.02),
+        usage=StepUsage(calls=1, cost_usd=0.02),
     )
     report = RunReport(objectif="Livrer", resultats=(_tache("t1"),), run_id="run-202")
 

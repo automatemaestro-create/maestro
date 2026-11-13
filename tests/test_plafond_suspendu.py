@@ -102,8 +102,8 @@ class _Depensier(ModelProvider):
 
     async def generate(self, prompt, *, model, system_prompt=None):
         self.prompts.append(prompt)
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
         self.acheves += 1
         return f"LIVRABLE {self.acheves}"
 
@@ -205,15 +205,15 @@ def test_au_plafond_le_run_attend_une_decision_puis_reprend_la_tache():
     # Une seule question, pour ce run.
     assert len(arbitre.demandes) == 1
     # La dépense des deux tentatives voyage avec l'issue…
-    assert tache.usage.cout_usd == pytest.approx(0.024)
+    assert tache.usage.cost_usd == pytest.approx(0.024)
     # …et le grand livre dit la même chose, sans tâche fantôme « plafond ».
     livre = RunCost.from_journal(journal)
     assert [t.task_id for t in livre.tasks] == ["t1"]
-    assert livre.tasks[0].usage.cout_usd == pytest.approx(0.024)
+    assert livre.tasks[0].usage.cost_usd == pytest.approx(0.024)
     # La tentative interrompue a laissé sa ligne, sa dépense comprise.
     (mise_de_cote,) = _lignes(journal, f"t1{SUFFIXE_ETAPE_PLAFOND}")
     assert mise_de_cote.statut == STATUT_TACHE_SUSPENDUE
-    assert mise_de_cote.usage.cout_usd == pytest.approx(0.012)
+    assert mise_de_cote.usage.cost_usd == pytest.approx(0.012)
     # Le run dit qu'il a attendu, puis ce qui a été décidé.
     assert [r.statut for r in _lignes(journal, STEP_SPENDING_CAP)] == [
         STATUT_PLAFOND_ATTEINT,
@@ -271,7 +271,7 @@ def test_rien_ne_se_depense_ni_ne_demarre_avant_la_reponse():
         await _laisser_tourner()
         # Pendant l'attente : un seul appel a eu lieu — celui qui a franchi le
         # plafond —, la seconde tâche n'a pas démarré, et la dépense est figée.
-        pendant = (len(provider.prompts), journal.usage_totale.cout_usd, run.done())
+        pendant = (len(provider.prompts), journal.usage_totale.cost_usd, run.done())
         arbitre.libre.set()
         return pendant, await run
 
@@ -375,8 +375,8 @@ class _EcritPuisDepense(ModelProvider):
                 p.name for p in espace.iterdir() if p.is_file() and p.name.endswith(".md")
             )
             (espace / "fin.md").write_text("la fin du travail", encoding="utf-8")
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
         return "Fait."
 
 
@@ -477,7 +477,7 @@ def test_arreter_solde_le_run_sur_ce_qui_est_fait():
     # Rien de plus n'a été dépensé : un appel, coupé ; la seconde n'a jamais démarré.
     assert len(provider.prompts) == 1
     assert seconde.agent == "—"
-    assert journal.usage_totale.cout_usd == pytest.approx(0.012)
+    assert journal.usage_totale.cost_usd == pytest.approx(0.012)
     assert len(arbitre.demandes) == 1
     (_, decision) = _lignes(journal, STEP_SPENDING_CAP)
     assert decision.statut == STATUT_PLAFOND_ARRETE
@@ -538,8 +538,8 @@ def test_un_plafond_releve_trop_court_repose_la_question():
     # Les deux tentatives coupées sont comptées, sur la tâche comme au grand livre :
     # 0,012 $ pour la première, 0,006 $ pour la reprise, coupée à sa première
     # mesure (0,018 $ > 0,015 $).
-    assert tache.usage.cout_usd == pytest.approx(0.018)
-    assert journal.usage_totale.cout_usd == pytest.approx(0.018)
+    assert tache.usage.cost_usd == pytest.approx(0.018)
+    assert journal.usage_totale.cost_usd == pytest.approx(0.018)
 
 
 def test_un_canal_muet_n_invente_pas_de_reponse():

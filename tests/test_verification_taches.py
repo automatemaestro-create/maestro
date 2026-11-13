@@ -374,7 +374,7 @@ def test_une_correction_qui_gagne_un_critere_repart_a_l_agent():
 def test_le_budget_atteint_pendant_une_correction_garde_les_preuves():
     agent = AgentEtVerificateur(
         [{"bonjour.txt": "Au revoir"}],
-        usage_par_session=StepUsage(appels=1, tokens_entree=600, tokens_sortie=0),
+        usage_par_session=StepUsage(calls=1, input_tokens=600, output_tokens=0),
     )
     journal = RunJournal()
 
@@ -1407,7 +1407,7 @@ class ProducteurEtQa(ModelProvider):
         )
 
     async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools, **_):
-        report_usage(StepUsage(appels=1, tokens_entree=10, cout_usd=0.5))
+        report_usage(StepUsage(calls=1, input_tokens=10, cost_usd=0.5))
         tache = "revue" if "Tâche : Revoir l'API" in prompt else "api"
         self.sessions.append((tache, prompt))
         fichier = "rapport.md" if tache == "revue" else "api.py"
@@ -1451,9 +1451,9 @@ def test_qa_non_conforme_renvoie_le_livrable_a_son_rôle_producteur():
     assert renvoi.statut == STATUT_VERIFICATION_NON_TENUE
     assert "la route /taches rend 500" in renvoi.verification["constats"][0]["preuve"]
     # Le rapport garde ce que chaque exécution a coûté — la reprise s'ajoute.
-    assert api.usage.cout_usd == pytest.approx(1.0)
-    assert revue.usage.cout_usd == pytest.approx(1.0)
-    assert rapport.usage_totale.cout_usd == pytest.approx(2.0)
+    assert api.usage.cost_usd == pytest.approx(1.0)
+    assert revue.usage.cost_usd == pytest.approx(1.0)
+    assert rapport.usage_totale.cost_usd == pytest.approx(2.0)
 
 
 def test_qa_sans_progres_laisse_le_producteur_en_echec_motive():

@@ -7,7 +7,7 @@ ferait un run **plus cher** sans qu'aucun écran ne rougisse.
 
 - le **total soldé ne bouge pas d'un token** : les tours signalés en cours de
   route, plus le reste que porte le résultat, font exactement ce que le résultat
-  seul faisait avant ce lot — `appels`, `tours`, `outils`, coût et durée compris ;
+  seul faisait avant ce lot — `calls`, `turns`, `tools`, coût et durée compris ;
 - un relevé **ne compte jamais deux fois** : hors de `records`, donc hors de
   `usage_totale`, du grand livre et du plafond de dépense qui le relit ; hors de
   l'export Langfuse ; et, côté Control Tower, hors du grand livre du run pendant
@@ -52,8 +52,8 @@ from maestro.telemetry import (
     RunJournal,
     StepUsage,
     collect_usage,
+    current_usage,
     est_releve_usage,
-    usage_en_cours,
 )
 from maestro.telemetry.langfuse import events_from_step as langfuse_depuis_step
 
@@ -116,7 +116,7 @@ def test_les_tours_se_signalent_au_fil_et_le_total_solde_ne_bouge_pas(sdk):
     vus: list[StepUsage] = []
     absorbe = _absorbeur(claude_mod._CompteurTours())
 
-    with collect_usage(on_mesure=vus.append) as recolte:
+    with collect_usage(on_measure=vus.append) as recolte:
         absorbe(_Assistant([_Texte("je lis")], usage=_TOUR_1, message_id="m1"))
         # Le CLI répète l'usage d'un même appel d'API sur chacun de ses blocs :
         # dédupliqué par identifiant, ce second message n'ajoute rien.
@@ -127,22 +127,22 @@ def test_les_tours_se_signalent_au_fil_et_le_total_solde_ne_bouge_pas(sdk):
         )
 
     # En cours de route : les tokens montent, le coût n'est pas encore tarifé.
-    assert [v.tokens_total for v in vus] == [160, 380, 380]
-    assert [v.tours for v in vus] == [1, 2, 2]
-    assert [v.cout_usd for v in vus[:2]] == [None, None]
-    assert [v.appels for v in vus[:2]] == [0, 0]
+    assert [v.total_tokens for v in vus] == [160, 380, 380]
+    assert [v.turns for v in vus] == [1, 2, 2]
+    assert [v.cost_usd for v in vus[:2]] == [None, None]
+    assert [v.calls for v in vus[:2]] == [0, 0]
     # Soldé : exactement ce que le résultat seul rendait avant ce lot — et, depuis
     # #1398, sa part relue en cache et le contexte atteint, que seuls les tours disent.
     assert recolte.total == StepUsage(
-        appels=1,
-        tokens_entree=350,
-        tokens_sortie=30,
-        cout_usd=0.042,
-        duree_api_ms=900,
-        tours=2,
-        outils=("Write",),
-        tokens_cache_lus=50,
-        contexte_max=200,
+        calls=1,
+        input_tokens=350,
+        output_tokens=30,
+        cost_usd=0.042,
+        api_duration_ms=900,
+        turns=2,
+        tools=("Write",),
+        cache_read_tokens=50,
+        max_context=200,
     )
 
 
@@ -157,7 +157,7 @@ def test_un_resultat_qui_en_dit_moins_que_les_tours_fait_foi(sdk):
     # Le contexte qu'un tour a atteint (#1398) est un fait observé : un maximum, que
     # le résultat ne solde pas — les compteurs, eux, retombent sur le sien.
     assert recolte.total == StepUsage(
-        appels=1, tokens_entree=0, tokens_sortie=0, duree_api_ms=0, tours=1, contexte_max=150
+        calls=1, input_tokens=0, output_tokens=0, api_duration_ms=0, turns=1, max_context=150
     )
 
 
@@ -169,10 +169,10 @@ def test_une_session_coupee_avant_son_resultat_garde_les_tokens_de_ses_tours(sdk
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_1, message_id="m1"))
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_2, message_id="m2"))
 
-    assert recolte.total.tokens_total == 380
-    assert recolte.total.tours == 2
-    assert recolte.total.appels == 0
-    assert recolte.total.cout_usd is None
+    assert recolte.total.total_tokens == 380
+    assert recolte.total.turns == 2
+    assert recolte.total.calls == 0
+    assert recolte.total.cost_usd is None
 
 
 def test_un_message_sans_usage_ni_identifiant_ne_signale_rien(sdk):
@@ -180,7 +180,7 @@ def test_un_message_sans_usage_ni_identifiant_ne_signale_rien(sdk):
     vus: list[StepUsage] = []
     absorbe = _absorbeur(claude_mod._CompteurTours())
 
-    with collect_usage(on_mesure=vus.append):
+    with collect_usage(on_measure=vus.append):
         absorbe(_Assistant([_Texte("…")]))
 
     assert vus == []
@@ -194,13 +194,13 @@ def test_sans_compteur_le_resultat_signale_tout_comme_avant(sdk):
 
     # Sans les tours, le contexte atteint reste inconnu (#1398) : le résultat additionne.
     assert recolte.total == StepUsage(
-        appels=1,
-        tokens_entree=350,
-        tokens_sortie=30,
-        cout_usd=0.01,
-        duree_api_ms=0,
-        tours=1,
-        tokens_cache_lus=50,
+        calls=1,
+        input_tokens=350,
+        output_tokens=30,
+        cost_usd=0.01,
+        api_duration_ms=0,
+        turns=1,
+        cache_read_tokens=50,
     )
 
 
@@ -209,7 +209,7 @@ def test_sans_compteur_le_resultat_signale_tout_comme_avant(sdk):
 
 def test_le_rappel_recoit_le_cumul_avant_le_controle_et_ne_casse_jamais_la_mesure():
     class _PlafondQuiLeve:
-        def verifie(self, en_cours):
+        def check(self, current):
             raise RuntimeError("plafond crevé")
 
     vus: list[StepUsage] = []
@@ -218,22 +218,22 @@ def test_le_rappel_recoit_le_cumul_avant_le_controle_et_ne_casse_jamais_la_mesur
         vus.append(cumul)
         raise ValueError("l'observateur tombe")
 
-    with collect_usage(plafond=_PlafondQuiLeve(), on_mesure=observateur) as recolte:
+    with collect_usage(spending_cap=_PlafondQuiLeve(), on_measure=observateur) as recolte:
         with pytest.raises(RuntimeError, match="plafond crevé"):
-            claude_mod.report_usage(StepUsage(tokens_entree=5))
+            claude_mod.report_usage(StepUsage(input_tokens=5))
 
     # Le relevé est parti **avant** que le contrôle ne stoppe l'étape, l'erreur
     # de l'observateur n'a pas remplacé celle du contrôle, et la mesure est comptée.
-    assert [v.tokens_entree for v in vus] == [5]
-    assert recolte.total.tokens_entree == 5
+    assert [v.input_tokens for v in vus] == [5]
+    assert recolte.total.input_tokens == 5
 
 
 def test_usage_en_cours_lit_le_collecteur_actif_et_rien_hors_de_lui():
-    assert usage_en_cours() == StepUsage()
+    assert current_usage() == StepUsage()
     with collect_usage():
-        claude_mod.report_usage(StepUsage(appels=1, tokens_sortie=3))
-        assert usage_en_cours() == StepUsage(appels=1, tokens_sortie=3)
-    assert usage_en_cours() == StepUsage()
+        claude_mod.report_usage(StepUsage(calls=1, output_tokens=3))
+        assert current_usage() == StepUsage(calls=1, output_tokens=3)
+    assert current_usage() == StepUsage()
 
 
 # ------------------------------------------- ③ Le journal émet le relevé sans le conserver
@@ -261,12 +261,12 @@ def test_un_releve_est_emis_mais_ne_compte_dans_aucun_agregat_du_journal():
     journal, lignes = _journal()
     journal.consigne(
         etape="t0", nom="Avant", agent="dev", role="Dev", statut=STATUT_TERMINEE,
-        entree="", sortie="", usage=StepUsage(appels=1, tokens_entree=10, cout_usd=0.2),
+        entree="", sortie="", usage=StepUsage(calls=1, input_tokens=10, cost_usd=0.2),
     )
 
     journal.releve(
         tache_id="t1", nom="En cours", agent="dev", role="Dev", statut=STATUT_USAGE,
-        usage=StepUsage(tokens_entree=999, tours=3), sortie="999 tokens · 3 tour(s)",
+        usage=StepUsage(input_tokens=999, turns=3), sortie="999 tokens · 3 tour(s)",
     )
 
     (_, releve) = lignes.lignes
@@ -276,10 +276,10 @@ def test_un_releve_est_emis_mais_ne_compte_dans_aucun_agregat_du_journal():
     # Émis, jamais conservé : ni les étapes, ni le total, ni le grand livre
     # (donc ni le plafond de dépense, qui le relit) ne l'ont vu.
     assert [r.etape for r in journal.records] == ["t0"]
-    assert journal.usage_totale == StepUsage(appels=1, tokens_entree=10, cout_usd=0.2)
+    assert journal.usage_totale == StepUsage(calls=1, input_tokens=10, cost_usd=0.2)
     grand_livre = RunCost.from_journal(journal)
     assert [t.task_id for t in grand_livre.tasks] == ["t0"]
-    assert grand_livre.total.tokens_entree == 10
+    assert grand_livre.total.input_tokens == 10
 
 
 def test_l_export_langfuse_ignore_un_releve():
@@ -334,7 +334,7 @@ def test_une_mesure_non_tarifee_garde_son_cout_inconnu_et_dit_ses_tokens():
     journal, lignes = _journal()
     executeur = LocalExecutor.__new__(LocalExecutor)
 
-    mesure = StepUsage(tokens_entree=12000, tokens_sortie=480, tours=3)
+    mesure = StepUsage(input_tokens=12000, output_tokens=480, turns=3)
     LocalExecutor._releve_usage(executeur, _tache(), _Agent(), journal, mesure)
 
     (releve,) = lignes.lignes
@@ -348,13 +348,13 @@ def test_le_releve_bat_a_la_cadence_des_salves_et_le_premier_part_sans_attendre(
     horloge = [100.0]
     releve = _ReleveUsage(executeur, _tache(), journal, horloge=lambda: horloge[0], periode_s=5.0)
 
-    releve.mesure(StepUsage(tokens_entree=1))  # aucun agent encore : tu
+    releve.mesure(StepUsage(input_tokens=1))  # aucun agent encore : tu
     releve.agent = _Agent()
-    releve.mesure(StepUsage(tokens_entree=2))  # premier : part
+    releve.mesure(StepUsage(input_tokens=2))  # premier : part
     horloge[0] += 2.0
-    releve.mesure(StepUsage(tokens_entree=3))  # dans la fenêtre : sauté
+    releve.mesure(StepUsage(input_tokens=3))  # dans la fenêtre : sauté
     horloge[0] += 4.0
-    releve.mesure(StepUsage(tokens_entree=4))  # fenêtre écoulée : part
+    releve.mesure(StepUsage(input_tokens=4))  # fenêtre écoulée : part
 
     assert [ligne["usage"]["tokens_entree"] for ligne in lignes.lignes] == [2, 4]
 
@@ -385,22 +385,22 @@ def _applique(state: ControlTowerState, ligne: dict) -> None:
 
 def test_le_pont_range_un_releve_en_tache_usage_et_garde_sa_mesure():
     (event,) = evenements_depuis_step(
-        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=999, tours=2))
+        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(input_tokens=999, turns=2))
     )
     assert event.type == EVENEMENT_TACHE_USAGE
     assert event.tache_id == "t1"
-    assert event.usage is not None and event.usage.tokens_entree == 999
+    assert event.usage is not None and event.usage.input_tokens == 999
     assert event.cout_usd is None
 
 
 def test_le_cout_d_une_tache_en_cours_se_voit_puis_se_solde_sans_compter_double():
     state = ControlTowerState()
     # Une tâche déjà soldée : le run vaut 0,20 $ avant que t1 ne démarre.
-    _applique(state, _ligne("t0", STATUT_TERMINEE, StepUsage(appels=1, cout_usd=0.2)))
+    _applique(state, _ligne("t0", STATUT_TERMINEE, StepUsage(calls=1, cost_usd=0.2)))
     _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_DEBUT}", STATUT_EN_COURS))
 
     # Relevé d'ouverture : rien consommé encore — mesuré, donc 0 et non inconnu.
-    _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(cout_usd=0.0)))
+    _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(cost_usd=0.0)))
     t1 = state.tache("t1")
     assert t1 is not None and t1.statut == STATUT_EN_COURS
     assert t1.cout_usd == 0.0 and t1.cout_partiel is True
@@ -412,45 +412,45 @@ def test_le_cout_d_une_tache_en_cours_se_voit_puis_se_solde_sans_compter_double(
     # **partiel**, et les tokens se lisent dans `usage`.
     _applique(
         state,
-        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=5000, tours=2)),
+        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(input_tokens=5000, turns=2)),
     )
     t1 = state.tache("t1")
     assert t1 is not None and t1.cout_usd is None and t1.cout_partiel is True
-    assert t1.usage is not None and t1.usage.tokens_total == 5000
+    assert t1.usage is not None and t1.usage.total_tokens == 5000
     assert run.cout_usd == pytest.approx(0.2) and run.cout_partiel is True
 
     # Un fournisseur qui tarife en cours de route : le cumul du run bouge entre
     # deux lectures, sans attendre la fin de la tâche.
-    tarife = StepUsage(tokens_entree=9000, cout_usd=0.3)
+    tarife = StepUsage(input_tokens=9000, cost_usd=0.3)
     _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, tarife))
     assert run.cout_usd == pytest.approx(0.5) and run.cout_partiel is True
     assert state.tache("t1").cout_usd == pytest.approx(0.3)
     assert state.graphe(RUN).noeuds[1].cout_partiel is True
 
     # Le grand livre, lui, ne compte que le soldé — et une seule fois.
-    assert run.cout.total.cout_usd == pytest.approx(0.2)
+    assert run.cout.total.cost_usd == pytest.approx(0.2)
 
     # L'issue solde : le montant final remplace le relevé, rien ne s'ajoute.
     _applique(
         state,
-        _ligne("t1", STATUT_TERMINEE, StepUsage(appels=1, tokens_entree=12000, cout_usd=0.5)),
+        _ligne("t1", STATUT_TERMINEE, StepUsage(calls=1, input_tokens=12000, cost_usd=0.5)),
     )
     t1 = state.tache("t1")
     assert t1 is not None and t1.cout_usd == pytest.approx(0.5) and t1.cout_partiel is False
     assert run.cout_usd == pytest.approx(0.7) and run.cout_partiel is False
-    assert run.cout.total.cout_usd == pytest.approx(0.7)
+    assert run.cout.total.cost_usd == pytest.approx(0.7)
     assert state.graphe(RUN).noeuds[1].cout_partiel is False
     assert run.resume()["cout_usd"] == pytest.approx(0.7)
     assert run.resume()["cout_partiel"] is False
     assert t1.to_dict()["cout_partiel"] is False
     # La vue analytique compte comme le grand livre : les relevés n'y entrent pas.
-    assert agrege_couts(state.executions()).total.cout_usd == pytest.approx(0.7)
+    assert agrege_couts(state.executions()).total.cost_usd == pytest.approx(0.7)
 
 
 def test_un_releve_ne_deplace_aucune_carte_et_se_rejoue_a_l_identique():
     state = ControlTowerState()
     _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_DEBUT}", STATUT_EN_COURS))
-    mesure = StepUsage(tokens_entree=10, cout_usd=0.1)
+    mesure = StepUsage(input_tokens=10, cost_usd=0.1)
     releve = _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, mesure)
 
     _applique(state, releve)
@@ -474,21 +474,21 @@ def test_une_issue_sans_cout_tarife_solde_le_releve_sans_rendre_le_run_complet()
     lui, est bien soldé : il ne compte plus, rien n'est compté deux fois.
     """
     state = ControlTowerState()
-    _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=10)))
+    _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(input_tokens=10)))
     assert state.execution(RUN).cout_partiel is True
 
-    _applique(state, _ligne("t1", STATUT_TERMINEE, StepUsage(appels=1, tokens_entree=12)))
+    _applique(state, _ligne("t1", STATUT_TERMINEE, StepUsage(calls=1, input_tokens=12)))
 
     t1 = state.tache("t1")
     assert t1 is not None and t1.cout_usd is None and t1.cout_partiel is True
     assert state.execution(RUN).cout_usd is None
     assert state.execution(RUN).cout_partiel is True
-    assert state.execution(RUN).cout.total.tokens_non_tarifes == 12
+    assert state.execution(RUN).cout.total.unpriced_tokens == 12
 
 
 def test_la_frise_et_le_kanban_ne_confondent_pas_un_releve_avec_un_statut():
     (event,) = evenements_depuis_step(
-        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=1))
+        _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(input_tokens=1))
     )
     assert event.type != EVENEMENT_TACHE_STATUT
     state = ControlTowerState()

@@ -208,7 +208,7 @@ pas ensemble, et la ligne de partage est **nette et lisible dans le code**.
 | Time-out ferme de la tâche | `engine/executor.py:556`, `:643` | **Partielle** — §4.5 |
 | Relance des échecs transitoires | `engine/executor.py:896` | **Partielle** |
 | Filtrage des outils au montage | [`agents/permissions.py:334`](../maestro/agents/permissions.py) | **Partielle** |
-| **Plafond de dépense et de tokens** | [`telemetry/costs.py:215`](../maestro/telemetry/costs.py) + `usage.py:245` | **Non** — §4.4 |
+| **Plafond de dépense et de tokens** | [`telemetry/costs.py:486`](../maestro/telemetry/costs.py) + `usage.py:427` | **Non** — §4.4 |
 | **Refus d'outil au vol, arbitrage `ask`** | [`providers/claude.py:570`](../maestro/providers/claude.py), monté `:435` | **Non** — §4.4 |
 | **Canal d'arbitrage (surface d'écriture)** | `providers/claude.py:554`, monté `:419` | **Non** — §4.3 |
 | **Verrou de configuration MCP ambiante** | `providers/claude.py:432` | **Non** — §4.6 |
@@ -296,10 +296,10 @@ mordre, en silence.
 
 ⚠ **Et pour un agent ACP, c'est un cran pire que dans le cas Ollama.** Là-bas, les tokens étaient
 encore comptés, donc le plafond en tokens gardait prise. Ici, `report_usage` est un appel
-**volontaire du fournisseur** — « hors collecteur, le signalement est sans effet »
-([`telemetry/usage.py:6-7`](../maestro/telemetry/usage.py), `:245`). Un agent qui n'expose ni coût ni
+**volontaire du fournisseur** — « Outside a collector, reporting does nothing »
+([`telemetry/usage.py:6`](../maestro/telemetry/usage.py), `:473`). Un agent qui n'expose ni coût ni
 tokens fait tomber **les deux** plafonds : `UsageCollector.add` n'est jamais appelé,
-`SpendingCap.verifie` jamais consulté, et le run dépense sans borne.
+`SpendingCap.check` jamais consulté, et le run dépense sans borne.
 
 Ce qui survit dans tous les cas : la **durée horloge**, posée par le moteur lui-même
 (`engine/executor.py:446-451`). C'est la seule mesure qui ne dépend d'aucun fournisseur — et c'est

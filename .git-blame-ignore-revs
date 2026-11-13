@@ -9,3 +9,6 @@
 
 # #1650 — pilote : messaging, queue, router, durable
 57e4d15d8a7f4da8221faf93527559e50ef89893
+
+# #1651 — sources, telemetry (redact, langfuse, costs)
+c06fb2b8e04d2decb60a9db7179fa7ac5d70b44c

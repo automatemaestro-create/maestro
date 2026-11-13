@@ -490,7 +490,7 @@ class FournisseurFactice:
 
     async def run_agent(self, prompt: str, **reglages: Any) -> str:
         self.appels.append({"prompt": prompt, **reglages})
-        report_usage(StepUsage(appels=1, tokens_sortie=100, cout_usd=self._cout))
+        report_usage(StepUsage(calls=1, output_tokens=100, cost_usd=self._cout))
         if self._duree_s:
             await asyncio.sleep(self._duree_s)
         if self._leve is not None:
@@ -1526,7 +1526,7 @@ class SessionScriptee(FournisseurFactice):
 
     async def run_agent(self, prompt: str, **reglages: Any) -> str:
         self.appels.append({"prompt": prompt, **reglages})
-        report_usage(StepUsage(appels=1, tokens_sortie=100, cout_usd=7.5))
+        report_usage(StepUsage(calls=1, output_tokens=100, cost_usd=7.5))
         dort, texte = self._script.pop(0)
         if dort:
             await asyncio.sleep(dort)
@@ -1546,7 +1546,7 @@ class LecteurDeFin(LecteurFactice):
         self._lent_s = lent_s
 
     def juger(self, systeme: str, prompt: str) -> Avis:
-        report_usage(StepUsage(appels=1, tokens_sortie=10, cout_usd=100.0))
+        report_usage(StepUsage(calls=1, output_tokens=10, cost_usd=100.0))
         if self._lent_s:
             time.sleep(self._lent_s)
         if systeme == cmp.SYSTEME_ATTEND:
@@ -1717,7 +1717,7 @@ def test_le_juge_des_criteres_lit_le_clone_en_lecture_seule(tmp_path: Path) -> N
     class Juge(FournisseurFactice):
         async def run_agent(self, prompt: str, **reglages: Any) -> str:
             self.appels.append({"prompt": prompt, **reglages})
-            report_usage(StepUsage(appels=1, tokens_sortie=100, cout_usd=1.25))
+            report_usage(StepUsage(calls=1, output_tokens=100, cost_usd=1.25))
             return "C1: tenu — a.py\nC2: manqué — rien"
 
     fournisseur = Juge()

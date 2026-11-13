@@ -235,7 +235,7 @@ def _ligne(etape: str, statut: str, cout_usd: float | None = None) -> dict[str, 
         "entree": "",
         "sortie": "",
         "erreur": None,
-        "usage": StepUsage(appels=1, cout_usd=cout_usd).to_dict(),
+        "usage": StepUsage(calls=1, cost_usd=cout_usd).to_dict(),
         "projet_id": PROJET,
     }
 
@@ -265,7 +265,7 @@ def test_la_depense_d_une_tache_mise_de_cote_ne_compte_qu_une_fois():
     tache = state.tache("api")
     assert run is not None and tache is not None
     assert run.cout_usd == pytest.approx(0.28)
-    assert run.cout_usd == pytest.approx(run.cout.total.cout_usd)
+    assert run.cout_usd == pytest.approx(run.cout.total.cost_usd)
     assert tache.cout_usd == pytest.approx(0.23)
     assert tache.cout_partiel is True  # mise de côté n'est pas soldée
 
@@ -277,7 +277,7 @@ def test_la_depense_d_une_tache_mise_de_cote_ne_compte_qu_une_fois():
     # L'issue solde la reprise : rien n'est compté deux fois, ni oublié.
     _journalise(state, _ligne("api", STATUT_TERMINEE, 0.06))
     assert run.cout_usd == pytest.approx(0.34)
-    assert run.cout_usd == pytest.approx(run.cout.total.cout_usd)
+    assert run.cout_usd == pytest.approx(run.cout.total.cost_usd)
     assert run.cout_partiel is False
     assert tache.cout_usd == pytest.approx(0.29)
     assert tache.cout_partiel is False
@@ -426,8 +426,8 @@ class _Depensier(ModelProvider):
 
     async def generate(self, prompt, *, model, system_prompt=None):
         self.appels += 1
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
         return "LIVRABLE"
 
 

@@ -135,8 +135,8 @@ from maestro.telemetry import (
     STEP_PROBE,
     StepUsage,
     collect_usage,
+    report_run_usage,
     report_usage,
-    report_usage_du_run,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -1151,7 +1151,7 @@ class ClaudeProvider(ModelProvider):
                 pass
             except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
                 erreur = exc
-        report_usage_du_run(STEP_PROBE, NOM_ETAPE_SONDE, depense.total)
+        report_run_usage(STEP_PROBE, NOM_ETAPE_SONDE, depense.total)
         if erreur is not None and not temoin.vus and not temoin.executions:
             raise erreur
         try:
@@ -2317,7 +2317,7 @@ async def _stream_response(  # noqa: C901
     au fil de l'écriture, puis l'`AssistantMessage` complet qui les récapitule —
     et prendre les deux compterait chaque phrase deux fois. Le texte vient donc
     des seuls événements de flux, l'`AssistantMessage` ne servant plus qu'à
-    relever les outils pour `StepUsage.outils`.
+    relever les outils pour `StepUsage.tools`.
 
     ⚠ Le repli n'est pas un ornement : si le CLI n'émet **aucun** événement de
     flux (version antérieure au drapeau, sortie sans partiels), ne lire que les
@@ -2540,7 +2540,7 @@ def _absorbe(  # noqa: C901
     - le **total soldé est celui d'avant, au token près** — tours plus reste font
       exactement le résultat, quoi que les tours aient dit (un résultat sans
       `usage` reprend même ce qu'ils ont déclaré) —, si bien que le grand livre,
-      Langfuse et `appels`/`tours`/`outils`, portés par le seul résultat, ne
+      Langfuse et `calls`/`turns`/`tools`, portés par le seul résultat, ne
       bougent pas ;
     - une session **coupée avant son résultat** (CLI mort, plafond crevé) garde
       désormais les tokens de ses tours dans le collecteur, là où elle n'y
@@ -2566,8 +2566,8 @@ def _absorbe(  # noqa: C901
     geste pour le régulateur et un outil employé pour le grand livre.
 
     ⚠ Les deux comptes ne sont **pas** le même et ne doivent pas être fusionnés.
-    `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.outils`, dont
-    le contrat est l'union ordonnée des outils employés (`StepUsage.fusion` la
+    `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.tools`, dont
+    le contrat est l'union ordonnée des outils employés (`StepUsage.merge` la
     refait à chaque agrégation) : y laisser les doublons gonflerait la liste du
     grand livre à chaque tâche sans rien y apprendre. Le régulateur, lui, voit
     **chaque occurrence** — c'est exactement la séquence que la déduplication
@@ -2621,7 +2621,7 @@ def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:
 def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUsage:
     """Traduit le `ResultMessage` du SDK en mesure d'usage d'un appel modèle.
 
-    `tokens_entree` agrège le prompt direct et le cache (création + lecture) :
+    `input_tokens` agrège le prompt direct et le cache (création + lecture) :
     c'est le volume que l'appel a traité, tel que le SDK la décompose — et ses
     deux parts de cache voyagent à côté (#1398). `total_cost_usd` peut être None
     (le coût reste alors « inconnu », pas nul).
@@ -2634,15 +2634,15 @@ def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUs
     """
     usage: dict[str, Any] = result.usage or {}
     return StepUsage(
-        appels=1,
-        tokens_entree=_tokens_entree(usage),
-        tokens_sortie=int(usage.get("output_tokens") or 0),
-        cout_usd=result.total_cost_usd,
-        duree_api_ms=result.duration_api_ms,
-        tours=result.num_turns,
-        outils=outils,
-        tokens_cache_lus=int(usage.get("cache_read_input_tokens") or 0),
-        tokens_cache_ecrits=int(usage.get("cache_creation_input_tokens") or 0),
+        calls=1,
+        input_tokens=_tokens_entree(usage),
+        output_tokens=int(usage.get("output_tokens") or 0),
+        cost_usd=result.total_cost_usd,
+        api_duration_ms=result.duration_api_ms,
+        turns=result.num_turns,
+        tools=outils,
+        cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+        cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
     )
 
 
@@ -2681,10 +2681,10 @@ class _CompteurTours:
     - un message **sans identifiant** (double de test, SDK plus ancien) est
       compté tel quel, additivement : ne pas le compter serait taire un tour.
 
-    Chaque tour compte aussi pour **un** dans `tours` — c'est ce qui permet à un
-    relevé de dire « 3 tours » pendant que la tâche tourne —, et `appels` reste à
+    Chaque tour compte aussi pour **un** dans `turns` — c'est ce qui permet à un
+    relevé de dire « 3 tours » pendant que la tâche tourne —, et `calls` reste à
     zéro : un tour est un appel d'API, pas une invocation du fournisseur, et c'est
-    le résultat seul qui pose `appels=1`, `outils`, la durée API et le coût.
+    le résultat seul qui pose `calls=1`, `tools`, la durée API et le coût.
 
     Chaque tour dit aussi son **contexte** — la taille de son prompt — et les deux
     parts de cache de son entrée (#1398). Le compteur est le seul à pouvoir dire
@@ -2712,44 +2712,44 @@ class _CompteurTours:
             return None
         entree = _tokens_entree(brut)
         tour = StepUsage(
-            tokens_entree=entree,
-            tokens_sortie=int(brut.get("output_tokens") or 0),
-            tours=1,
-            tokens_cache_lus=int(brut.get("cache_read_input_tokens") or 0),
-            tokens_cache_ecrits=int(brut.get("cache_creation_input_tokens") or 0),
+            input_tokens=entree,
+            output_tokens=int(brut.get("output_tokens") or 0),
+            turns=1,
+            cache_read_tokens=int(brut.get("cache_read_input_tokens") or 0),
+            cache_write_tokens=int(brut.get("cache_creation_input_tokens") or 0),
             # Le prompt d'un appel est le contexte qu'il a atteint (#1398). Un tour
             # sans entrée rapportée n'en dit rien : inconnu, pas zéro.
-            contexte_max=entree or None,
+            max_context=entree or None,
         )
         identifiant = getattr(message, "message_id", None)
         if isinstance(identifiant, str) and identifiant:
             connu = self._par_message.get(identifiant, StepUsage())
             self._par_message[identifiant] = StepUsage(
-                tokens_entree=max(connu.tokens_entree, tour.tokens_entree),
-                tokens_sortie=max(connu.tokens_sortie, tour.tokens_sortie),
-                tours=1,
-                tokens_cache_lus=max(connu.tokens_cache_lus, tour.tokens_cache_lus),
-                tokens_cache_ecrits=max(connu.tokens_cache_ecrits, tour.tokens_cache_ecrits),
-                contexte_max=connu.fusion(tour).contexte_max,
+                input_tokens=max(connu.input_tokens, tour.input_tokens),
+                output_tokens=max(connu.output_tokens, tour.output_tokens),
+                turns=1,
+                cache_read_tokens=max(connu.cache_read_tokens, tour.cache_read_tokens),
+                cache_write_tokens=max(connu.cache_write_tokens, tour.cache_write_tokens),
+                max_context=connu.merge(tour).max_context,
             )
         else:
-            self._anonymes = self._anonymes.fusion(tour)
+            self._anonymes = self._anonymes.merge(tour)
         avant = self.total
         cumul = self._anonymes
         for usage in self._par_message.values():
-            cumul = cumul.fusion(usage)
+            cumul = cumul.merge(usage)
         self.total = cumul
         ajout = StepUsage(
-            tokens_entree=cumul.tokens_entree - avant.tokens_entree,
-            tokens_sortie=cumul.tokens_sortie - avant.tokens_sortie,
-            tours=cumul.tours - avant.tours,
-            tokens_cache_lus=cumul.tokens_cache_lus - avant.tokens_cache_lus,
-            tokens_cache_ecrits=cumul.tokens_cache_ecrits - avant.tokens_cache_ecrits,
+            input_tokens=cumul.input_tokens - avant.input_tokens,
+            output_tokens=cumul.output_tokens - avant.output_tokens,
+            turns=cumul.turns - avant.turns,
+            cache_read_tokens=cumul.cache_read_tokens - avant.cache_read_tokens,
+            cache_write_tokens=cumul.cache_write_tokens - avant.cache_write_tokens,
             # Un maximum ne se différencie pas : l'ajout porte celui du cumul, que
             # la fusion du collecteur garde sans jamais le compter deux fois.
-            contexte_max=cumul.contexte_max,
+            max_context=cumul.max_context,
         )
-        return ajout if (ajout.tokens_total or ajout.tours) else None
+        return ajout if (ajout.total_tokens or ajout.turns) else None
 
     def reste(self, resultat: StepUsage) -> StepUsage:
         """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat).
@@ -2764,12 +2764,12 @@ class _CompteurTours:
         """
         return replace(
             resultat,
-            tokens_entree=resultat.tokens_entree - self.total.tokens_entree,
-            tokens_sortie=resultat.tokens_sortie - self.total.tokens_sortie,
-            tours=resultat.tours - self.total.tours,
-            tokens_non_tarifes=resultat.tokens_non_tarifes - self.total.tokens_non_tarifes,
-            tokens_cache_lus=resultat.tokens_cache_lus - self.total.tokens_cache_lus,
-            tokens_cache_ecrits=resultat.tokens_cache_ecrits - self.total.tokens_cache_ecrits,
+            input_tokens=resultat.input_tokens - self.total.input_tokens,
+            output_tokens=resultat.output_tokens - self.total.output_tokens,
+            turns=resultat.turns - self.total.turns,
+            unpriced_tokens=resultat.unpriced_tokens - self.total.unpriced_tokens,
+            cache_read_tokens=resultat.cache_read_tokens - self.total.cache_read_tokens,
+            cache_write_tokens=resultat.cache_write_tokens - self.total.cache_write_tokens,
         )
 
 

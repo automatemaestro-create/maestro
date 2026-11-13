@@ -958,7 +958,7 @@ def jouer_seul(
             journal.note("la personne répond", " ".join(message.split())[:300])
     duree = horloge() - debut
     journal.note("session soldée", f"{issue} — {motif}")
-    cout = depense.total.cout_usd
+    cout = depense.total.cost_usd
     return Passage(
         cote=COTE_SEUL,
         rang=rang,
