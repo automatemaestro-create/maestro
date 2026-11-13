@@ -35,7 +35,7 @@ from maestro.agents.capacity import CapacityStore
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
 from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
-from maestro.agents.navigateur import integration_navigateur
+from maestro.agents.navigateur import NavigateurDuPoste, integration_navigateur
 from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils
 from maestro.agents.playbook_du_code import roles_du_code
 from maestro.agents.playbooks import PlaybookStore
@@ -549,11 +549,12 @@ def _service_equipe(tmp_path: Path) -> tuple[ServiceEquipe, ConfigurationAgents,
     """Le service, son navigateur fabriqué sans regarder le poste."""
     _, gabarits, projet_id = _service(tmp_path)
     depot = ProjetStore(tmp_path / "projets")
+    edge = NavigateurDuPoste("msedge", tmp_path / "msedge.exe")
     service = ServiceEquipe(
         ServiceProjets(depot),
         gabarits,
         playbooks=False,
-        navigateur=lambda: integration_navigateur(canal="msedge", sorties=tmp_path / "sorties"),
+        navigateur=lambda: integration_navigateur(sonde=lambda: edge, sorties=tmp_path / "sorties"),
     )
     return service, gabarits, projet_id
 
@@ -598,7 +599,7 @@ def test_une_equipe_sans_navigateur_ne_touche_pas_au_pool(tmp_path: Path) -> Non
         ServiceProjets(ProjetStore(tmp_path / "projets")),
         gabarits,
         playbooks=False,
-        navigateur=lambda: fabrique.append("appelé") or integration_navigateur(),
+        navigateur=lambda: fabrique.append("appelé") or integration_navigateur(sonde=lambda: None),
     )
 
     service.creer(projet_id, [_role()])

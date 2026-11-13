@@ -19,6 +19,8 @@ from maestro.agents.mcp_registry import (
     SOURCE_DECOUVERTE,
     SOURCE_TOUTES,
 )
+from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
+from maestro.agents.navigateur import integration_navigateur
 from maestro.controltower.routes.communs import (
     _config,
     _exige_agent_du_catalogue,
@@ -366,6 +368,11 @@ async def ajouter_integration_pool(
     (le secret reste à configurer). 404 si l'id est hors allowlist, 422 si
     une valeur/échéance est invalide.
 
+    Le navigateur de Maestro (`playwright`) sort de la même fabrique que celui
+    qu'une équipe reçoit (`maestro.agents.navigateur.integration_navigateur`) :
+    le navigateur du poste, son dossier de sorties hors du projet, le nom
+    `navigateur`.
+
     ⚠ Le 404 **nomme le geste qui manque** (#678) : une entrée
     découverte y renvoie vers l'admission (`POST /api/mcp/admissions`), une
     entrée révoquée dit qui l'a retirée et quand. La phrase vient de
@@ -386,8 +393,13 @@ async def ajouter_integration_pool(
             ),
         )
     try:
-        serveur = registre(ctx).instancier(requete.registre_id, nom=requete.nom or None)
-        integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
+        if requete.registre_id == ID_NAVIGATEUR:
+            # Le navigateur de Maestro se pose comme une équipe le pose : complété par le
+            # poste (son navigateur, son dossier de sorties hors du projet), sous son nom.
+            integration = integration_navigateur(courant, nom=requete.nom or None)
+        else:
+            serveur = courant.instancier(requete.registre_id, nom=requete.nom or None)
+            integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
         pool = [i for i in cfg.mcp.pool() if i.id != integration.id]
         pool.append(integration)
         cfg.mcp.ecrire_pool(pool)
