@@ -710,9 +710,9 @@ def test_le_classifieur_du_routage_suit_le_modele_impose():
     """Chaque routage ambigu envoyait `claude-haiku-4-5`, quel que soit le fournisseur."""
     from maestro.agents.catalog import GABARITS_DU_CODE
     from maestro.engine.executor import LocalExecutor
-    from maestro.router.classifier import MODELE_CLASSIFIEUR
+    from maestro.router.classifier import CLASSIFIER_MODEL
 
     impose = LocalExecutor(_Enregistreur(), agents=GABARITS_DU_CODE, modele="qwen2.5")
     assert impose._router._classifier._model == "qwen2.5"
     sans = LocalExecutor(_Enregistreur(), agents=GABARITS_DU_CODE)
-    assert sans._router._classifier._model == MODELE_CLASSIFIEUR
+    assert sans._router._classifier._model == CLASSIFIER_MODEL

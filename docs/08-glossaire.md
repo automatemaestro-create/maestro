@@ -118,6 +118,9 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | playbook | `playbook` | le workflow d'un agent |
 | routage, assignation | `routing`, `assignment` | l'attribution d'une tâche à un agent |
 | classifieur | `classifier` | le modèle rapide qui tranche une assignation ambiguë |
+| départage | `tiebreak` | trancher entre des candidats que les compétences ne séparent pas |
+| repli (« à assigner ») | `fallback` | une tâche laissée à l'assignation manuelle plutôt que mal routée |
+| au plus proche | `closest` | confier une tâche au rôle qui s'approche le plus du métier qui manque |
 
 ### Conversation et décisions humaines
 
@@ -171,6 +174,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 |---|---|---|
 | run, exécution | `run` | une exécution d'orchestration, d'un objectif à son livrable (`run_id`). Doublet `exécution` / `run` tranché : `executions.py` devient `runs.py`, la route `/api/executions` attend le lot du contrat |
 | plan (d'un run) | `plan` | les nœuds et arêtes d'un run |
+| planification | `planning` | l'étape qui découpe l'objectif en tâches |
+| consigner (au journal) | `record` | écrire une étape au journal d'un run |
 | graphe | `graph` | le plan tel que l'écran le dessine |
 | hôte (de run) | `host` | ce qui porte un run : en process ou détaché |
 | reprise (d'un run) | `resume` | repartir après une pause, une coupure ou une limite |

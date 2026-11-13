@@ -27,7 +27,7 @@ acquis d'un run est une valeur JSON.
 **Ce qui n'y entre pas, et pourquoi.** Une tâche en échec, bloquée ou interrompue n'est
 pas acquise : elle n'a rien produit qu'une autre puisse lire, et elle sera refaite. La
 tâche **en vol** au moment de l'interruption non plus — c'est la même règle que le mode
-durable (`MaestroRunWorkflow.resultats_acquis`) : « elle n'a rien produit et sera
+durable (`MaestroRunWorkflow.checkpoint`) : « elle n'a rien produit et sera
 reprise ». Un run reprend donc là où il s'est arrêté **à la tâche près, pas au milieu
 d'une tâche** (docs/28 §12.6) — et la tâche interrompue repart de **sa branche**, où son
 travail a été porté à l'interruption (#1392, `maestro.sandbox.projet`) : ce magasin n'a

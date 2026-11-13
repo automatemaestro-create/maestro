@@ -1,47 +1,46 @@
-"""Routeur d'auto-assignation de Maestro (tickets #6 et #42).
+"""Maestro's automatic assignment router (#6 and #42).
 
-Assigne chaque tâche à l'agent le plus compétent en combinant les deux signaux
-du routage (docs/01 §3.2) : les **règles de compétences** (recouvrement
-`competences_requises` ∩ `competences` de l'agent) et un **classifieur léger**
-(modèle rapide via `ModelProvider`) pour les cas ambigus. Point d'entrée :
+Assigns each task to the most competent agent by combining the two routing signals
+(docs/01 §3.2): the **competency rules** (overlap of `competences_requises` and the
+agent's `competences`) and a **lightweight classifier** (a fast model through
+`ModelProvider`) for ambiguous cases. Entry point:
 
     from maestro.agents import catalogue
     from maestro.router import Router, TaskClassifier
 
     router = Router(catalogue(), classifier=TaskClassifier(provider))
     decision = await router.route(task)   # -> RoutingDecision
-    if decision.a_assigner:               # repli explicite : confiance trop faible
-        ...                               # la tâche attend une assignation manuelle
+    if decision.needs_assignment:         # explicit fallback: confidence too low
+        ...                               # the task awaits a manual assignment
 
-Correspond à la transition `prete → assignee` de la machine à états des tâches ;
-le repli « à assigner » laisse la tâche à l'assignation manuelle plutôt que de
-la mal router (critère MVP n°3). `assign` reste la règle de compétences pure du
-POC (#6). La précision du routage est mesurée sur le jeu versionné
-(`maestro.router.evaluation`).
+It matches the `prete → assignee` transition of the task state machine; the "à
+assigner" fallback leaves the task to manual assignment rather than routing it
+wrongly (MVP criterion 3). `assign` remains the pure competency rule (#6). Routing
+precision is measured on the versioned dataset (`maestro.router.evaluation`).
 """
 
 from __future__ import annotations
 
 from maestro.router.classifier import (
-    CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT,
-    MODELE_CLASSIFIEUR,
+    CLASSIFIER_CLOSEST_SYSTEM_PROMPT,
+    CLASSIFIER_MODEL,
     Classification,
     TaskClassifier,
 )
 from maestro.router.evaluation import (
     DATASET_PATH,
-    CasAssignation,
-    DetailCas,
-    ResultatEvaluation,
-    charger_jeu,
-    evaluer,
+    AssignmentCase,
+    CaseDetail,
+    EvaluationResult,
+    evaluate,
+    load_dataset,
 )
 from maestro.router.router import (
-    METHODE_CLASSIFIEUR,
-    METHODE_COMPETENCES,
-    METHODE_PLUS_PROCHE,
-    METHODE_REPLI,
-    SEUIL_CONFIANCE_DEFAUT,
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    METHOD_CLASSIFIER,
+    METHOD_CLOSEST,
+    METHOD_COMPETENCIES,
+    METHOD_FALLBACK,
     Assignment,
     Router,
     RoutingDecision,
@@ -50,24 +49,24 @@ from maestro.router.router import (
 )
 
 __all__ = [
-    "CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT",
+    "CLASSIFIER_CLOSEST_SYSTEM_PROMPT",
+    "CLASSIFIER_MODEL",
     "DATASET_PATH",
-    "METHODE_CLASSIFIEUR",
-    "METHODE_COMPETENCES",
-    "METHODE_PLUS_PROCHE",
-    "METHODE_REPLI",
-    "MODELE_CLASSIFIEUR",
-    "SEUIL_CONFIANCE_DEFAUT",
+    "DEFAULT_CONFIDENCE_THRESHOLD",
+    "METHOD_CLASSIFIER",
+    "METHOD_CLOSEST",
+    "METHOD_COMPETENCIES",
+    "METHOD_FALLBACK",
     "Assignment",
-    "CasAssignation",
+    "AssignmentCase",
+    "CaseDetail",
     "Classification",
-    "DetailCas",
-    "ResultatEvaluation",
+    "EvaluationResult",
     "Router",
     "RoutingDecision",
     "RoutingError",
     "TaskClassifier",
     "assign",
-    "charger_jeu",
-    "evaluer",
+    "evaluate",
+    "load_dataset",
 ]

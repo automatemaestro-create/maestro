@@ -1,22 +1,22 @@
-"""Worker Temporal du mode durable : consomme workflow et activités (ticket #95).
+"""Temporal worker of the durable mode: consumes workflow and activities (#95).
 
-Assemble le `temporalio.worker.Worker` qui exécute le run durable : il enregistre
-le workflow (`MaestroRunWorkflow`) et ses trois activités
-(`maestro.durable.activities`) sur une **file de tâches dédiée** (`FILE_DURABLE`),
-contre le serveur Temporal (`TEMPORAL_ADDRESS`, cf. infra/docker-compose.yml).
+Assembles the `temporalio.worker.Worker` that runs the durable run: it registers
+the workflow (`MaestroRunWorkflow`) and its three activities
+(`maestro.durable.activities`) on a **dedicated task queue** (`DURABLE_QUEUE`),
+against the Temporal server (`TEMPORAL_ADDRESS`, see infra/docker-compose.yml).
 
-Deux usages :
+Two uses:
 
-- **embarqué** — `maestro.durable.engine.DurableEngine` démarre un worker
-  éphémère dans le process du CLI, le temps d'un run (`maestro-run --durable`) :
-  les activités partagent alors le logger `maestro.trace` du process, donc les
-  handlers de trace/publication (#8/#46) et la validation console (#9) opèrent
-  comme en local ;
-- **autonome** — `python -m maestro.durable.worker` fait tourner un worker
-  persistant (déploiement réel), à l'image de `celery -A maestro.queue worker`.
+- **embedded**: `maestro.durable.engine.DurableEngine` starts an ephemeral worker
+  in the CLI's process for the duration of a run (`maestro-run --durable`). The
+  activities then share the process's `maestro.trace` logger, so the
+  tracing/publishing handlers (#8/#46) and console validation (#9) work as in
+  local mode;
+- **standalone**: `python -m maestro.durable.worker` runs a persistent worker
+  (real deployment), like `celery -A maestro.queue worker`.
 
-La configuration d'exécution (fournisseur, garde-fous, relance) est **propre au
-process** et posée via `configurer_worker` (cf. `activities`).
+The execution configuration (provider, guardrails, retry) **belongs to the
+process** and is set through `configure_worker` (see `activities`).
 """
 
 from __future__ import annotations
@@ -32,75 +32,75 @@ from temporalio.worker.workflow_sandbox import (
 )
 
 from maestro.config import load_settings
-from maestro.durable.activities import consigner_blocage, executer_tache, planifier
+from maestro.durable.activities import execute_task, plan, record_blocker
 from maestro.durable.workflow import MaestroRunWorkflow
 
-#: File de tâches Temporal dédiée au run durable (analogue de `FILE_TACHES` côté
-#: Celery) : le workflow et ses activités s'y enregistrent, le client y planifie.
-FILE_DURABLE = "maestro-durable"
+#: The Temporal task queue dedicated to the durable run (the counterpart of
+#: `TASKS_QUEUE` on the Celery side): the workflow and its activities register on
+#: it, and the client schedules on it.
+DURABLE_QUEUE = "maestro-durable"
 
-#: Bac à sable des workflows, avec le paquet `maestro` en **passe-droit**.
+#: The workflow sandbox, with the `maestro` package **passed through**.
 #:
-#: Par défaut, le bac à sable réimporte tout module touché par le code de
-#: workflow dans un espace isolé, en le remplaçant par un mandataire (« proxy »)
-#: qui surveille les accès non déterministes. Nos modules définissent des classes
-#: qui en héritent d'autres (fournisseurs, exécuteurs) : réimportés ainsi, ils
-#: sous-classent un mandataire, ce que le bac à sable ne sait pas faire
-#: (« Using subclasses of proxied objects is unsupported ») — la construction du
-#: worker échouait alors, quel que soit le run.
+#: By default the sandbox reimports every module the workflow code touches into an
+#: isolated space, replacing it with a proxy that watches for non-deterministic
+#: access. Our modules define classes that inherit from others (providers,
+#: executors): reimported that way, they subclass a proxy, which the sandbox cannot
+#: do ("Using subclasses of proxied objects is unsupported"), and building the
+#: worker would fail whatever the run.
 #:
-#: Le passe-droit lève l'ambiguïté : le code Maestro est importé **une seule
-#: fois**, normalement. Le déterminisme du workflow n'y perd rien — il ne tient
-#: pas au bac à sable mais à la discipline du module `workflow` (aucun I/O, aucune
-#: horloge : tout passe par des activités). Recommandation Temporal pour les
-#: modules de premier rang, dont on maîtrise le contenu.
-BAC_A_SABLE = SandboxedWorkflowRunner(
+#: Passing through removes the ambiguity: Maestro's code is imported **once**,
+#: normally. The workflow's determinism loses nothing: it does not rest on the
+#: sandbox but on the discipline of the `workflow` module (no I/O, no clock:
+#: everything goes through activities). Temporal recommends it for first-party
+#: modules whose content one controls.
+SANDBOX_RUNNER = SandboxedWorkflowRunner(
     restrictions=SandboxRestrictions.default.with_passthrough_modules("maestro")
 )
 
 
-def construire_worker(client: Client, *, task_queue: str = FILE_DURABLE) -> Worker:
-    """Construit le worker enregistrant le run durable sur `task_queue`.
+def build_worker(client: Client, *, task_queue: str = DURABLE_QUEUE) -> Worker:
+    """Build the worker that registers the durable run on `task_queue`.
 
-    Le `Worker` est un gestionnaire de contexte asynchrone : `async with` le
-    démarre puis l'éteint proprement — c'est ainsi que l'`engine` l'embarque le
-    temps d'un run.
+    The `Worker` is an async context manager: `async with` starts it then shuts it
+    down cleanly. That is how the `engine` embeds it for the duration of a run.
     """
     return Worker(
         client,
         task_queue=task_queue,
         workflows=[MaestroRunWorkflow],
-        activities=[planifier, executer_tache, consigner_blocage],
-        workflow_runner=BAC_A_SABLE,
+        activities=[plan, execute_task, record_blocker],
+        workflow_runner=SANDBOX_RUNNER,
     )
 
 
-async def _servir(adresse: str, task_queue: str) -> None:
-    """Connexion au serveur puis service indéfini du worker (mode autonome)."""
-    client = await Client.connect(adresse)
-    async with construire_worker(client, task_queue=task_queue):
+async def _serve(address: str, task_queue: str) -> None:
+    """Connect to the server, then serve the worker indefinitely (standalone mode)."""
+    client = await Client.connect(address)
+    async with build_worker(client, task_queue=task_queue):
         print(
             f"[OK  ] Worker durable en écoute sur « {task_queue} » "
-            f"(Temporal {adresse}). Ctrl-C pour arrêter."
+            f"(Temporal {address}). Ctrl-C pour arrêter."
         )
-        # Sert jusqu'à interruption : un Event jamais signalé tient la coroutine.
+        # Serve until interrupted: an Event never set holds the coroutine.
         await asyncio.Event().wait()
 
 
-def main() -> int:  # pragma: no cover - worker persistant, exige un serveur vivant
-    """Point d'entrée du worker autonome : sert jusqu'à interruption.
+def main() -> int:  # pragma: no cover - persistent worker, needs a live server
+    """Entry point of the standalone worker: serve until interrupted.
 
-    Sort en code 0 sur arrêt clavier, 1 si le serveur Temporal est injoignable.
+    Exits with code 0 on a keyboard interrupt, 1 if the Temporal server cannot be
+    reached.
     """
     settings = load_settings()
-    adresse = settings.temporal_address
+    address = settings.temporal_address
     try:
-        asyncio.run(_servir(adresse, FILE_DURABLE))
+        asyncio.run(_serve(address, DURABLE_QUEUE))
     except KeyboardInterrupt:
         print("\n[OK  ] Worker durable arrêté.")
         return 0
     except (RPCError, RuntimeError) as exc:
-        print(f"[FAIL] Temporal injoignable sur {adresse} ({exc}).")
+        print(f"[FAIL] Temporal injoignable sur {address} ({exc}).")
         print("Démarrez-le : docker compose -f infra/docker-compose.yml up -d temporal")
         return 1
     return 0

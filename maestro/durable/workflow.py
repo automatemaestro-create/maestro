@@ -1,48 +1,45 @@
-"""Le workflow durable : un run = un workflow Temporal (ticket #95).
+"""The durable workflow: one run is one Temporal workflow (#95).
 
-`MaestroRunWorkflow` **est** l'exécution d'un run, portée par Temporal : son état
-(quelles tâches ont abouti) est persisté par le serveur, socle de la reprise sur
-panne (#96). Le workflow **orchestre** — planification, résolution des
-dépendances, ordonnancement, blocage aval (#43) — mais délègue **tout l'I/O** à
-des activités (`maestro.durable.activities`) : appels modèle, horloge et
-journalisation vivent hors du workflow, condition du **déterminisme** que Temporal
-exige du code de workflow (une même séquence d'événements doit rejouer à
-l'identique).
+`MaestroRunWorkflow` **is** the execution of a run, carried by Temporal: its state
+(which tasks succeeded) is persisted by the server, the basis of failure recovery
+(#96). The workflow **orchestrates** (planning, dependency resolution, scheduling,
+downstream blocking, #43) but delegates **all I/O** to activities
+(`maestro.durable.activities`): model calls, clock and journaling live outside the
+workflow, the condition of the **determinism** Temporal requires from workflow code
+(the same sequence of events must replay identically).
 
-La boucle reproduit celle en process (`maestro.engine.loop.OrchestrationEngine`) :
+The loop reproduces the in-process one (`maestro.engine.loop.OrchestrationEngine`):
 
-1. la tâche `planifier` découpe l'objectif (un run = un plan) ;
-2. le workflow ordonne les tâches (tri topologique déterministe) et lance chacune
-   dès que **ses** dépendances sont résolues — les tâches indépendantes partent
-   donc en parallèle (autant d'activités concurrentes) ;
-3. une dépendance en échec **bloque** la tâche : elle n'atteint jamais l'activité
-   d'exécution, son blocage est consigné (activité `consigner_blocage`) et se
-   propage en cascade ;
-4. les résultats sont rassemblés dans l'ordre topologique du plan (déterministe,
-   indépendant de l'ordre d'achèvement).
+1. the `plan` activity splits the goal (one run, one plan);
+2. the workflow orders the tasks (deterministic topological sort) and starts each
+   one as soon as **its** dependencies are resolved, so independent tasks start in
+   parallel (as many concurrent activities);
+3. a failed dependency **blocks** the task: it never reaches the execution
+   activity, its blocker is recorded (`record_blocker` activity) and cascades;
+4. the results are gathered in the plan's topological order (deterministic,
+   independent of the order of completion).
 
-**Reprise sur panne** (#96) — c'est la raison d'être du mode durable : l'état du
-workflow (quelles tâches ont abouti) vit sur le serveur Temporal, pas dans le
-process. Un worker tué en cours de run est remplacé — le workflow **rejoue son
-historique**, les activités déjà terminées rendent leur résultat *depuis
-l'historique* sans être ré-exécutées : l'amont n'est jamais repayé. Deux pièces
-ajoutent ce qu'il manquait pour que la reprise soit réellement automatique et
-traçable :
+**Failure recovery** (#96) is the reason the durable mode exists: the workflow's
+state (which tasks succeeded) lives on the Temporal server, not in the process. A
+worker killed during a run is replaced: the workflow **replays its history**, and
+the activities already finished return their result *from the history* without
+being run again, so upstream work is never paid twice. Two pieces make recovery
+truly automatic and traceable:
 
-- la requête `resultats_acquis` expose l'état acquis du run (planification et
-  tâches terminées) à un process qui reprend en cours de route — c'est ce qui
-  permet à `maestro.durable.engine` de reconstituer le journal, donc de
-  consolider rapport et grand livre par-dessus l'interruption ;
-- la politique de relance des activités ne neutralise plus tout : Temporal
-  rattrape la **perte du worker** (cf. `RELANCE_PERTE_WORKER`), seul aléa que la
-  relance applicative ne peut pas rattraper puisqu'elle meurt avec le process.
+- the `checkpoint` query (registered as `resultats_acquis`) exposes the run's
+  acquired state (planning and finished tasks) to a process that resumes midway.
+  That is what lets `maestro.durable.engine` rebuild the journal, hence
+  consolidate report and ledger across the interruption;
+- the activities' retry policy does not turn everything off: Temporal catches the
+  **loss of the worker** (see `WORKER_LOSS_RETRY`), the only hazard the application
+  retry cannot catch since it dies with the process.
 
-Les deux couches de relance composent ainsi sans se marcher dessus (exigence du
-parent #92) : l'aléa **fournisseur** reste du seul ressort de la relance
-applicative (#91), qui vit *dans* l'activité ; l'aléa **d'infrastructure** est du
-seul ressort de Temporal. Les échecs applicatifs déterministes (plan invalide,
-tâche non conforme au schéma) sont levés `non_retryable` par les activités —
-aucune des deux couches ne les rejoue.
+The two retry layers thus compose without stepping on each other (requirement of
+the parent #92): **provider** hazards remain the sole concern of the application
+retry (#91), which lives *in* the activity; **infrastructure** hazards are the sole
+concern of Temporal. Deterministic application failures (invalid plan, task that
+breaks the schema) are raised `non_retryable` by the activities, and neither layer
+replays them.
 """
 
 from __future__ import annotations
@@ -54,36 +51,36 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-# Le code métier importé ici est **déterministe** (formes de données et tri
-# topologique pur) ou n'est référencé qu'au titre d'activité : on le laisse
-# traverser le bac à sable du workflow sans réimport (recommandation Temporal).
+# The business code imported here is **deterministic** (data shapes and a pure
+# topological sort) or only referenced as an activity: it is let through the
+# workflow sandbox without reimport (Temporal's recommendation).
 with workflow.unsafe.imports_passed_through():
     from maestro.durable.activities import (
-        consigner_blocage,
-        executer_tache,
-        planifier,
+        execute_task,
+        plan,
+        record_blocker,
     )
     from maestro.engine.executor import STATUT_TERMINEE
     from maestro.orchestrator.schema import Task, topological_order
 
-#: Délais « start-to-close » des activités. Larges pour une tâche d'agent (appels
-#: modèle et relances comprises) ; courts pour les étapes sans modèle.
-TIMEOUT_PLANIFICATION = timedelta(minutes=30)
-TIMEOUT_TACHE = timedelta(hours=1)
-TIMEOUT_ANNEXE = timedelta(seconds=30)
+#: "Start-to-close" timeouts of the activities. Wide for an agent task (model calls
+#: and retries included); short for the steps without a model.
+PLANNING_TIMEOUT = timedelta(minutes=30)
+TASK_TIMEOUT = timedelta(hours=1)
+AUXILIARY_TIMEOUT = timedelta(seconds=30)
 
-#: Battement de cœur attendu des activités longues (#96). C'est lui qui rend la
-#: reprise **rapide** : sans battement, la mort d'un worker ne se voit qu'au
-#: « start-to-close » (jusqu'à une heure pour une tâche) et le run resterait
-#: figé d'autant. Les activités le tiennent via `maestro.durable.activities`.
-BATTEMENT_ACTIVITE = timedelta(seconds=30)
+#: Expected heartbeat of the long activities (#96). It is what makes recovery
+#: **fast**: without a heartbeat, a worker's death only shows at the
+#: "start-to-close" (up to an hour for a task) and the run would stay frozen as
+#: long. The activities keep it through `maestro.durable.activities`.
+ACTIVITY_HEARTBEAT = timedelta(seconds=30)
 
-#: Relance Temporal des activités : elle ne rattrape que ce que la relance
-#: applicative (#91) ne peut pas — la **perte du worker** (process tué, battement
-#: de cœur expiré). L'aléa fournisseur, lui, est relancé *dans* l'activité ; les
-#: échecs applicatifs déterministes sont levés `non_retryable` par les activités,
-#: donc jamais rejoués ici (#96, cf. en-tête du module).
-RELANCE_PERTE_WORKER = RetryPolicy(
+#: Temporal's activity retry: it only catches what the application retry (#91)
+#: cannot, the **loss of the worker** (process killed, heartbeat expired). Provider
+#: hazards are retried *in* the activity; deterministic application failures are
+#: raised `non_retryable` by the activities, so never replayed here (#96, see the
+#: module header).
+WORKER_LOSS_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     backoff_coefficient=2.0,
     maximum_interval=timedelta(seconds=30),
@@ -93,127 +90,125 @@ RELANCE_PERTE_WORKER = RetryPolicy(
 
 @workflow.defn
 class MaestroRunWorkflow:
-    """Un run d'orchestration, exécuté comme workflow durable Temporal (#95).
+    """An orchestration run, executed as a durable Temporal workflow (#95).
 
-    L'instance porte l'**état acquis** du run (planification, tâches terminées),
-    reconstruit à l'identique par le rejeu de l'historique : c'est ce que la
-    requête `resultats_acquis` rend consultable de l'extérieur, pour qu'un
-    process qui reprend après une panne (#96) sache ce qui est déjà payé.
+    The instance carries the run's **acquired state** (planning, finished tasks),
+    rebuilt identically by replaying the history: that is what the `checkpoint`
+    query makes readable from outside, so that a process resuming after a failure
+    (#96) knows what is already paid for.
     """
 
     def __init__(self) -> None:
-        self._objectif: str = ""
+        self._goal: str = ""
         self._run_id: str = ""
-        self._planification: dict[str, Any] | None = None
-        self._ordre: tuple[str, ...] = ()
-        self._acquis: dict[str, dict[str, Any]] = {}
+        self._planning: dict[str, Any] | None = None
+        self._order: tuple[str, ...] = ()
+        self._acquired: dict[str, dict[str, Any]] = {}
 
-    @workflow.query
-    def resultats_acquis(self) -> dict[str, Any]:
-        """L'état déjà acquis du run : ce qui est payé et ne sera pas refait (#96).
+    @workflow.query(name="resultats_acquis")
+    def checkpoint(self) -> dict[str, Any]:
+        """The run's state already acquired: what is paid for and will not be redone (#96).
 
-        Même forme que l'agrégat final, mais **partielle** : `planification` est
-        `None` tant que le plan n'est pas établi, et `resultats` ne porte que les
-        tâches abouties, dans l'ordre du plan. Une tâche en vol au moment de
-        l'interruption n'y figure pas — elle n'a rien produit et sera reprise.
+        Same shape as the final aggregate, but **partial**: `planification` is
+        `None` until the plan is set, and `resultats` only carries the finished
+        tasks, in the plan's order. A task in flight at the time of the
+        interruption is not there: it produced nothing and will be resumed.
 
-        Interrogée par `maestro.durable.engine` au moment de reprendre : elle lui
-        donne de quoi reconstituer le journal du run (donc consolider rapport et
-        grand livre par-dessus la panne). Le rejeu de l'historique par un worker
-        rebâtit cet état à l'identique, sans ré-exécuter la moindre activité :
-        lire l'état acquis ne coûte rien.
+        Queried by `maestro.durable.engine` when resuming: it gives it what it needs
+        to rebuild the run's journal (hence consolidate report and ledger across the
+        failure). A worker replaying the history rebuilds this state identically,
+        without running a single activity again: reading the acquired state costs
+        nothing.
         """
         return {
-            "objectif": self._objectif,
+            "objectif": self._goal,
             "run_id": self._run_id,
-            "planification": self._planification,
+            "planification": self._planning,
             "resultats": [
-                self._acquis[tache_id]
-                for tache_id in self._ordre
-                if tache_id in self._acquis
+                self._acquired[task_id]
+                for task_id in self._order
+                if task_id in self._acquired
             ],
         }
 
     @workflow.run
-    async def run(self, entree: dict[str, Any]) -> dict[str, Any]:
-        """Déroule le run et renvoie l'agrégat sérialisé (reconstruit en `RunReport`).
+    async def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run the workflow and return the serialized aggregate (rebuilt as a `RunReport`).
 
-        `entree` porte l'objectif, le `run_id` (relie les journaux des activités à
-        l'exécution) et les plafonds armés — repris tels quels dans l'agrégat pour
-        que le rapport dise quel contrôle de dépense a tenu (#113). Le résultat est
-        un dict JSON-sérialisable : `maestro.durable.engine` en refait un
+        `payload` carries the goal, the `run_id` (ties the activities' journals to
+        the execution) and the armed caps, copied as is into the aggregate so that
+        the report says which spending control held (#113). The result is a
+        JSON-serializable dict: `maestro.durable.engine` turns it back into a
         `RunReport`.
         """
-        objectif: str = entree["objectif"]
-        run_id: str = entree["run_id"]
-        self._objectif = objectif
+        goal: str = payload["objectif"]
+        run_id: str = payload["run_id"]
+        self._goal = goal
         self._run_id = run_id
 
-        plan = await workflow.execute_activity(
-            planifier,
-            {"objectif": objectif, "run_id": run_id},
-            start_to_close_timeout=TIMEOUT_PLANIFICATION,
-            heartbeat_timeout=BATTEMENT_ACTIVITE,
-            retry_policy=RELANCE_PERTE_WORKER,
+        planned = await workflow.execute_activity(
+            plan,
+            {"objectif": goal, "run_id": run_id},
+            start_to_close_timeout=PLANNING_TIMEOUT,
+            heartbeat_timeout=ACTIVITY_HEARTBEAT,
+            retry_policy=WORKER_LOSS_RETRY,
         )
-        tasks = [Task.from_dict(t) for t in plan["tasks"]]
+        tasks = [Task.from_dict(t) for t in planned["tasks"]]
         ordered = topological_order(tasks)
-        self._planification = plan["usage"]
-        self._ordre = tuple(task.id for task in ordered)
+        self._planning = planned["usage"]
+        self._order = tuple(task.id for task in ordered)
 
-        # Une activité asyncio par tâche, créées dans l'ordre topologique : les
-        # dépendances existent donc toujours avant celles qui les attendent (même
-        # invariant que la boucle en process). Temporal fournit une boucle asyncio
-        # déterministe : `ensure_future`/`gather` y rejouent à l'identique.
-        en_vol: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        # One asyncio task per task, created in topological order: dependencies
+        # therefore always exist before the tasks that await them (the same
+        # invariant as the in-process loop). Temporal provides a deterministic
+        # asyncio loop: `ensure_future`/`gather` replay identically there.
+        in_flight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
-        async def _des_que_prete(task: Task) -> dict[str, Any]:
-            dependances = [await en_vol[dep] for dep in task.dependances]
-            insatisfaites = [
-                dep for dep in dependances if dep["statut"] != STATUT_TERMINEE
-            ]
-            resultat: dict[str, Any]
-            if insatisfaites:
-                # Blocage aval (#43) : la tâche n'atteint jamais l'exécution.
-                resultat = await workflow.execute_activity(
-                    consigner_blocage,
+        async def _when_ready(task: Task) -> dict[str, Any]:
+            dependencies = [await in_flight[dep] for dep in task.dependances]
+            unmet = [dep for dep in dependencies if dep["statut"] != STATUT_TERMINEE]
+            result: dict[str, Any]
+            if unmet:
+                # Downstream blocker (#43): the task never reaches execution.
+                result = await workflow.execute_activity(
+                    record_blocker,
                     {
                         "task": task.to_dict(),
-                        "dependances": insatisfaites,
+                        "dependances": unmet,
                         "run_id": run_id,
                     },
-                    start_to_close_timeout=TIMEOUT_ANNEXE,
-                    retry_policy=RELANCE_PERTE_WORKER,
+                    start_to_close_timeout=AUXILIARY_TIMEOUT,
+                    retry_policy=WORKER_LOSS_RETRY,
                 )
             else:
-                resultat = await workflow.execute_activity(
-                    executer_tache,
+                result = await workflow.execute_activity(
+                    execute_task,
                     {
                         "task": task.to_dict(),
-                        "dependances": dependances,
+                        "dependances": dependencies,
                         "run_id": run_id,
                     },
-                    start_to_close_timeout=TIMEOUT_TACHE,
-                    heartbeat_timeout=BATTEMENT_ACTIVITE,
-                    retry_policy=RELANCE_PERTE_WORKER,
+                    start_to_close_timeout=TASK_TIMEOUT,
+                    heartbeat_timeout=ACTIVITY_HEARTBEAT,
+                    retry_policy=WORKER_LOSS_RETRY,
                 )
-            # L'issue rejoint l'état acquis du run : payée, elle ne sera pas
-            # refaite — c'est elle que `resultats_acquis` rendra à une reprise.
-            self._acquis[task.id] = resultat
-            return resultat
+            # The outcome joins the run's acquired state: paid for, it will not be
+            # redone. It is what `checkpoint` returns on a resume.
+            self._acquired[task.id] = result
+            return result
 
         for task in ordered:
-            en_vol[task.id] = asyncio.ensure_future(_des_que_prete(task))
-        await asyncio.gather(*en_vol.values())
+            in_flight[task.id] = asyncio.ensure_future(_when_ready(task))
+        await asyncio.gather(*in_flight.values())
 
-        # Rassemblement déterministe : l'ordre du plan, pas l'ordre d'achèvement.
+        # Deterministic gathering: the plan's order, not the order of completion.
         return {
-            "objectif": objectif,
+            "objectif": goal,
             "run_id": run_id,
-            "resultats": [en_vol[task.id].result() for task in ordered],
-            "planification": plan["usage"],
-            "plafond_cout_usd": entree.get("plafond_cout_usd"),
-            "plafond_tokens": entree.get("plafond_tokens"),
+            "resultats": [in_flight[task.id].result() for task in ordered],
+            "planification": planned["usage"],
+            "plafond_cout_usd": payload.get("plafond_cout_usd"),
+            "plafond_tokens": payload.get("plafond_tokens"),
         }
 
 

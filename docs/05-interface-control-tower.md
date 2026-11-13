@@ -6660,7 +6660,7 @@ pas l'ordonnancement.
 | `franchie` | la main passe, l'aval peut démarrer | l'amont a **terminé** |
 | `rompue` | l'aval ne démarrera pas et se bloquera à son tour (#43) | l'amont a **échoué** ou été **bloqué** |
 
-Ce sont, aux mots près, les deux annonces de `HandoffRelais.annonce` (#44) — `handoff` quand la
+Ce sont, aux mots près, les deux annonces de `HandoffRelay.announce` (#44) — `handoff` quand la
 tâche a réussi, `notification` sinon. Elles sont lues **dans le statut de l'amont**, là où elles
 existent toujours : le relais n'existe que si une messagerie est injectée
 (`OrchestrationEngine(..., mailbox=…)`), et la Control Tower lance ses runs par

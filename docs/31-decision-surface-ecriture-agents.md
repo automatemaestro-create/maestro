@@ -36,7 +36,7 @@ l'agent**, et le ticket n'en cite aucune.
 | Un **ticket externe** posé sur sa tâche | #187 | `consigne_ticket` → étape `<tache>:ticket` | **l'agent**, via le MCP de son outil |
 | Sa **checklist** d'avancement | #489 | `consigne_detail`, via `on_etapes` | **l'agent**, via ses `TodoWrite` — le verbe `tenir_checklist` depuis #1291 |
 | Une **demande d'arbitrage** sur un acte | #582 | outil MCP `demander_arbitrage(raison)` | **l'agent**, et l'appel attend la réponse |
-| Un **message** inter-agents | #44 | `consigne_message` → étape `<tache>:message` | la **machinerie** — handoff ou chat |
+| Un **message** inter-agents | #44 | `record_message` → étape `<tache>:message` | la **machinerie** — handoff ou chat |
 
 Les **trois premières lignes de ce tableau donnent la forme qu'on reconduit**, et les deux
 premières la donnent entière : **une étape de journal → le pont Control Tower → un événement → la
@@ -189,8 +189,8 @@ promettant une livraison serait donc ajouter un troisième producteur à un cana
 lecteur, et pas celui qu'on vise.
 
 **Ce qu'on en tire, et c'est la moitié qui compte.** Le remède est dans le même fichier : le handoff
-fait **les deux** — `publish` *puis* `consigne_message`
-([`maestro/messaging/handoff.py:124-127`](../maestro/messaging/handoff.py)). C'est le bon partage,
+fait **les deux** — `publish` *puis* `record_message`
+([`maestro/messaging/handoff.py:128-131`](../maestro/messaging/handoff.py)). C'est le bon partage,
 et on le reconduit tel quel :
 
 > **Le journal est la livraison ; le pub/sub n'est que la notification.**
@@ -383,7 +383,7 @@ y a une tâche routée vers un rôle, exécutée, terminée. Et **`tache_id` est
 `slot_id` serait attendu** :
 
 - dans chaque ligne de journal, qui est nommée `<tache_id>:<quoi>` — c'est la convention même que
-  lisent `consigne_message` et `consigne_ticket` ;
+  lisent `record_message` et `consigne_ticket` ;
 - dans chaque message, qui porte `tache_id` **et** `run_id`
   ([`maestro/messaging/mailbox.py:89`](../maestro/messaging/mailbox.py)) ;
 - dans la télémétrie, où l'étape porte en plus `agent` et `role`
@@ -567,7 +567,7 @@ morte » au moment précis où quelqu'un demande de l'aide, et condamné tout so
 l'agent — il vient de parler, donc il est vivant.
 
 **③ « On le reconduit tel quel » ne valait que pour le partage, pas pour l'ordre.** Le §3.2 tire son
-remède du handoff, qui fait les deux gestes — `publish` *puis* `consigne_message` — et conclut « c'est
+remède du handoff, qui fait les deux gestes — `publish` *puis* `record_message` — et conclut « c'est
 le bon partage, et on le reconduit tel quel ». Le **partage** est bien reconduit ; l'**ordre** a dû
 être inversé. Le handoff abandonne tout, trace comprise, si la publication échoue
 ([`handoff.py:123-127`](../maestro/messaging/handoff.py)) : la trace y est *conditionnée* à la

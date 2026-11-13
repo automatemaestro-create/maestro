@@ -1,22 +1,22 @@
-"""Tests de la messagerie inter-agents — boîtes aux lettres et handoff (ticket #44).
+"""Tests of inter-agent messaging: mailboxes and handoff (#44).
 
-Aucun réseau : les boîtes aux lettres tournent en mémoire (`InMemoryMailbox`,
-même contrat que `RedisMailbox`) et la boucle d'orchestration sur des
-fournisseurs factices. Couvre les critères d'acceptation du ticket #44 :
+No network: the mailboxes run in memory (`InMemoryMailbox`, same contract as
+`RedisMailbox`) and the orchestration loop runs on fake providers. Covers the
+acceptance criteria of #44:
 
-① boîte aux lettres par agent : publication et consommation de messages —
-   message direct reçu par le seul destinataire, diffusion reçue par tous,
-   abonnement posé dès le retour de `subscribe` (pas de message manqué) ;
-② handoff démontré (critère MVP n°7) : dans la boucle d'orchestration, l'agent
-   qui termine une tâche annonce l'issue par message et la tâche aval n'est
-   exécutée qu'après réception — y compris la notification d'un échec, qui
-   prévient l'aval avant son blocage (#43) ;
-③ l'échange est journalisé dans la télémétrie (#8, étape `<tache>:message`) et
-   visible dans le flux d'événements de la Control Tower (#46, événement
-   `message.inter_agents` via le pont télémétrie).
+① one mailbox per agent, publishing and consuming messages: a direct message
+   reaches its recipient alone, a broadcast reaches everyone, and the
+   subscription is registered when `subscribe` returns (no missed message);
+② handoff demonstrated (MVP criterion 7): in the orchestration loop, the agent
+   that finishes a task announces the outcome by message, and the downstream
+   task runs only once it has received it, including the notification of a
+   failure, which warns the downstream task before it blocks (#43);
+③ the exchange is recorded in telemetry (#8, `<task>:message` step) and shows in
+   the Control Tower event stream (#46, `message.inter_agents` event through the
+   telemetry bridge).
 
-Plus la résilience du relais : attente bornée sans message, publication en
-échec abandonnée sans faire échouer la tâche.
+Plus the relay's resilience: the wait is bounded when no message comes, and a
+failed publication is dropped without failing the task.
 """
 
 import asyncio
@@ -26,16 +26,16 @@ from maestro.controltower import EVENEMENT_MESSAGE_INTER_AGENTS, activer_publica
 from maestro.engine import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE, OrchestrationEngine
 from maestro.engine.executor import TaskResult
 from maestro.messaging import (
-    DIFFUSION,
+    BROADCAST,
     MESSAGE_HANDOFF,
     MESSAGE_NOTIFICATION,
-    MESSAGE_REQUETE,
-    STATUT_ENVOYE,
+    MESSAGE_REQUEST,
+    STATUS_SENT,
     AgentMessage,
-    HandoffRelais,
+    HandoffRelay,
     InMemoryMailbox,
-    canal_boite,
-    consigne_message,
+    mailbox_channel,
+    record_message,
 )
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
@@ -44,7 +44,7 @@ from maestro.telemetry import LOGGER_NAME, RunJournal
 
 
 class ConstantProvider(ModelProvider):
-    """Renvoie toujours la même réponse (planificateur, ou exécutant en échec)."""
+    """Always returns the same response (the planner, or a failing executor)."""
 
     name = "constant"
 
@@ -59,7 +59,7 @@ class ConstantProvider(ModelProvider):
 
 
 class RecordingProvider(ModelProvider):
-    """Exécutant factice : enregistre chaque appel et renvoie un livrable unique."""
+    """Fake executor: records each call and returns a distinct deliverable."""
 
     name = "recording"
 
@@ -75,7 +75,7 @@ class RecordingProvider(ModelProvider):
 
 
 def _plan_json():
-    # 3 tâches en chaîne : bdd -> developpeur -> qa (via les compétences requises).
+    # Three chained tasks: bdd -> developpeur -> qa (through the required competencies).
     return json.dumps(
         [
             {
@@ -110,34 +110,34 @@ def _plan_json():
 def _engine(mailbox, *, exec_provider=None):
     planner = ConstantProvider(_plan_json())
     orchestrator = Orchestrator(planner, model="claude-opus-4-8")
-    execu = exec_provider if exec_provider is not None else RecordingProvider()
-    return OrchestrationEngine(execu, orchestrator, mailbox=mailbox)
+    executor = exec_provider if exec_provider is not None else RecordingProvider()
+    return OrchestrationEngine(executor, orchestrator, mailbox=mailbox)
 
 
-def _message(type_=MESSAGE_HANDOFF, *, de="bdd", a=DIFFUSION, tache_id="t1"):
+def _message(type_=MESSAGE_HANDOFF, *, from_agent="bdd", to_agent=BROADCAST, task_id="t1"):
     return AgentMessage(
         type=type_,
-        de_agent=de,
-        a_agent=a,
-        tache_id=tache_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        task_id=task_id,
         run_id="run-44",
-        objet="Tâche « Schéma » terminée — la main passe à l'aval (t2).",
+        subject="Tâche « Schéma » terminée — la main passe à l'aval (t2).",
         payload={"statut": STATUT_TERMINEE, "debloque": ["t2"]},
     )
 
 
-def _tache(tache_id="t1", titre="Schéma", dependances=()):
+def _task(task_id="t1", title="Schéma", dependencies=()):
     return Task(
-        id=tache_id,
-        titre=titre,
+        id=task_id,
+        titre=title,
         description="…",
         competences_requises=("sql",),
         format_sortie="SQL",
-        dependances=tuple(dependances),
+        dependances=tuple(dependencies),
     )
 
 
-def _resultat(statut=STATUT_TERMINEE, *, agent="bdd", role="Base de données"):
+def _result(status=STATUT_TERMINEE, *, agent="bdd", role="Base de données"):
     return TaskResult(
         task_id="t1",
         titre="Schéma",
@@ -145,111 +145,113 @@ def _resultat(statut=STATUT_TERMINEE, *, agent="bdd", role="Base de données"):
         role=role,
         competences_requises=("sql",),
         score=2,
-        statut=statut,
-        sortie="livrable" if statut == STATUT_TERMINEE else "",
-        erreur=None if statut == STATUT_TERMINEE else "cause",
+        statut=status,
+        sortie="livrable" if status == STATUT_TERMINEE else "",
+        erreur=None if status == STATUT_TERMINEE else "cause",
     )
 
 
-# ----------------------------------------------------- ① Boîtes aux lettres
+# ---------------------------------------------------------------- ① Mailboxes
 
 
-def test_message_aller_retour_json():
+def test_message_json_round_trip():
     message = _message()
     assert AgentMessage.from_json(message.to_json()) == message
     assert AgentMessage.from_json(message.to_json().encode("utf-8")) == message
 
 
-def test_message_direct_recu_par_le_seul_destinataire_diffusion_par_tous():
-    """La boîte de chaque agent reçoit ses messages directs et les diffusions."""
+def test_direct_message_reaches_its_recipient_alone_and_broadcast_reaches_all():
+    """Each agent's mailbox receives its direct messages and the broadcasts."""
 
     async def scenario():
         mailbox = InMemoryMailbox()
-        boite_qa = await mailbox.subscribe("qa")
-        boite_dev = await mailbox.subscribe("developpeur")
+        qa_mailbox = await mailbox.subscribe("qa")
+        developer_mailbox = await mailbox.subscribe("developpeur")
 
-        # Abonnements posés dès le retour de `subscribe` : publier tout de suite
-        # ne perd rien (contrat au cœur du handoff, pub/sub sans rejeu).
-        direct = _message(MESSAGE_REQUETE, a="qa")
-        diffusion = _message(MESSAGE_NOTIFICATION, a=DIFFUSION)
+        # The subscriptions are registered when `subscribe` returns: publishing
+        # right away loses nothing (the contract at the heart of the handoff,
+        # Pub/Sub without replay).
+        direct = _message(MESSAGE_REQUEST, to_agent="qa")
+        broadcast = _message(MESSAGE_NOTIFICATION, to_agent=BROADCAST)
         await mailbox.publish(direct)
-        await mailbox.publish(diffusion)
+        await mailbox.publish(broadcast)
 
-        assert await anext(boite_qa) == direct
-        assert await anext(boite_qa) == diffusion
-        # Le premier message de la boîte du développeur est la diffusion : le
-        # message direct adressé à qa ne l'a jamais atteinte.
-        assert await anext(boite_dev) == diffusion
+        assert await anext(qa_mailbox) == direct
+        assert await anext(qa_mailbox) == broadcast
+        # The first message in the developer's mailbox is the broadcast: the
+        # direct message addressed to qa never reached it.
+        assert await anext(developer_mailbox) == broadcast
 
-        await boite_qa.close()
-        await boite_dev.close()
+        await qa_mailbox.close()
+        await developer_mailbox.close()
 
     asyncio.run(scenario())
 
 
-def test_canal_redis_de_la_boite_d_un_agent():
-    """Le transport Redis nomme un canal par boîte (préfixe dédié, docs/03 §4)."""
-    assert canal_boite("qa") == "maestro.boite.qa"
+def test_redis_channel_of_an_agent_mailbox():
+    """The Redis transport names one channel per mailbox (dedicated prefix, docs/03 §4)."""
+    assert mailbox_channel("qa") == "maestro.boite.qa"
 
 
-# ------------------------------------------- ③ Journal (#8) et Control Tower (#46)
+# ------------------------------------------- ③ Journal (#8) and Control Tower (#46)
 
 
-def test_consigne_message_journalise_l_echange():
+def test_record_message_writes_the_exchange_to_the_journal():
     journal = RunJournal(run_id="run-44")
-    consigne_message(journal, _message(), role="Base de données")
+    record_message(journal, _message(), role="Base de données")
 
     (record,) = journal.records
     assert record.etape == "t1:message"
     assert record.agent == "bdd" and record.role == "Base de données"
-    assert record.statut == STATUT_ENVOYE
+    assert record.statut == STATUS_SENT
     assert record.nom.startswith("Tâche « Schéma » terminée")
     assert "handoff de bdd à diffusion" in record.sortie
 
 
-def test_ligne_de_message_devient_evenement_inter_agents():
+def test_message_step_becomes_an_inter_agent_event():
     from maestro.controltower import evenements_depuis_step
 
     journal = RunJournal(run_id="run-44")
-    consigne_message(journal, _message(), role="Base de données")
+    record_message(journal, _message(), role="Base de données")
 
     (event,) = evenements_depuis_step(journal.records[0].to_dict())
 
     assert event.type == EVENEMENT_MESSAGE_INTER_AGENTS
     assert event.run_id == "run-44" and event.tache_id == "t1"
-    assert event.agent == "bdd" and event.statut == STATUT_ENVOYE
+    assert event.agent == "bdd" and event.statut == STATUS_SENT
     assert "handoff de bdd à diffusion" in event.detail
 
 
-# --------------------------------------------- ② Handoff dans la boucle (MVP n°7)
+# ---------------------------------------- ② Handoff in the loop (MVP criterion 7)
 
 
-def test_handoff_annonce_puis_debloque_la_tache_aval():
-    """Chaîne bdd → developpeur → qa : chaque fin de tâche annonce, l'aval suit."""
+def test_handoff_announces_then_unblocks_the_downstream_task():
+    """Chain bdd → developpeur → qa: each task end announces, the downstream task follows."""
     journal = RunJournal(run_id="run-44")
     report = asyncio.run(_engine(InMemoryMailbox()).run("Objectif", journal=journal))
 
     assert [r.statut for r in report.resultats] == [STATUT_TERMINEE] * 3
-    etapes = [r.etape for r in journal.records]
-    # L'annonce du handoff est consignée entre la fin de la tâche amont et le
-    # démarrage (#98) de la tâche aval : l'échange précède (et débloque) l'exécution.
-    # La chaîne se dit elle-même avant la première tâche (#1298, étape `cadence`).
-    assert etapes == [
+    steps = [r.etape for r in journal.records]
+    # The handoff announcement is recorded between the end of the upstream task
+    # and the start (#98) of the downstream task: the exchange precedes (and
+    # unblocks) the execution. The chain states itself before the first task
+    # (#1298, `cadence` step).
+    assert steps == [
         "planification",
         "cadence",
         "schema-bdd:debut", "schema-bdd", "schema-bdd:message",
         "api-taches:debut", "api-taches", "api-taches:message",
-        "tests-api:debut", "tests-api",  # dernière tâche du plan : pas d'annonce
+        "tests-api:debut", "tests-api",  # last task of the plan: no announcement
     ]
 
-    annonce = next(r for r in journal.records if r.etape == "schema-bdd:message")
-    assert annonce.agent == "bdd" and annonce.statut == STATUT_ENVOYE
-    assert "la main passe" in annonce.nom
-    assert "handoff" in annonce.sortie
+    announcement = next(r for r in journal.records if r.etape == "schema-bdd:message")
+    assert announcement.agent == "bdd" and announcement.statut == STATUS_SENT
+    assert "la main passe" in announcement.nom
+    assert "handoff" in announcement.sortie
 
 
-def test_echec_amont_notifie_l_aval_avant_son_blocage():
-    """Un échec voyage aussi par message : l'aval est prévenu, puis se bloque (#43)."""
+def test_upstream_failure_notifies_the_downstream_task_before_it_blocks():
+    """A failure travels by message too: the downstream task is warned, then blocks (#43)."""
     journal = RunJournal(run_id="run-44")
     report = asyncio.run(
         _engine(InMemoryMailbox(), exec_provider=ConstantProvider("   ")).run(
@@ -257,66 +259,66 @@ def test_echec_amont_notifie_l_aval_avant_son_blocage():
         )
     )
 
-    racine, *aval = report.resultats
-    assert racine.statut == STATUT_ECHEC
-    assert all(r.statut == STATUT_BLOQUEE for r in aval)
+    root, *downstream = report.resultats
+    assert root.statut == STATUT_ECHEC
+    assert all(r.statut == STATUT_BLOQUEE for r in downstream)
 
-    par_etape = {r.etape: r for r in journal.records}
-    notification = par_etape["schema-bdd:message"]
+    by_step = {r.etape: r for r in journal.records}
+    notification = by_step["schema-bdd:message"]
     assert "notification" in notification.sortie and "echec" in notification.nom
-    # La tâche bloquée a elle aussi un aval : elle le prévient à son tour.
-    assert "bloquee" in par_etape["api-taches:message"].nom
+    # The blocked task has a downstream task too: it warns it in turn.
+    assert "bloquee" in by_step["api-taches:message"].nom
 
 
-def test_le_handoff_est_visible_dans_le_flux_control_tower():
-    """Bout en bout du critère ③ : boucle + messagerie ⇒ événement `message.inter_agents`."""
+def test_handoff_shows_in_the_control_tower_stream():
+    """Criterion ③ end to end: loop + messaging ⇒ `message.inter_agents` event."""
     import logging
 
-    captes = []
-    handler = activer_publication(captes.append)
+    captured = []
+    handler = activer_publication(captured.append)
     try:
         asyncio.run(_engine(InMemoryMailbox()).run("Objectif"))
     finally:
         logging.getLogger(LOGGER_NAME).removeHandler(handler)
 
-    messages = [e for e in captes if e.type == EVENEMENT_MESSAGE_INTER_AGENTS]
+    messages = [e for e in captured if e.type == EVENEMENT_MESSAGE_INTER_AGENTS]
     assert [m.tache_id for m in messages] == ["schema-bdd", "api-taches"]
     assert messages[0].agent == "bdd"
     assert "handoff" in messages[0].detail
 
 
-# ------------------------------------------------------- Résilience du relais
+# ------------------------------------------------------------- Relay resilience
 
 
-def test_attente_bornee_quand_aucune_annonce_n_arrive():
-    """Un message perdu ne suspend pas la boucle : l'attente rend None après le délai."""
+def test_wait_is_bounded_when_no_announcement_arrives():
+    """A lost message does not suspend the loop: the wait returns None after the timeout."""
 
     async def scenario():
         mailbox = InMemoryMailbox()
-        relais = await HandoffRelais.ouvrir(mailbox, RunJournal(), timeout_s=0.05)
+        relay = await HandoffRelay.open(mailbox, RunJournal(), timeout_s=0.05)
         try:
-            assert await relais.attend("fantome") is None
+            assert await relay.wait_for("fantome") is None
         finally:
-            await relais.fermer()
+            await relay.close()
 
     asyncio.run(scenario())
 
 
-def test_annonce_abandonnee_si_la_publication_echoue():
-    """La messagerie ne fait jamais échouer la tâche qu'elle annonce (résilience)."""
+def test_announcement_dropped_when_publication_fails():
+    """Messaging never fails the task it announces (resilience)."""
 
-    class MailboxEnPanne(InMemoryMailbox):
+    class UnreachableMailbox(InMemoryMailbox):
         async def publish(self, message):
             raise ConnectionError("Redis injoignable")
 
     async def scenario():
         journal = RunJournal()
-        relais = await HandoffRelais.ouvrir(MailboxEnPanne(), journal)
+        relay = await HandoffRelay.open(UnreachableMailbox(), journal)
         try:
-            annonce = await relais.annonce(_tache(), _resultat(), ["t2"])
+            announcement = await relay.announce(_task(), _result(), ["t2"])
         finally:
-            await relais.fermer()
-        assert annonce is None
-        assert journal.records == ()  # rien d'envoyé ⇒ rien de journalisé
+            await relay.close()
+        assert announcement is None
+        assert journal.records == ()  # nothing sent ⇒ nothing recorded
 
     asyncio.run(scenario())

@@ -867,8 +867,8 @@ Reprendre demande donc **deux** choses hors process, pas une : le plan **exécut
 
 - **Le format existe déjà, et il voyage déjà entre process.** `TaskResult.to_dict`/`from_dict`
   (`executor.py:200`, `230`) est ce que le mode durable sérialise pour passer les dépendances d'une
-  activité à l'autre (`activities.py:277`), et ce que `resultats_acquis` rend à une reprise
-  (`workflow.py:126-135`). Rien n'est à inventer : l'état acquis d'un run est **déjà** une valeur
+  activité à l'autre (`activities.py:314`), et ce que la requête `checkpoint` rend à une reprise
+  (`workflow.py:123-132`). Rien n'est à inventer : l'état acquis d'un run est **déjà** une valeur
   JSON, dans ce dépôt, aujourd'hui.
 - **Aucun système de fichiers n'est à faire survivre.** `espace_de_travail` ouvre un espace **par
   tâche**, dérivé du projet (worktree Git ou copie de périmètre), sous un `mkdtemp` démonté en
@@ -976,13 +976,13 @@ D'abord le pointeur : la note vit en **`maestro/engine/guardrails.py:427-433`**.
 `DemandeValidation`), et #701 a recopié cette référence — c'est le §4.4 qu'elle corrige, pas le
 ticket. Ensuite et surtout, **elle décrit le remède, pas le défaut** : un canal synchrone est
 exécuté `await asyncio.to_thread(canal, demande)`
-(`guardrails.py:433`) précisément pour ne pas bloquer la boucle. Le compagnon `_bat_le_coeur`
-(`activities.py:199-203`) continue donc de battre pendant la délibération, et `_avec_battement`
-enveloppe tout le travail de l'activité (`activities.py:279`). **Le battement tient.**
+(`guardrails.py:433`) précisément pour ne pas bloquer la boucle. Le compagnon `_beat`
+(`activities.py:235-239`) continue donc de battre pendant la délibération, et `_with_heartbeat`
+enveloppe tout le travail de l'activité (`activities.py:316`). **Le battement tient.**
 
 Ce qui ne tient pas est ailleurs, et c'est plus qu'un réglage. Une activité est bornée par son
-`start_to_close_timeout` — `TIMEOUT_TACHE = 1 h` (`workflow.py:72`) — et une expiration est **rejouée**
-par `RELANCE_PERTE_WORKER` jusqu'à trois fois (`workflow.py:86-91`). Une délibération plus longue
+`start_to_close_timeout` — `TASK_TIMEOUT = 1 h` (`workflow.py:69`) — et une expiration est **rejouée**
+par `WORKER_LOSS_RETRY` jusqu'à trois fois (`workflow.py:83-88`). Une délibération plus longue
 qu'une heure ferait donc **reposer la question à l'opérateur et repayer le travail de la tâche**. Or
 le §3 le rappelle : aucune des trois attentes n'a de time-out, l'attente est « indéfinie […], jamais
 un time-out silencieux » (`validation.py:88-91`) — **par décision**. Une attente indéfinie ne peut
@@ -1011,8 +1011,8 @@ plus une dépendance d'infra dure et une annulation dégradée.
 **L'état acquis durable hors process (b) est retenu.**
 
 **① Ce qui est demandé est la reprise, pas Temporal — et sur cet axe, O4 ne fait pas mieux.** C'est
-le constat qui tranche, et il est vérifiable en une ligne de code : `resultats_acquis` exclut la
-tâche en vol, qui « n'a rien produit et sera reprise » (`workflow.py:117-118`). Temporal reprend à la
+le constat qui tranche, et il est vérifiable en une ligne de code : la requête `checkpoint` exclut la
+tâche en vol, qui n'a rien produit et sera reprise (`workflow.py:114-115`). Temporal reprend à la
 tâche terminée ; (b) aussi. La porte n° 4 a été écrite en supposant que la reprise exacte *appelait*
 le workflow durable — ce qui était vrai au sens où Temporal était le **seul** mécanisme du dépôt qui
 la faisait, jamais au sens où il était le seul possible. On n'achète pas cinq portages et une
@@ -1030,7 +1030,7 @@ longue de deux entrées depuis (le parallélisme et la pause).
 
 **④ Et ce n'est pas (b) *au lieu de* O4, c'est (b) *avant* O4 — avec une honnêteté que le §5 n'avait
 pas à avoir.** Au §5, aucun lot n'était jeté le jour d'O4. Ici, une pièce le serait : le **magasin**,
-puisque Temporal fournirait l'état acquis par `resultats_acquis`. Ce n'est ni le format
+puisque Temporal fournirait l'état acquis par la requête `checkpoint`. Ce n'est ni le format
 (`TaskResult`, que Temporal transporte déjà tel quel), ni le **verbe de reprise** côté Control Tower
 — « reprendre sur l'acquis ou relancer sur le brief » est une décision de produit, dont seule la
 source d'état changerait. Ce qui serait jeté est un `RPUSH`/`LRANGE` ; ce qui serait gardé est le

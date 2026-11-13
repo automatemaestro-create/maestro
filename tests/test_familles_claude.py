@@ -134,7 +134,7 @@ from maestro.agents.store import AgentDefinition
 from maestro.config import Settings
 from maestro.providers.claude import ClaudeProvider
 from maestro.providers.factory import default_model
-from maestro.router.classifier import MODELE_CLASSIFIEUR
+from maestro.router.classifier import CLASSIFIER_MODEL
 
 agent_d_equipe = AgentDefinition(nom="recrue", role="Rôle", competences=(), playbook="p")
 print(json.dumps({
@@ -144,7 +144,7 @@ print(json.dumps({
     "profils_outilles": sorted({profil.modele for profil in TOOLED_PROFILES}),
     "cadre_generique": CADRE_GENERIQUE.modele,
     "agent_sans_modele": agent_d_equipe.to_agent().modele,
-    "classifieur": MODELE_CLASSIFIEUR,
+    "classifieur": CLASSIFIER_MODEL,
     "gamme": [[m.nom, m.libelle] for m in ClaudeProvider.MODELES],
 }))
 """

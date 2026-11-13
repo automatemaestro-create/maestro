@@ -45,10 +45,10 @@ journal :
   pourrait faire d'un « la notification a échoué » serait de réessayer, c'est-à-
   dire de dupliquer la trace sur un canal qui n'a toujours personne au bout ;
 - **le destinataire doit être un pair** (`DESTINATAIRE_MANQUANT`,
-  `DESTINATAIRE_RESERVE`). Vide, c'est `DIFFUSION` : le mot partirait dans
+  `DESTINATAIRE_RESERVE`). Vide, c'est `BROADCAST` : le mot partirait dans
   *toutes* les boîtes, ce que ce verbe ne promet pas — et il tomberait dans celle
   du relais de handoff, qui écoute justement la diffusion. Le refus de
-  `AGENT_RELAIS` ferme la même porte par l'autre bout, et pour la même raison :
+  `RELAY_AGENT` ferme la même porte par l'autre bout, et pour la même raison :
   ce n'est pas un pair, c'est l'identité sous laquelle la boucle relève les
   passages de relais (`maestro.messaging.handoff`). Un mot posté là porterait le
   `tache_id` de l'expéditeur et **résoudrait l'attente de handoff de sa propre
@@ -67,7 +67,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from maestro.messaging.handoff import AGENT_RELAIS
+from maestro.messaging.handoff import RELAY_AGENT
 from maestro.providers.arbitrage import NOM_SERVEUR
 
 #: Nom de l'outil tel que l'agent l'appelle, une fois préfixé par son serveur.
@@ -123,7 +123,7 @@ MOT_CONSIGNE = (
 )
 
 #: Destinataire vide. Rien n'est écrit, et surtout rien n'est diffusé : côté
-#: transport, un destinataire vide **est** la diffusion (`mailbox.DIFFUSION`),
+#: transport, un destinataire vide **est** la diffusion (`mailbox.BROADCAST`),
 #: donc l'accepter enverrait le mot dans toutes les boîtes au lieu d'une seule.
 #: Ce n'est pas un refus de ce que l'agent voulait faire — c'est un champ à
 #: remplir, et le texte le dit comme tel plutôt que de le renvoyer sur son
@@ -193,4 +193,4 @@ def destinataire_reserve(destinataire: str) -> bool:
     « Orchestrateur » et laisser passer « orchestrateur  » rendrait la garde
     contournable par une majuscule.
     """
-    return destinataire.strip().casefold() == AGENT_RELAIS.casefold()
+    return destinataire.strip().casefold() == RELAY_AGENT.casefold()

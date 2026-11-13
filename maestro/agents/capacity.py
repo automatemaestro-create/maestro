@@ -5,7 +5,7 @@ la **capacité** d'un agent — reçoit-il des tâches, et combien en même temp
 règle depuis la Control Tower et a un **effet réel** sur l'exécution :
 
 - un agent **désactivé** est écarté des candidats du routage
-  (`maestro.router.Router.route`, paramètre `exclus`) : il ne reçoit plus de
+  (`maestro.router.Router.route`, paramètre `excluded`) : il ne reçoit plus de
   tâches, ni par auto-assignation ni par réassignation manuelle ;
 - le nombre d'**instances** plafonne ses exécutions simultanées : la
   `JaugeInstances` retient une tâche routée vers un agent au complet jusqu'à ce

@@ -41,8 +41,8 @@ from maestro.controltower import purge
 from maestro.controltower.battement import CLE_BATTEMENTS, CLE_HOTES, horodatage_battement
 from maestro.controltower.carte_hote import CarteHote, machine_courante
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
-from maestro.messaging.mailbox import CANAL_BOITE_PREFIXE, CANAL_DIFFUSION
-from maestro.queue.celery_app import FILE_TACHES
+from maestro.messaging.mailbox import BROADCAST_CHANNEL, MAILBOX_CHANNEL_PREFIX
+from maestro.queue.celery_app import TASKS_QUEUE
 
 RACINE = Path(__file__).resolve().parents[1]
 COMMANDES = RACINE / ".claude" / "commands"
@@ -355,9 +355,9 @@ def settings(poste: Poste) -> Settings:
 def redis_peuple(*, battement: str | None = None) -> FauxRedis:
     hashes = {CLE_BATTEMENTS: {"run-orphelin": battement}} if battement else {}
     return FauxRedis(
-        listes={CLE_JOURNAL_EVENEMENTS: ["e1", "e2", "e3"], FILE_TACHES: ["t1"]},
+        listes={CLE_JOURNAL_EVENEMENTS: ["e1", "e2", "e3"], TASKS_QUEUE: ["t1"]},
         hashes=hashes,
-        cles=(f"{CANAL_BOITE_PREFIXE}dev", CANAL_DIFFUSION, "autre.cle"),
+        cles=(f"{MAILBOX_CHANNEL_PREFIX}dev", BROADCAST_CHANNEL, "autre.cle"),
     )
 
 
@@ -392,9 +392,9 @@ def test_le_perimetre_est_celui_des_constantes(settings: Settings, poste: Poste)
     assert perimetre.journal is CLE_JOURNAL_EVENEMENTS
     assert perimetre.battements is CLE_BATTEMENTS
     assert perimetre.hotes is CLE_HOTES
-    assert perimetre.file_taches is FILE_TACHES
-    assert perimetre.prefixe_boites is CANAL_BOITE_PREFIXE
-    assert perimetre.diffusion is CANAL_DIFFUSION
+    assert perimetre.file_taches is TASKS_QUEUE
+    assert perimetre.prefixe_boites is MAILBOX_CHANNEL_PREFIX
+    assert perimetre.diffusion is BROADCAST_CHANNEL
     assert perimetre.conversations == poste.chat
     assert perimetre.ingestion == poste.ingestion
     assert perimetre.projets == poste.projets
@@ -558,9 +558,9 @@ def test_la_purge_retire_letat_et_rien_dautre(settings: Settings, poste: Poste) 
         CLE_JOURNAL_EVENEMENTS,
         CLE_BATTEMENTS,
         CLE_HOTES,
-        FILE_TACHES,
-        f"{CANAL_BOITE_PREFIXE}dev",
-        CANAL_DIFFUSION,
+        TASKS_QUEUE,
+        f"{MAILBOX_CHANNEL_PREFIX}dev",
+        BROADCAST_CHANNEL,
     }
     assert client.cles() == {"autre.cle"}, "une clé étrangère au périmètre reste"
 

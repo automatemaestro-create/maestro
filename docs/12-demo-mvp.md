@@ -55,11 +55,11 @@ from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.config import load_settings
 from maestro.providers.claude import ClaudeProvider
 from maestro.router import Router, TaskClassifier
-from maestro.router.evaluation import evaluer
+from maestro.router.evaluation import evaluate
 async def main():
     router = Router(GABARITS_DU_CODE, classifier=TaskClassifier(ClaudeProvider.from_settings(load_settings())))
-    resultat = await evaluer(router)
-    print(resultat.resume())
+    result = await evaluate(router)
+    print(result.summary())
 asyncio.run(main())
 "
 ```

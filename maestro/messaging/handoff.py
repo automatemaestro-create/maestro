@@ -1,24 +1,23 @@
-"""Handoff observable : fin de tâche → message → déblocage de l'aval (ticket #44).
+"""Observable handoff: task end, then message, then the downstream task unblocks (#44).
 
-Fait passer le **relais entre agents par la messagerie** (critère MVP n°7) : quand
-un agent termine une tâche dont d'autres dépendent, il **annonce** l'issue en
-diffusion (`AgentMessage` de type `handoff` — `notification` si la tâche n'a pas
-abouti), et la boucle d'orchestration ne **débloque** chaque tâche aval qu'à
-réception du message de chacune de ses dépendances. L'échange est journalisé
-dans la télémétrie (#8) à la publication, donc visible dans le flux d'événements
-de la Control Tower (#46) via le pont existant.
+Passes the **baton between agents through messaging** (MVP criterion 7): when an
+agent finishes a task that others depend on, it **announces** the outcome as a
+broadcast (an `AgentMessage` of type `handoff`, or `notification` when the task
+did not succeed), and the orchestration loop **unblocks** each downstream task
+only once it has received the message of each of its dependencies. The exchange
+is recorded in telemetry (#8) when it is published, so it shows in the Control
+Tower event stream (#46) through the existing bridge.
 
-L'annonce part en **diffusion** (toutes les boîtes) et non en message direct :
-au moment où un agent termine, l'agent qui prendra la tâche aval n'est pas
-encore connu — l'assignation (routage #42) n'a lieu qu'au démarrage de la
-tâche. La diffusion est l'annonce d'équipe (« j'ai terminé, la main passe ») ;
-la messagerie directe reste disponible pour les échanges ciblés (EF-32).
+The announcement is a **broadcast** (every mailbox), not a direct message: when
+an agent finishes, the agent that will take the downstream task is not known yet,
+since assignment (routing, #42) happens when that task starts. The broadcast is
+the team announcement ("I'm done, the baton passes"); direct messaging remains
+available for targeted exchanges (EF-32).
 
-Le relais est **résilient**, comme le reste de la boucle : une publication en
-échec (Redis injoignable) est abandonnée sans faire échouer la tâche, et
-l'attente d'un message est bornée (`TIMEOUT_HANDOFF_S`) — au-delà, la boucle
-retombe sur la synchronisation en process (#43), qui garde le dernier mot sur
-l'ordre d'exécution.
+The relay is **resilient**, like the rest of the loop: a failed publication
+(Redis unreachable) is dropped without failing the task, and waiting for a
+message is bounded (`HANDOFF_TIMEOUT_S`). Beyond that, the loop falls back on
+in-process synchronization (#43), which keeps the last word on execution order.
 """
 
 from __future__ import annotations
@@ -29,148 +28,151 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from maestro.messaging.mailbox import (
-    DIFFUSION,
+    BROADCAST,
     MESSAGE_HANDOFF,
     MESSAGE_NOTIFICATION,
     AgentMessage,
     Mailbox,
     MailboxSubscription,
-    consigne_message,
+    record_message,
 )
 from maestro.telemetry import RunJournal
 
-if TYPE_CHECKING:  # import de typage seul : pas de dépendance d'exécution au moteur
+if TYPE_CHECKING:  # typing-only import: no runtime dependency on the engine
     from maestro.engine.executor import TaskResult
     from maestro.orchestrator.schema import Task
 
-#: Identité sous laquelle la boucle relève la diffusion : le process
-#: d'orchestration écoute les annonces d'équipe pour débloquer l'aval.
-AGENT_RELAIS = "orchestrateur"
+#: The identity under which the loop collects the broadcast: the orchestration
+#: process listens to team announcements to unblock downstream tasks. The value
+#: names a mailbox, so it travels.
+RELAY_AGENT = "orchestrateur"
 
-#: Attente maximale du handoff d'une dépendance (s). La dépendance étant déjà
-#: terminée en process quand l'attente commence, seul un transport défaillant
-#: (message perdu sur Redis) peut la faire durer : au-delà, on retombe sur la
-#: synchronisation en process plutôt que de suspendre l'exécution.
-TIMEOUT_HANDOFF_S = 30.0
+#: Maximum wait for a dependency's handoff (s). The dependency has already ended
+#: in process when the wait starts, so only a failing transport (a message lost on
+#: Redis) can stretch it: past this delay, the loop falls back on in-process
+#: synchronization rather than suspending the run.
+HANDOFF_TIMEOUT_S = 30.0
 
 
-class HandoffRelais:
-    """Le guichet des handoffs d'une exécution : annonce les fins, débloque l'aval.
+class HandoffRelay:
+    """The handoff desk of a run: announces task ends, unblocks downstream tasks.
 
-    S'ouvre en début de `run` (`await HandoffRelais.ouvrir(...)`) : la boîte de
-    diffusion est posée **avant** toute exécution, aucun message ne peut être
-    manqué. Côté producteur, `annonce` publie et journalise l'issue d'une tâche
-    qui a des dépendants ; côté consommateur, `attend` rend le message d'une
-    dépendance (déjà reçu ou à venir). `fermer` libère la boîte en fin de run.
+    It opens at the start of a run (`await HandoffRelay.open(...)`): the
+    broadcast mailbox is registered **before** anything runs, so no message can be
+    missed. On the producer side, `announce` publishes and records the outcome of a
+    task that has dependents; on the consumer side, `wait_for` returns a
+    dependency's message (already received or still to come). `close` releases the
+    mailbox at the end of the run.
     """
 
     def __init__(
         self,
         mailbox: Mailbox,
-        abonnement: MailboxSubscription,
+        subscription: MailboxSubscription,
         journal: RunJournal,
         *,
-        timeout_s: float = TIMEOUT_HANDOFF_S,
+        timeout_s: float = HANDOFF_TIMEOUT_S,
     ) -> None:
         self._mailbox = mailbox
-        self._abonnement = abonnement
+        self._subscription = subscription
         self._journal = journal
         self._timeout_s = timeout_s
-        self._attentes: dict[str, asyncio.Future[AgentMessage]] = {}
-        self._lecteur: asyncio.Task[None] | None = None
+        self._pending: dict[str, asyncio.Future[AgentMessage]] = {}
+        self._reader: asyncio.Task[None] | None = None
 
     @classmethod
-    async def ouvrir(
+    async def open(
         cls,
         mailbox: Mailbox,
         journal: RunJournal,
         *,
-        timeout_s: float = TIMEOUT_HANDOFF_S,
-    ) -> HandoffRelais:
-        """Ouvre la boîte de diffusion et démarre la relève du courrier."""
-        abonnement = await mailbox.subscribe(AGENT_RELAIS)
-        relais = cls(mailbox, abonnement, journal, timeout_s=timeout_s)
-        relais._lecteur = asyncio.create_task(relais._releve())
-        return relais
+        timeout_s: float = HANDOFF_TIMEOUT_S,
+    ) -> HandoffRelay:
+        """Open the broadcast mailbox and start collecting the mail."""
+        subscription = await mailbox.subscribe(RELAY_AGENT)
+        relay = cls(mailbox, subscription, journal, timeout_s=timeout_s)
+        relay._reader = asyncio.create_task(relay._collect())
+        return relay
 
-    async def annonce(
-        self, task: Task, result: TaskResult, debloquees: Sequence[str]
+    async def announce(
+        self, task: Task, result: TaskResult, unblocked: Sequence[str]
     ) -> AgentMessage | None:
-        """Publie et journalise l'issue de `task` à destination de son aval.
+        """Publish and record the outcome of `task` for its downstream tasks.
 
-        `handoff` si la tâche a réussi (le relais passe, `debloquees` cite les
-        tâches que l'annonce débloque), `notification` sinon (échec ou blocage :
-        l'aval est prévenu et se bloquera à son tour, #43). Une publication en
-        échec est abandonnée (None, rien de journalisé) : la messagerie ne doit
-        jamais faire échouer la tâche qu'elle annonce.
+        `handoff` when the task succeeded (the baton passes, `unblocked` names the
+        tasks the announcement unblocks), `notification` otherwise (failure or
+        blocker: the downstream tasks are warned and will block in turn, #43). A
+        failed publication is dropped (None, nothing recorded): messaging must
+        never fail the task it announces.
         """
-        aval = ", ".join(debloquees)
+        downstream = ", ".join(unblocked)
         if result.ok:
-            type_message = MESSAGE_HANDOFF
-            objet = f"Tâche « {task.titre} » terminée — la main passe à l'aval ({aval})."
+            message_type = MESSAGE_HANDOFF
+            subject = f"Tâche « {task.titre} » terminée — la main passe à l'aval ({downstream})."
         else:
-            type_message = MESSAGE_NOTIFICATION
-            objet = f"Tâche « {task.titre} » non aboutie ({result.statut}) — aval prévenu ({aval})."
+            message_type = MESSAGE_NOTIFICATION
+            subject = (
+                f"Tâche « {task.titre} » non aboutie ({result.statut}) — "
+                f"aval prévenu ({downstream})."
+            )
         message = AgentMessage(
-            type=type_message,
-            de_agent=result.agent,
-            a_agent=DIFFUSION,
-            tache_id=task.id,
+            type=message_type,
+            from_agent=result.agent,
+            to_agent=BROADCAST,
+            task_id=task.id,
             run_id=self._journal.run_id,
-            objet=objet,
-            payload={"statut": result.statut, "debloque": list(debloquees)},
+            subject=subject,
+            payload={"statut": result.statut, "debloque": list(unblocked)},
         )
         try:
             await self._mailbox.publish(message)
         except Exception:
             return None
-        consigne_message(self._journal, message, role=result.role)
+        record_message(self._journal, message, role=result.role)
         return message
 
-    async def attend(self, tache_id: str) -> AgentMessage | None:
-        """Le message annonçant l'issue de `tache_id` — None si rien dans les délais.
+    async def wait_for(self, task_id: str) -> AgentMessage | None:
+        """The message announcing the outcome of `task_id`; None if nothing came in time.
 
-        C'est la **consommation** du handoff : la tâche aval ne démarre qu'une
-        fois le message de chaque dépendance relevé. L'attente est bornée
-        (`timeout_s`) pour qu'un message perdu ne suspende pas l'exécution.
+        This is the **consumption** of the handoff: the downstream task starts only
+        once the message of each dependency has been collected. The wait is bounded
+        (`timeout_s`) so that a lost message does not suspend the run.
         """
         try:
-            # `shield` : le time-out ne doit pas annuler la future partagée
-            # (plusieurs dépendants peuvent attendre la même annonce).
-            return await asyncio.wait_for(
-                asyncio.shield(self._future(tache_id)), self._timeout_s
-            )
+            # `shield`: the timeout must not cancel the shared future (several
+            # dependents may wait for the same announcement).
+            return await asyncio.wait_for(asyncio.shield(self._future(task_id)), self._timeout_s)
         except TimeoutError:
             return None
 
-    async def fermer(self) -> None:
-        """Arrête la relève et referme la boîte de diffusion (fin de run)."""
-        if self._lecteur is not None:
-            self._lecteur.cancel()
+    async def close(self) -> None:
+        """Stop collecting and close the broadcast mailbox (end of the run)."""
+        if self._reader is not None:
+            self._reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._lecteur
-        await self._abonnement.close()
+                await self._reader
+        await self._subscription.close()
 
-    async def _releve(self) -> None:
-        """Relève le courrier : chaque annonce reçue résout l'attente de sa tâche."""
+    async def _collect(self) -> None:
+        """Collect the mail: each announcement received resolves its task's wait."""
         try:
-            async for message in self._abonnement:
-                if not message.tache_id or message.type not in (
+            async for message in self._subscription:
+                if not message.task_id or message.type not in (
                     MESSAGE_HANDOFF,
                     MESSAGE_NOTIFICATION,
                 ):
                     continue
-                future = self._future(message.tache_id)
+                future = self._future(message.task_id)
                 if not future.done():
                     future.set_result(message)
         except Exception:
-            # Transport rompu (connexion Redis perdue…) : la relève s'arrête,
-            # les attentes retombent sur leur time-out — la boucle continue.
+            # Broken transport (lost Redis connection…): collecting stops, the waits
+            # fall back on their timeout, and the loop goes on.
             return
 
-    def _future(self, tache_id: str) -> asyncio.Future[AgentMessage]:
-        future = self._attentes.get(tache_id)
+    def _future(self, task_id: str) -> asyncio.Future[AgentMessage]:
+        future = self._pending.get(task_id)
         if future is None:
             future = asyncio.get_running_loop().create_future()
-            self._attentes[tache_id] = future
+            self._pending[task_id] = future
         return future

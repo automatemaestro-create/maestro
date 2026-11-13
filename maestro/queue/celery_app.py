@@ -1,23 +1,22 @@
-"""Application Celery de la file de tâches Maestro (ticket #41).
+"""The Celery application of Maestro's task queue (#41).
 
-Configure l'app Celery commune aux deux côtés de la file : l'**orchestrateur**
-(producteur — `maestro.queue.dispatch`) et les **workers** (consommateurs —
-`maestro.queue.worker`). Broker et backend de résultats partagent la même
-instance Redis (`REDIS_URL`, cf. infra/docker-compose.yml) — l'instance est
-mutualisée avec le pub/sub temps réel à venir, d'où une file **dédiée**
-(`FILE_TACHES`) plutôt que la file Celery par défaut.
+Configures the Celery app shared by both sides of the queue: the
+**orchestrator** (producer, `maestro.queue.dispatch`) and the **workers**
+(consumers, `maestro.queue.worker`). Broker and result backend share the same
+Redis instance (`REDIS_URL`, see infra/docker-compose.yml). That instance is
+shared with real-time Pub/Sub, hence a **dedicated** queue (`TASKS_QUEUE`) rather
+than Celery's default one.
 
-Tout passe en **JSON** (sérialisation des tâches comme des résultats) : le
-contrat de la file est le même que celui du schéma partagé
-(`packages/shared/schemas/task.schema.json`) et des `to_dict()`/`from_dict()`
-des résultats — lisible, rejouable, sans pickle.
+Everything is **JSON**, tasks and results alike: the queue's contract is the one
+of the shared schema (`packages/shared/schemas/task.schema.json`) and of the
+results' `to_dict()`/`from_dict()`, readable and replayable, without pickle.
 
-Démarrer un worker (un process = un exécutant ; sous Windows, le pool `prefork`
-n'est pas supporté par Celery — utiliser `solo` ou `threads`) :
+Starting a worker (one process is one executor; on Windows Celery does not
+support the `prefork` pool, use `solo` or `threads`):
 
     celery -A maestro.queue worker --pool=solo -n agent1@%h
 
-Plusieurs workers (terminaux) = plusieurs agents réellement en parallèle.
+Several workers (terminals) mean several agents truly in parallel.
 """
 
 from __future__ import annotations
@@ -27,15 +26,16 @@ from celery import Celery
 from maestro.config import Settings, load_settings
 from maestro.espace import nom_redis
 
-#: Nom public de la tâche Celery d'exécution — la clé du découplage : le côté
-#: orchestrateur l'envoie **par nom** (`send_task`), sans importer le code worker.
-NOM_TACHE_EXECUTER = "maestro.executer_tache"
+#: Public name of the Celery execution task, the key of the decoupling: the
+#: orchestrator sends it **by name** (`send_task`), without importing the worker
+#: code. The value is registered by the workers and travels on the queue.
+EXECUTE_TASK_NAME = "maestro.executer_tache"
 
-#: File dédiée aux tâches Maestro sur l'instance Redis mutualisée.
-FILE_TACHES = "maestro.taches"
+#: The queue dedicated to Maestro tasks on the shared Redis instance.
+TASKS_QUEUE = "maestro.taches"
 
-#: URL Redis par défaut : l'instance locale du docker-compose (infra/README.md).
-REDIS_URL_DEFAUT = "redis://localhost:6379/0"
+#: Default Redis URL: the local docker-compose instance (infra/README.md).
+DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 
 def create_app(
@@ -44,42 +44,42 @@ def create_app(
     broker_url: str | None = None,
     result_backend: str | None = None,
 ) -> Celery:
-    """Construit l'app Celery de Maestro, configurée depuis l'environnement.
+    """Build Maestro's Celery app, configured from the environment.
 
-    Par défaut, broker et backend pointent sur `REDIS_URL` (ou l'instance locale
-    du docker-compose). `broker_url`/`result_backend` permettent d'y substituer
-    un transport de test (`memory://`, `cache+memory://`) — c'est le levier des
-    tests d'intégration, qui exercent une vraie file sans dépendre d'un Redis.
+    Broker and backend point at `REDIS_URL` by default (or at the local
+    docker-compose instance). `broker_url`/`result_backend` substitute a test
+    transport (`memory://`, `cache+memory://`): that is how the integration tests
+    exercise a real queue without a Redis.
     """
     settings = settings or load_settings()
-    redis_url = settings.redis_url or REDIS_URL_DEFAUT
+    redis_url = settings.redis_url or DEFAULT_REDIS_URL
     app = Celery("maestro")
     app.conf.update(
         broker_url=broker_url or redis_url,
         result_backend=result_backend or redis_url,
-        # JSON de bout en bout — aucun pickle sur la file.
+        # JSON end to end: no pickle on the queue.
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],
         result_accept_content=["json"],
-        # La file de **l'espace de la stack** (#1164) : un worker lancé depuis une
-        # copie ne prend que les tâches de cette copie.
-        task_default_queue=nom_redis(FILE_TACHES),
-        # Le statut « démarrée » remonte au backend : l'orchestrateur voit une
-        # tâche passer en file → chez un worker → terminée (remontée de statut).
+        # The queue of **the stack's namespace** (#1164): a worker started from a
+        # working copy takes only that copy's tasks.
+        task_default_queue=nom_redis(TASKS_QUEUE),
+        # The "started" status reaches the backend: the orchestrator sees a task go
+        # from queued to a worker to done.
         task_track_started=True,
-        # Une tâche d'agent est longue (appels modèle) : chaque worker ne
-        # réserve qu'un message à la fois, pour que les tâches se répartissent
-        # réellement entre workers au lieu d'être préchargées par le premier.
+        # An agent task is long (model calls): each worker reserves one message at a
+        # time, so that tasks really spread across workers instead of being
+        # prefetched by the first one.
         worker_prefetch_multiplier=1,
         broker_connection_retry_on_startup=True,
-        # Modules importés au démarrage d'un worker (enregistre la tâche côté
-        # consommateur) ; le côté orchestrateur n'importe jamais ce module.
+        # Modules imported when a worker starts (registers the task on the consumer
+        # side); the orchestrator side never imports this module.
         include=["maestro.queue.worker"],
     )
     return app
 
 
-#: App par défaut du dépôt — celle que `celery -A maestro.queue worker` démarre
-#: et sur laquelle l'orchestrateur pousse ses tâches (configuration : REDIS_URL).
+#: The repository's default app: the one `celery -A maestro.queue worker` starts
+#: and the orchestrator pushes its tasks to (configuration: REDIS_URL).
 app = create_app()

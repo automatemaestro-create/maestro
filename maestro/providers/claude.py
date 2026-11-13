@@ -1367,7 +1367,7 @@ def _outil_courrier(on_courrier: courrier.Courrier) -> SdkMcpTool[Any]:
     - **destinataire vide** : côté transport, c'est la *diffusion* — le mot
       partirait dans toutes les boîtes, celle du relais de handoff comprise. On
       ne l'écrit pas et on demande un nom ;
-    - **destinataire réservé** : `AGENT_RELAIS` n'est pas un pair mais la boucle
+    - **destinataire réservé** : `RELAY_AGENT` n'est pas un pair mais la boucle
       elle-même (cf. `courrier.destinataire_reserve`). Même refus, autre motif —
       et le texte dit où aller à la place ;
     - **message vide** : rien n'a été soumis à personne, donc rien n'est refusé.

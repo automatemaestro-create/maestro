@@ -237,7 +237,7 @@ from maestro.equipe.manque import (
     manque_au_plan,
     role_manquant,
 )
-from maestro.messaging.handoff import HandoffRelais
+from maestro.messaging.handoff import HandoffRelay
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.rattrapage import (
@@ -682,7 +682,7 @@ class OrchestrationEngine:
         # les dépôts que l'exécuteur local relit à chaque tâche — l'application à
         # chaud ; ignorés si un exécuteur est injecté (en distribué, chaque worker
         # câble les siens — `relance` (#91) comprise, cf.
-        # maestro.queue.worker.configurer_worker).
+        # maestro.queue.worker.configure_worker).
         # La `mailbox` descend aussi (#720) : c'est la **même** que celle du relais
         # de handoff, et pour deux usages qui ne se confondent pas — la boucle y
         # annonce les fins de tâche, l'exécuteur y notifie le mot qu'un agent
@@ -1148,7 +1148,7 @@ class OrchestrationEngine:
         # Boîte de diffusion ouverte avant toute exécution (pub/sub sans rejeu :
         # aucune annonce ne peut être manquée) — None sans messagerie (#44).
         relais = (
-            await HandoffRelais.ouvrir(self._mailbox, journal)
+            await HandoffRelay.open(self._mailbox, journal)
             if self._mailbox is not None
             else None
         )
@@ -1258,7 +1258,7 @@ class OrchestrationEngine:
                 # avant l'interruption et ne repartira pas.
                 for dep in task.dependances:
                     if dep not in acquises:
-                        await relais.attend(dep)
+                        await relais.wait_for(dep)
             insatisfaites = [dep for dep in dependances if not dep.ok]
             if insatisfaites:
                 # Blocage aval (#43) : la tâche n'atteint jamais l'exécuteur — ni
@@ -1327,7 +1327,7 @@ class OrchestrationEngine:
             if relais is not None and dependants[task.id]:
                 # L'agent qui termine annonce l'issue à l'aval (handoff ou
                 # notification) — publication journalisée, résiliente.
-                await relais.annonce(task, result, dependants[task.id])
+                await relais.announce(task, result, dependants[task.id])
             return result
 
         recette: RecetteDuRun | None = None
@@ -1360,7 +1360,7 @@ class OrchestrationEngine:
                 # question : personne n'attend plus la réponse.
                 au_plafond.fermer()
             if relais is not None:
-                await relais.fermer()
+                await relais.close()
             if versionnement is not None:
                 await self._solde_le_versionnement(versionnement, projet_id, journal)
 

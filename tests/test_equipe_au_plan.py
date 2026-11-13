@@ -454,13 +454,13 @@ class _PlanScripteHesitant(_PlanScripte):
         import json
         import re
 
-        from maestro.router.classifier import CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT
+        from maestro.router.classifier import CLASSIFIER_CLOSEST_SYSTEM_PROMPT
 
         if system_prompt is not None and "Chef de projet" in system_prompt:
             return json.dumps(PLAN)
         candidats = re.findall(r"^- (\S+) \(", prompt, flags=re.MULTILINE)
         if "Agents candidats" in prompt and candidats:
-            if system_prompt == CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT:
+            if system_prompt == CLASSIFIER_CLOSEST_SYSTEM_PROMPT:
                 self.questions_plus_proche += 1
                 choisi = self._prefere if self._prefere in candidats else candidats[0]
                 return json.dumps({"agent": choisi, "confiance": 0.3})

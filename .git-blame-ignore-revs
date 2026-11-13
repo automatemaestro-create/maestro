@@ -1,0 +1,8 @@
+# Commits que `git blame` saute : les lots qui traduisent le code en anglais à comportement
+# constant (docs/55 §4, règle 5 ; chantier #1649).
+#
+# GitHub lit ce fichier de lui-même. En local : git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Un lot est mergé en squash, et son sha n'existe qu'après le merge : c'est le lot SUIVANT qui inscrit
+# celui du précédent (docs/55 §11). Une ligne de commentaire nomme le ticket, la suivante porte le sha
+# complet du commit mergé sur main.

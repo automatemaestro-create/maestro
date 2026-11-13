@@ -646,12 +646,12 @@ def test_le_worker_verifie_ses_livraisons_par_defaut(module):
     worker = importlib.import_module(module)
     agent = AgentEtVerificateur([{"bonjour.txt": "Bonjour"}])
     try:
-        worker.configurer_worker(provider_factory=lambda: agent)
-        assert isinstance(worker._executeur()._verificateur, VerificateurTaches)
-        worker.configurer_worker(verification=False)
-        assert worker._executeur()._verificateur is None
+        worker.configure_worker(provider_factory=lambda: agent)
+        assert isinstance(worker._get_executor()._verificateur, VerificateurTaches)
+        worker.configure_worker(verification=False)
+        assert worker._get_executor()._verificateur is None
     finally:
-        worker.reinitialiser_worker()
+        worker.reset_worker()
 
 
 # --------------------------------------------------------------------------- #

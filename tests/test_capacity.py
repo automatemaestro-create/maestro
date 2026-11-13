@@ -7,7 +7,7 @@ Couvre les trois critères d'acceptation, couche par couche :
    nom hors slug), liste des réglages posés et des agents désactivés,
    résolution du dépôt configuré (`MAESTRO_CAPACITE_DIR`) ;
 ② le **routage et l'exécution** : un agent désactivé est écarté des candidats
-   (`Router.route(exclus=...)`) — la tâche va au meilleur agent restant ou en
+   (`Router.route(excluded=...)`) — la tâche va au meilleur agent restant ou en
    repli « à assigner », jamais vers lui — et le réglage est relu **à chaud**
    (réactiver vaut pour la tâche suivante, sans reconstruire l'exécuteur) ;
    le plafond d'**instances** borne les exécutions simultanées d'un agent
@@ -161,7 +161,7 @@ def _task_sql_migration() -> Task:
 
 def test_route_ecarte_l_agent_exclu_au_profit_du_suivant():
     router = Router(_agents_partageant_sql())
-    decision = asyncio.run(router.route(_task_sql_migration(), exclus={"titulaire"}))
+    decision = asyncio.run(router.route(_task_sql_migration(), excluded={"titulaire"}))
     assert decision.agent is not None and decision.agent.nom == "remplacant"
 
 
@@ -174,10 +174,10 @@ def test_route_sans_exclusion_garde_le_titulaire():
 def test_route_tous_exclus_replie_a_assigner_sans_lever():
     router = Router(_agents_partageant_sql())
     decision = asyncio.run(
-        router.route(_task_sql_migration(), exclus={"titulaire", "remplacant"})
+        router.route(_task_sql_migration(), excluded={"titulaire", "remplacant"})
     )
-    assert decision.a_assigner
-    assert "désactivés" in decision.raison
+    assert decision.needs_assignment
+    assert "désactivés" in decision.reason
 
 
 def test_agent_desactive_ne_recoit_plus_de_taches(tmp_path):

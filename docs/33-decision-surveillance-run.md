@@ -52,8 +52,8 @@ avant de regarder.
 
 **Fait 1 — il existe UN seuil temporel qui rend un verdict dans tout `maestro/`, et il répond à
 l'autre question.** Le balayage des seuils du paquet en rend trois familles : un seuil de
-**confiance** de routage (`SEUIL_CONFIANCE_DEFAUT = 0.6`,
-[`router.py:40`](../maestro/router/router.py)), des plafonds de **dépense** et de **taille**
+**confiance** de routage (`DEFAULT_CONFIDENCE_THRESHOLD = 0.6`,
+[`router.py:53`](../maestro/router/router.py)), des plafonds de **dépense** et de **taille**
 (`guardrails.py`, `costs.py`, `extraction.py`), et **un seul seuil de temps produisant un jugement** :
 `SEUIL_ORPHELIN_S = 1800.0` ([`battement.py:100`](../maestro/controltower/battement.py)).
 

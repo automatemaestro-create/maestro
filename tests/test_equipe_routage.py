@@ -137,15 +137,15 @@ def test_un_ex_aequo_sans_classifieur_part_en_repli_plutot_qu_au_hasard() -> Non
         _tache("t1", "backend"), agents=equipe
     ))
 
-    assert decision.a_assigner
-    assert "premier, second" in decision.raison
+    assert decision.needs_assignment
+    assert "premier, second" in decision.reason
 
 
 def test_un_agent_desactive_ne_prend_pas_la_tache_de_son_projet() -> None:
     equipe = [_agent("titulaire", "backend"), _agent("remplacant", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=equipe, exclus={"titulaire"}
+        _tache("t1", "backend"), agents=equipe, excluded={"titulaire"}
     ))
 
     assert decision.agent is not None
@@ -158,11 +158,11 @@ def test_une_equipe_entierement_desactivee_replie_sans_lever() -> None:
     equipe = [_agent("titulaire", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=equipe, exclus={"titulaire"}
+        _tache("t1", "backend"), agents=equipe, excluded={"titulaire"}
     ))
 
-    assert decision.a_assigner
-    assert decision.non_couvertes == ()
+    assert decision.needs_assignment
+    assert decision.uncovered == ()
 
 
 def test_une_equipe_vide_n_est_pas_une_omission() -> None:
@@ -175,9 +175,9 @@ def test_une_equipe_vide_n_est_pas_une_omission() -> None:
         _tache("t1", "backend"), agents=()
     ))
 
-    assert decision.a_assigner
+    assert decision.needs_assignment
     assert decision.agent is None
-    assert "l'équipe reste à recruter" in decision.raison
+    assert "l'équipe reste à recruter" in decision.reason
 
 
 def test_les_deux_causes_d_un_repli_sans_candidat_ne_se_confondent_pas() -> None:
@@ -185,14 +185,14 @@ def test_les_deux_causes_d_un_repli_sans_candidat_ne_se_confondent_pas() -> None
     recruter un."""
     eteinte = asyncio.run(Router([_agent("cablage", "backend")]).route(
         _tache("t1", "backend"), agents=[_agent("titulaire", "backend")],
-        exclus={"titulaire"},
+        excluded={"titulaire"},
     ))
     vide = asyncio.run(Router([_agent("cablage", "backend")]).route(
         _tache("t1", "backend"), agents=()
     ))
 
-    assert "désactivés" in eteinte.raison
-    assert "désactivés" not in vide.raison
+    assert "désactivés" in eteinte.reason
+    assert "désactivés" not in vide.reason
 
 
 # --- ① Une règle, deux lecteurs ----------------------------------------------
@@ -267,8 +267,8 @@ def test_les_competences_non_couvertes_sont_le_fait_brut_du_routage() -> None:
         _tache("t1", "sql", "migration"), agents=[_agent("dev", "backend")]
     ))
 
-    assert decision.a_assigner
-    assert decision.non_couvertes == ("migration", "sql")
+    assert decision.needs_assignment
+    assert decision.uncovered == ("migration", "sql")
 
 
 def test_une_tache_prise_par_quelqu_un_ne_signale_aucun_manque() -> None:
@@ -277,7 +277,7 @@ def test_une_tache_prise_par_quelqu_un_ne_signale_aucun_manque() -> None:
     ))
 
     assert decision.agent is not None
-    assert decision.non_couvertes == ()
+    assert decision.uncovered == ()
 
 
 def test_un_ex_aequo_non_departage_n_est_pas_un_manque() -> None:
@@ -289,8 +289,8 @@ def test_un_ex_aequo_non_departage_n_est_pas_un_manque() -> None:
         _tache("t1", "backend", "api"), agents=equipe
     ))
 
-    assert decision.a_assigner
-    assert decision.non_couvertes == ()
+    assert decision.needs_assignment
+    assert decision.uncovered == ()
 
 
 def test_un_agent_desactive_ne_couvre_rien() -> None:
@@ -299,10 +299,10 @@ def test_un_agent_desactive_ne_couvre_rien() -> None:
     equipe = [_agent("titulaire", "sql"), _agent("dev", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "sql"), agents=equipe, exclus={"titulaire"}
+        _tache("t1", "sql"), agents=equipe, excluded={"titulaire"}
     ))
 
-    assert decision.non_couvertes == ("sql",)
+    assert decision.uncovered == ("sql",)
 
 
 def test_les_competences_non_couvertes_sont_triees() -> None:
