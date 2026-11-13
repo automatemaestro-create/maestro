@@ -1,5 +1,5 @@
 ---
-description: Où est passé le temps d'un run — rapport délégué à journal.sh, jugement sur les coûts attendus, tickets de correction proposés
+description: Où sont passés le temps et les tokens d'un run — rapport délégué à journal.sh, jugement sur les coûts attendus, tickets de correction proposés
 argument-hint: "[<run-id> | --tous]  (défaut : le dernier run)"
 allowed-tools: Bash(bash:*), Skill
 ---
@@ -12,7 +12,9 @@ autosuffisante, n'ouvre le doc qu'en cas de doute.
 
 **Ce que l'audit répond** : *où est passé le temps de ce run ?* — la part du mur passée sous outil,
 le poids de chaque outil et de chaque forme de commande, le pré-vol payé à chaque ticket, le temps
-mort, les commandes rejouées à l'identique.
+mort, les commandes rejouées à l'identique. Et *où sont passés ses tokens ?* (#1465) — les tours et
+les tokens de chaque ticket, leur part par famille d'appels, le poids du contexte que les résultats
+d'outils font relire, les fichiers les plus relus.
 **Ce qu'il ne répond pas** : *où en est le run ?* (`status.sh`, l'instant — §11.5), *que lui a-t-on
 refusé ?* (`journal.sh refus`, les permissions — §11.7), *que garde-t-on du journal ?*
 (`journal.sh gc`, la rétention — **il écrit, ne l'appelle jamais ici**). Et surtout : **il mesure,
@@ -30,16 +32,19 @@ propre ticket.
    arrête-toi, n'essaie pas de deviner lequel était visé.
 
    ⚠ **N'analyse pas le flux toi-même et ne recopie jamais leur recette.** Ces deux verbes portent
-   l'appariement des appels, le désescapage, les seuils et le classement des refus ; une analyse
+   l'appariement des appels, le désescapage, les seuils, le classement des refus, et pour les
+   tokens le regroupement des messages, l'imputation aux familles et le poids des résultats ; une analyse
    réécrite dans un prompt fige l'outil au jour où elle a été écrite — c'est exactement ce que #310
    a retiré de `/mr-fix` et de `/ticket-finish`, et `tests/test_ci_local.py` garde qu'aucun bloc de
    code de `.claude/**` n'en réintroduise une. Tu n'ouvres ni `<iid>.jsonl`, ni `<iid>.json`.
 
-2. **Rends les chiffres tels que le verbe les imprime.** Cite sans les reformater les trois
-   tableaux qui portent le verdict — « Où passe le temps, ticket par ticket », « Par outil » et
-   « Bash, par forme de commande ». Résume le reste (palmarès, pré-vol, temps mort, commandes
-   rejouées, appels sans retour) en n'en gardant que ce que ton jugement va utiliser : recopier
-   quatre-vingts lignes n'apprend rien de plus que le terminal où elles viennent de s'afficher.
+2. **Rends les chiffres tels que le verbe les imprime.** Cite sans les reformater les tableaux qui
+   portent le verdict — pour le temps « Où passe le temps, ticket par ticket », « Par outil » et
+   « Bash, par forme de commande » ; pour les tokens « Où passent les tokens, ticket par ticket »,
+   « Par famille d'appels » et « Le poids du contexte ». Résume le reste (palmarès, pré-vol, temps
+   mort, commandes rejouées, appels sans retour, fichiers les plus relus) en n'en gardant que ce que
+   ton jugement va utiliser : recopier cent lignes n'apprend rien de plus que le terminal où elles
+   viennent de s'afficher.
 
 3. **Le jugement — c'est ce que tu ajoutes aux deux verbes.** Sépare, poste par poste, le coût
    **attendu** de celui qui ne l'est pas. Sans cette séparation un rapport dirait « Bash est lent »
@@ -68,6 +73,17 @@ propre ticket.
      c'est cette colonne qui dit laquelle ;
    - des **appels restés sans retour** : la session s'est arrêtée pendant. Croise-les avec les
      verdicts du run avant d'en conclure quoi que ce soit.
+
+   Les **tokens** se jugent sur le contexte relu, qui fait l'essentiel du compte (mesure du
+   2026-10-09, docs/47 §2) : un poste n'est pas cher parce qu'il est fréquent, il l'est parce
+   qu'il fait relire beaucoup à chaque tour qui suit. Méritent un examen :
+   - un **fichier relu** en tête du palmarès, ou lu plusieurs fois dans une même session — un
+     module trop gros, ou une lecture entière là où une plage suffisait ;
+   - une **famille** dont la part des tokens dépasse de loin sa part du temps, ou l'inverse : la
+     première fait relire, la seconde attend ;
+   - un **contexte médian** qui grimpe d'un ticket à l'autre du même run.
+   La **sortie** n'est connue qu'au bilan de chaque session : un « ? » dit une session coupée avant
+   la fin, jamais une session qui n'a rien écrit.
 
    Les **refus** se jugent avec leur famille, jamais sur leur nombre : un « blocage dur `.claude/` »
    ou un « refus voulu » n'appelle **aucun** geste, et lui écrire une règle serait du travail perdu.

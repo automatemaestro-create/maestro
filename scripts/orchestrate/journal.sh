@@ -134,6 +134,11 @@ SEUIL_SILENCE="${MAESTRO_ORCHESTRATE_SILENCE:-900}"
 SEUIL_TROU_AUDIT="${MAESTRO_AUDIT_TROU:-120}"
 [ "$SEUIL_TROU_AUDIT" -ge 1 ] 2>/dev/null || SEUIL_TROU_AUDIT=120
 
+# Ce qu'une image pèse dans le contexte, pour le poids des résultats d'outils (#1465) : le plafond
+# d'une capture d'écran, autour de 1 600 tokens. Son base64, compté comme du texte, la ferait peser
+# cent fois plus — et la relecture visuelle passerait pour le premier poste d'un run.
+IMAGE_TOK_AUDIT=1600
+
 ok()     { printf '  ✓ %s\n' "$*"; }
 ignore() { printf '  ~ %s\n' "$*"; }
 
@@ -169,9 +174,12 @@ Lecture seule ; les instruire au cas par cas se fait en docs/10-workflow-git.md 
 
 `audit` dit OÙ PASSE LE TEMPS d'un run : part du mur passée sous outil (ticket par ticket, puis
 pour le run), détail par outil et par forme de commande Bash, palmarès des appels les plus longs,
-pré-vol de /ticket-start, temps mort et commandes rejouées DANS UN MÊME TICKET. Sans argument : le
-dernier run qui porte un flux — un run EN COURS se lit comme un autre. Hors ligne, lecture seule.
-Il MESURE, il ne corrige pas : chaque remède est son propre ticket (portée de #495).
+pré-vol de /ticket-start, temps mort et commandes rejouées DANS UN MÊME TICKET. Puis OÙ PASSENT
+SES TOKENS (#1465) : tours et tokens par ticket (entrée, cache relu, cache écrit, sortie), leur part
+par famille d'appels, le poids du contexte que les résultats d'outils font relire, les fichiers les
+plus relus. Sans argument : le dernier run qui porte un flux — un run EN COURS se lit comme un
+autre. Hors ligne, lecture seule. Il MESURE, il ne corrige pas : chaque remède est son propre ticket
+(portée de #495).
 
   MAESTRO_AUDIT_TROU   délai au-delà duquel un temps hors appel est nommé (défaut 120 s)
 
@@ -947,8 +955,9 @@ commande_origine() {
 # deux lignes différentes et se retrouvent par leur identifiant.
 #
 # Deux passes, comme `refus` et pour la même raison : l'extraction connaît la FORME du flux et rend
-# des faits en TSV, l'agrégation connaît la QUESTION et ne relit plus le JSON. Les huit sections du
-# rapport se servent toutes des mêmes faits, au lieu de parcourir le flux huit fois.
+# des faits en TSV, l'agrégation connaît la QUESTION et ne relit plus le JSON. Les douze sections du
+# rapport — huit pour le temps, quatre pour les tokens (#1465) — se servent toutes des mêmes faits,
+# au lieu de parcourir le flux douze fois.
 #
 # Ce que l'audit MESURE, et qu'une lecture ticket par ticket rate :
 #   - la PART du mur passée sous outil — 38 % sur un ticket, 89 % sur un autre : un run lent n'a pas
@@ -1051,6 +1060,36 @@ function _cible(seg,   i, n, p, best, bestp, cles) {
   return best
 }
 
+# _num : l'entier qui suit `"key":` dans `s`, 0 si la clé est absente. Le guillemet ouvrant fait
+# partie du motif : `"input_tokens":` ne se trouve ni dans `"cache_creation_input_tokens":` ni
+# dans `"ephemeral_5m_input_tokens":`, où la clé est précédée d'un souligné.
+function _num(s, key,   p, r, c) {
+  p = index(s, "\"" key "\":")
+  if (p == 0) return 0
+  p += length(key) + 3
+  r = ""
+  while ((c = substr(s, p, 1)) ~ /[0-9]/) { r = r c; p++ }
+  return r + 0
+}
+
+# _taille : ce qu'un résultat d'outil fait relire, en tokens, à raison de quatre caractères par
+# token. Une image est comptée au forfait IMAGE_TOK, le plafond d'une capture d'écran : compter son
+# base64 la ferait peser cent fois ce que le modèle en lit.
+function _taille(seg,   n, p, q, img, reste) {
+  n = length(seg); img = 0; reste = seg
+  while ((p = index(reste, "\"data\":\"")) > 0) {
+    q = index(substr(reste, p + 8), "\"")
+    if (q == 0) break
+    n -= q - 1
+    reste = substr(reste, p + 8 + q)
+  }
+  reste = seg
+  while ((p = index(reste, "\"type\":\"image\"")) > 0) { img++; reste = substr(reste, p + 14) }
+  return int(n / 4) + img * IMAGE_TOK
+}
+
+BEGIN { IMAGE_TOK = (IMAGE_TOK == "") ? 1600 : IMAGE_TOK; CIBLE_MAX = 400 }
+
 {
   # `rate_limit_event` : télémétrie que le CLI place en tête de CHAQUE flux (#203). Elle ne dit rien
   # de ce que la session fait — l'écarter ici évite qu'elle compte pour un événement de travail.
@@ -1058,6 +1097,53 @@ function _cible(seg,   i, n, p, best, bestp, cles) {
 
   t = _epoch(_key($0, "timestamp"))
   if (t >= 0) { if (premier == 0) premier = t; dernier = t; nb++ }
+
+  # --- l'usage d'un message (#1465) ----------------------------------------------------------------
+  # Un message du modèle arrive en PLUSIEURS événements, un par bloc (réflexion, texte, chaque
+  # `tool_use`), et chacun porte l'usage du message entier : on regroupe par `message.id` et on
+  # garde le plus grand relevé de chaque compteur, sans quoi un message de trois blocs compterait
+  # trois fois son contexte. Un événement qui porte un `parent_tool_use_id` vient d'un SOUS-AGENT :
+  # il a son propre contexte, et le mêler aux tours de la session ferait relire à celle-ci ce
+  # qu'elle n'a jamais lu. On le compte à part.
+  #
+  # Rien ne s'ancre en tête de ligne : deux événements peuvent partager une ligne quand leurs
+  # écritures se croisent (mesuré sur le flux de #1399, un `thinking_tokens` collé à un `assistant`).
+  #
+  # La SORTIE d'un message, elle, n'est pas dans ses événements : le compteur qu'ils portent est
+  # celui du début de la génération, quelques tokens (mesuré sur #1400 : 1,4k sur toute la session,
+  # contre 83k à son bilan). Elle ne se lit qu'au bilan `result` d'un passage de la session — par
+  # ticket, donc, jamais par tour ni par famille.
+  sous = (index($0, "\"parent_tool_use_id\":\"toolu_") > 0)
+  if (!sous && index($0, "\"subtype\":\"compact_boundary\"") > 0) bornes[++nb_bornes] = n_main
+  mid = ""
+  if (index($0, "\"type\":\"assistant\"") > 0 && index($0, "\"role\":\"assistant\"") > 0 \
+      && (p = index($0, "\"id\":\"msg_")) > 0) {
+    mid = _jval($0, p + 6)
+    if (!(mid in M_vu)) {
+      M_vu[mid] = 1; M_sous[mid] = sous
+      if (sous) S_ordre[++n_sous] = mid; else M_ordre[++n_main] = mid
+    }
+    if ((p = index($0, "\"usage\":{")) > 0) {
+      u = substr($0, p)
+      v = _num(u, "input_tokens");                if (v > M_in[mid])  M_in[mid] = v
+      v = _num(u, "cache_read_input_tokens");     if (v > M_cr[mid])  M_cr[mid] = v
+      v = _num(u, "cache_creation_input_tokens"); if (v > M_cw[mid])  M_cw[mid] = v
+    }
+  } else if (index($0, "\"type\":\"result\"") > 0 && index($0, "\"type\":\"user\"") == 0 \
+             && (p = index($0, "\"usage\":{")) > 0) {
+    # La garde sur `user` : le double `tool_use_result` d'un résultat est du JSON en clair, et ce
+    # qu'un outil rend (un sous-agent, son usage) pourrait y porter les deux clés.
+    # Un bilan par passage : une session reprise, ou réveillée par une tâche de fond, en rend
+    # plusieurs, chacun pour ce qu'il a fait (mesuré sur #1520 : un bilan à zéro, puis le vrai).
+    # Le détail par itération, dans l'usage, porte ses propres `output_tokens` : on retire le
+    # tableau (ses objets n'en contiennent aucun autre) plutôt que de couper l'usage à sa clé,
+    # l'ordre des clés n'étant pas stable — le bilan à zéro de #1520 ouvre sur un autre champ.
+    u = substr($0, p)
+    if ((q = index(u, "\"iterations\":[")) > 0 && (r = index(substr(u, q), "]")) > 0)
+      u = substr(u, 1, q - 1) substr(u, q + r)
+    B_out += _num(u, "output_tokens"); nb_bilans++
+  }
+
   if (index($0, "toolu_") == 0) next
 
   # Un `tool_use_id` ne suffit pas à faire un résultat : les lignes `"type":"system"` de suivi d'une
@@ -1084,6 +1170,23 @@ function _cible(seg,   i, n, p, best, bestp, cles) {
     pos = abs + 6
   }
 
+  # Le message proprement dit, pour peser un résultat : le CLI recopie ce que l'outil a rendu dans
+  # `tool_use_result`, à côté du message, et ce double n'est jamais montré au modèle. Le message
+  # s'arrête donc à la première des clés qui le suivent dans l'événement.
+  # Seule une ligne de résultat de la session en a besoin : le calcul copie la ligne.
+  nres = 0; fin_msg = 0
+  if (est_res && !sous) {
+    deb_msg = index($0, "\"message\":"); if (deb_msg == 0) deb_msg = 1
+    fin_msg = length($0) + 1
+    apres_msg = substr($0, deb_msg)
+    n = split("parent_tool_use_id,tool_use_result,session_id", apres, ",")
+    for (i = 1; i <= n; i++) {
+      q = index(apres_msg, "\"" apres[i] "\":")
+      if (q > 0 && deb_msg + q - 1 < fin_msg) fin_msg = deb_msg + q - 1
+    }
+    for (k = 1; k <= nocc; k++) if (O_role[k] == "res" && O_pos[k] < fin_msg) nres++
+  }
+
   # 2e passage : un `use` prend son nom et sa cible dans la FENÊTRE qui va de son identifiant au
   # suivant — la borne évite qu'un bloc emprunte le `name` de son voisin quand plusieurs appels
   # partent dans le même message (appels parallèles).
@@ -1094,6 +1197,20 @@ function _cible(seg,   i, n, p, best, bestp, cles) {
         printf "A\t%s\t%s\t%s\t%.3f\t%.3f\t%.3f\t%s\n", run, iid, U_nom[id], U_t[id], t, t - U_t[id], U_cible[id]
         vu[id] = 1
       }
+      # Le poids d'un résultat (#1465) : sa taille, et le rang du tour qui l'a reçu — les tours qui
+      # le relisent ne seront connus qu'à la fin du flux. Un seul résultat dans le message (les
+      # 1 485 du run 20261008-080648) : il pèse le message entier, quel que soit l'ordre des clés
+      # de son bloc. Plusieurs : chacun pèse sa fenêtre, d'un identifiant au suivant.
+      if (est_res && !sous && O_pos[k] < fin_msg && id in U_nom && !U_sous[id] && !(id in R_vu)) {
+        R_vu[id] = 1
+        if (nres == 1) seg = substr($0, deb_msg, fin_msg - deb_msg)
+        else {
+          fin = fin_msg
+          for (j = k + 1; j <= nocc; j++) if (O_pos[j] < fin_msg) { fin = O_pos[j]; break }
+          seg = substr($0, O_pos[k], fin - O_pos[k])
+        }
+        R_id[++n_res] = id; R_tok[n_res] = _taille(seg); R_rang[n_res] = n_main
+      }
       continue
     }
     if (!est_use) continue
@@ -1103,6 +1220,8 @@ function _cible(seg,   i, n, p, best, bestp, cles) {
     if (nom == "") continue
     U_nom[id] = nom; U_cible[id] = _cible(seg); U_t[id] = t
     ordre[++rang] = id
+    # Le message qui porte l'appel : c'est à lui que l'usage se prend, partagé entre ses appels.
+    if (mid != "" && !(id in U_mid)) { U_mid[id] = mid; U_sous[id] = sous; M_nuses[mid]++ }
   }
 }
 
@@ -1114,6 +1233,45 @@ END {
     if (!(id in vu)) printf "O\t%s\t%s\t%s\t%.3f\t%s\n", run, iid, U_nom[id], U_t[id], U_cible[id]
   }
   if (nb > 0) printf "W\t%s\t%s\t%.3f\t%.3f\t%d\n", run, iid, premier, dernier, nb
+
+  # --- les faits de l'usage (#1465) -----------------------------------------------------------------
+  # M : un tour de la session — un message du modèle et son contexte.
+  for (m = 1; m <= n_main; m++) {
+    mid = M_ordre[m]
+    printf "M\t%s\t%s\t%d\t%d\t%d\t%d\n", run, iid, m, M_in[mid], M_cr[mid], M_cw[mid]
+  }
+  # C : la part d'un tour imputée à un appel. Un message qui appelle trois outils de front leur
+  # partage son usage à parts égales ; un message sans appel (la réponse, la réflexion seule) le
+  # garde sous le nom « - ». La cible est tronquée : elle ne sert qu'à nommer la famille.
+  for (k = 1; k <= rang; k++) {
+    id = ordre[k]
+    if (!(id in U_mid) || U_sous[id] || (id in C_vu)) continue
+    C_vu[id] = 1; mid = U_mid[id]; n = M_nuses[mid]
+    printf "C\t%s\t%s\t%s\t%.3f\t%.3f\t%.3f\t%s\n", run, iid, U_nom[id],
+           M_in[mid]/n, M_cr[mid]/n, M_cw[mid]/n, substr(U_cible[id], 1, CIBLE_MAX)
+  }
+  for (m = 1; m <= n_main; m++) {
+    mid = M_ordre[m]
+    if (M_nuses[mid] == 0)
+      printf "C\t%s\t%s\t-\t%d\t%d\t%d\t\n", run, iid, M_in[mid], M_cr[mid], M_cw[mid]
+  }
+  # B : la sortie de la session, au total de ses bilans — rien si elle n'en a rendu aucun.
+  if (nb_bilans > 0) printf "B\t%s\t%s\t%d\t%.0f\n", run, iid, nb_bilans, B_out
+  # R : un résultat d'outil et les tours qui le relisent — tous ceux qui le suivent, jusqu'à la
+  # fin du flux ou jusqu'à la compaction suivante, qui retire du contexte ce qui la précède.
+  for (r = 1; r <= n_res; r++) {
+    fin = n_main
+    for (b = 1; b <= nb_bornes; b++) if (bornes[b] >= R_rang[r]) { fin = bornes[b]; break }
+    id = R_id[r]
+    printf "R\t%s\t%s\t%d\t%d\t%s\t%s\n", run, iid, R_tok[r], fin - R_rang[r], U_nom[id],
+           substr(U_cible[id], 1, CIBLE_MAX)
+  }
+  # S : les sous-agents du ticket, en un seul total — ils ne relisent pas le contexte principal.
+  if (n_sous > 0) {
+    si = 0; scr = 0; scw = 0
+    for (s = 1; s <= n_sous; s++) { mid = S_ordre[s]; si += M_in[mid]; scr += M_cr[mid]; scw += M_cw[mid] }
+    printf "S\t%s\t%s\t%d\t%.0f\t%.0f\t%.0f\n", run, iid, n_sous, si, scr, scw
+  }
 }
 AWK
 )
@@ -1182,15 +1340,134 @@ function _court(s, n) {
 # préfixer presque tous ses appels (règle #234 — la cible doit rester dans le worktree), si bien que
 # le garder rangerait tout le run sous une seule forme, « cd », et ne dirait plus rien de personne.
 # Même raison que le maillon d'une chaîne compté pour lui-même dans `refus`.
-function _forme(c,   p, n, w) {
+function _forme(c,   n, w) {
+  c = _sans_cd(c)
+  n = split(c, w, /[ \t]+/)
+  if (n == 0) return "(sans commande)"
+  return (n >= 2) ? w[1] " " w[2] : w[1]
+}
+
+# _sans_cd : la commande privée de son `cd "<worktree>" &&` de préfixe — partagé par `_forme` et
+# `_famille`, qui doivent voir la même commande.
+function _sans_cd(c,   p) {
   sub(/^[ \t]+/, "", c)
   if (substr(c, 1, 4) == "cd \"") { p = index(substr(c, 5), "\""); if (p > 0) c = substr(c, 5+p) }
   else if (substr(c, 1, 3) == "cd ") { p = index(c, "&&"); if (p > 0) c = substr(c, p) }
   sub(/^[ \t]*&&[ \t]*/, "", c)
   sub(/^[ \t]+/, "", c)
-  n = split(c, w, /[ \t]+/)
-  if (n == 0) return "(sans commande)"
-  return (n >= 2) ? w[1] " " w[2] : w[1]
+  return c
+}
+
+# _famille : la famille d'un appel, d'après son outil et, pour une commande, ses premiers mots.
+#
+# Les familles sont choisies sur ce qu'on CHERCHE à réduire quand on lit le coût d'un ticket
+# (docs/47) : lire du code, écrire, le banc, la stack réelle et ses exercices, la relecture visuelle
+# et le navigateur, les tests et le filet local, la forge et git, l'attente, les sous-agents, le
+# web. Elles servent au temps et
+# aux tokens à la fois — une seule définition, sans quoi les deux colonnes d'une même ligne ne
+# parleraient pas de la même chose.
+#
+# Une commande se range sur son PREMIER MOT, une fois le `cd` de préfixe et les affectations
+# (`env VAR=…`) écartés : `grep -n x scripts/gitlab/lib.sh` est une lecture, pas un appel à la
+# forge. Une lecture le reste, même du journal du banc : ce qui se paie alors est ce qui est lu.
+# Viennent ensuite deux exceptions au premier mot, parce que leur coût tient à ce qu'elles
+# déclenchent et non au verbe qui les lance : une commande qui nomme le banc (le démarrer,
+# l'attendre) et l'attente d'un pipeline.
+function _famille(nom, c,   n, w1, w2, w3) {
+  if (nom == "-") return "sans appel (réponse, réflexion)"
+  if (nom == "Read" || nom == "Grep" || nom == "Glob" || nom == "LS" || nom == "NotebookRead")
+    return "lecture de code"
+  if (nom == "Edit" || nom == "Write" || nom == "MultiEdit" || nom == "NotebookEdit") return "écriture"
+  if (nom == "Agent" || nom == "Task") return "sous-agent"
+  if (nom == "WebSearch" || nom == "WebFetch") return "web"
+  if (nom == "Monitor" || nom == "BashOutput" || nom == "TaskOutput" || nom == "ScheduleWakeup")
+    return "attente"
+  if (substr(nom, 1, 5) == "mcp__")
+    return (index(nom, "chrome") || index(nom, "browser") || index(nom, "playwright")) \
+      ? "relecture visuelle et navigateur" : "autre outil"
+  if (nom != "Bash" && nom != "PowerShell") return "autre outil"
+
+  n = _mots(c)
+  w1 = (n >= 1) ? MOTS[1] : ""; w2 = (n >= 2) ? MOTS[2] : ""; w3 = (n >= 3) ? MOTS[3] : ""
+  if (w1 ~ /^(cat|head|tail|sed|grep|rg|find|ls|wc|nl|less|awk|tree|stat|diff|file)$/)
+    return "lecture de code"
+  if (index(c, "banc") > 0) return "banc"
+  if (w1 == "sleep" || index(c, "pipeline-wait") > 0) return "attente"
+  if (w1 == "git" || w1 == "gh") return "forge et git"
+  if (w1 ~ /^(pytest|npm|npx|ruff|shellcheck|vitest|tsc)$/) return "tests et filet local"
+  if (index(w1, "python") > 0 && index(c, "pytest") > 0) return "tests et filet local"
+  # Le script qu'une session s'écrit pour attendre un processus (mesuré le 2026-10-08 : `node
+  # .maestro/session/attente-run.js`, 24 min en trois appels) attend, quoi qu'il lance.
+  if ((w1 == "node" || index(w1, "python") > 0) && (index(w2, "attente") > 0 || index(w2, "attendre") > 0))
+    return "attente"
+  if (w1 == "node" && index(w2, "captures") > 0) return "relecture visuelle et navigateur"
+  if (index(w1, "python") > 0 && w2 == "-m" && substr(w3, 1, 7) == "maestro") return "stack et exercice"
+  if (w1 == "bash" || w1 == "sh") {
+    if (index(w2, "scripts/ci/") > 0) return "tests et filet local"
+    if (index(w2, "relecture-visuelle") > 0 || index(w2, "scripts/design/") > 0 \
+        || index(w2, "scripts/presentation/") > 0) return "relecture visuelle et navigateur"
+    if (index(w2, "scripts/gitlab/") > 0 || index(w2, "scripts/github/") > 0 \
+        || index(w2, "scripts/git/") > 0) return "forge et git"
+    if (index(w2, "scripts/controltower/") > 0 || index(w2, "desktop.sh") > 0) return "stack et exercice"
+  }
+  return "autre commande"
+}
+
+# _mots : les mots d'une commande, sans son `cd` de préfixe ni ses affectations de tête, rangés
+# dans le tableau global MOTS — un tableau local passé d'une fonction à l'autre n'est pas garanti
+# partout, et le job pytest tourne sous `mawk`.
+function _mots(c,   t, n, i, m) {
+  n = split(_sans_cd(c), t, /[ \t]+/)
+  m = 0
+  for (i = 1; i <= n; i++) {
+    if (t[i] == "") continue
+    if (m == 0 && (t[i] == "env" || t[i] ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) continue
+    MOTS[++m] = t[i]
+  }
+  return m
+}
+
+# _tok : un nombre de tokens, lisible. Jamais `%d` au-delà du millier : le `mawk` de l'image du job
+# pytest le borne à 32 bits, et le poids d'un run dépasse le milliard.
+function _tok(n) {
+  if (n < 1000) return sprintf("%.0f", n)
+  if (n < 1e6) return sprintf("%.1fk", n / 1e3)
+  if (n < 1e9) return sprintf("%.1fM", n / 1e6)
+  return sprintf("%.2fG", n / 1e9)
+}
+
+# _chemin : un fichier lu, nommé comme le dépôt le nomme — sans préfixe de worktree, et avec des
+# `/` : le même fichier arrive en « E:/… » d'une session et en « E:\… » d'une autre.
+function _chemin(s,   r, p) {
+  s = _sans_worktree(s); r = ""
+  while ((p = index(s, "\\")) > 0) { r = r substr(s, 1, p - 1) "/"; s = substr(s, p + 1) }
+  return r s
+}
+
+# _qs, _mediane : le contexte médian d'un tour. Un tri rapide plutôt que par insertion : `--tous`
+# porte des dizaines de milliers de tours.
+function _qs(A, lo, hi,   i, j, p, x) {
+  if (lo >= hi) return
+  p = A[int((lo + hi) / 2)]; i = lo; j = hi
+  while (i <= j) {
+    while (A[i] < p) i++
+    while (A[j] > p) j--
+    if (i <= j) { x = A[i]; A[i] = A[j]; A[j] = x; i++; j-- }
+  }
+  _qs(A, lo, j); _qs(A, i, hi)
+}
+function _mediane(A, n) {
+  if (n == 0) return 0
+  _qs(A, 1, n)
+  return (n % 2) ? A[(n + 1) / 2] : (A[n / 2] + A[n / 2 + 1]) / 2
+}
+
+# _ticket : inscrit un ticket rencontré par n'importe lequel de ses faits.
+function _ticket(run, i,   k) {
+  k = run SUBSEP i
+  if (!(k in vus)) { vus[k] = 1; tickets[++nb_tickets] = k; K_run[k] = run; K_iid[k] = i }
+  if (!(run in runs_vus)) { runs_vus[run] = 1; nb_runs++ }
+  return k
 }
 
 # _prevol : le geste de démarrage que cet appel exécute, vide s'il n'en est pas un. Les quatre
@@ -1213,8 +1490,13 @@ function _etiq(cle) {
   return (nb_runs > 1) ? K_run[cle] "/#" K_iid[cle] : "#" K_iid[cle]
 }
 # La colonne suit l'étiquette : la caler sur le pire cas laisserait treize blancs par ligne sur
-# l'usage courant, qui ne porte qu'un run.
-function _larg() { return (nb_runs > 1) ? 21 : 8 }
+# l'usage courant, qui ne porte qu'un run. Elle s'élargit pour la plus longue — « #1401-mrfix »,
+# la session de `/mr-fix` d'un ticket, en déborderait sinon et décalerait toute sa ligne.
+function _larg(   ti, l, m) {
+  m = (nb_runs > 1) ? 21 : 8
+  for (ti = 1; ti <= nb_tickets; ti++) { l = length(_etiq(tickets[ti])); if (l > m) m = l }
+  return m
+}
 
 BEGIN { FS = "\t"; SEUIL_TROU = (SEUIL_TROU == "") ? 120 : SEUIL_TROU }
 
@@ -1225,6 +1507,7 @@ $1 == "A" {
   k = iid SUBSEP (++par_ticket[iid])
   D[k] = d; F[k] = f
   t_outil[nom] += duree; n_outil[nom]++
+  FA_t[_famille(nom, cible)] += duree
   cumul_ticket[iid] += duree
   if (nom == "Bash") {
     fo = _forme(cible)
@@ -1266,6 +1549,50 @@ $1 == "A" {
 }
 
 $1 == "O" { orphelins[++nb_orph] = $3 "\t" $4 "\t" $6 }
+
+# --- l'usage (#1465) : faits M, C, B, R, S de l'extraction ------------------------------------------
+# M — un tour : son contexte, l'entrée, le cache relu et le cache écrit — ce que le modèle relit à
+# chaque appel.
+$1 == "M" {
+  k = _ticket($2, $3)
+  T_tours[k]++; T_in[k] += $5; T_cr[k] += $6; T_cw[k] += $7
+  ctx = $5 + $6 + $7
+  CTX[k SUBSEP T_tours[k]] = ctx; CTX_RUN[++n_ctx] = ctx; tot_ctx += ctx
+  if (ctx > T_pic[k]) T_pic[k] = ctx
+  if (ctx > pic_run) pic_run = ctx
+  run_in += $5; run_cr += $6; run_cw += $7
+}
+
+# C — la part d'un tour imputée à un appel, rangée dans la famille de l'appel.
+$1 == "C" {
+  k = _ticket($2, $3)
+  fam = _famille($4, $8)
+  tok = $5 + $6 + $7
+  F_tok[fam] += tok; F_cr[fam] += $6; F_cw[fam] += $7; tot_tok_c += tok
+  if ($4 != "-") F_n[fam]++; else F_n[fam] += 0
+  if (!((k SUBSEP fam) in FT_tok)) FT_fams[k] = FT_fams[k] (FT_fams[k] == "" ? "" : "\n") fam
+  FT_tok[k SUBSEP fam] += tok; FT_tot[k] += tok
+}
+
+# B — la sortie d'une session, au total de ses bilans.
+$1 == "B" { k = _ticket($2, $3); T_bilan[k] = 1; T_out[k] += $5; run_out += $5 }
+
+# R — un résultat d'outil : sa taille et les tours qui le relisent. Leur produit est son POIDS.
+$1 == "R" {
+  _ticket($2, $3)
+  fam = _famille($6, $7); poids = $4 * $5
+  P_poids[fam] += poids; P_n[fam]++; P_taille[fam] += $4; tot_poids += poids
+  if ($6 == "Read" && $7 != "") {
+    f = _chemin($7)
+    FI_poids[f] += poids; FI_n[f]++; FI_taille[f] += $4
+  }
+}
+
+# S — les sous-agents d'un ticket, en un total.
+$1 == "S" {
+  k = _ticket($2, $3)
+  S_msg[k] += $4; S_tok[k] += $5 + $6 + $7; sous_msg += $4; sous_tok += $5 + $6 + $7
+}
 
 $1 == "W" {
   iid = $2 SUBSEP $3
@@ -1432,8 +1759,132 @@ END {
     printf "\n"
   }
 
+  if (n_ctx > 0) _tokens()
+
   printf "  Ce que ceci ne dit pas : ce qui a été REFUSÉ à une session — `journal.sh refus`.\n"
   printf "\n"
+}
+
+# _tokens : les quatre sections de l'usage (#1465) — où passent les tokens, par ticket puis par
+# famille, le poids du contexte que les résultats d'outils font relire, les fichiers les plus relus.
+# Elles ne s'impriment que si le flux porte l'usage de ses messages : un flux sans `message.id` (les
+# journaux fabriqués d'avant, un flux coupé avant son premier tour) n'a rien à en dire.
+function _tokens(   L, F_TOK, ti, k, i, n, med, rangf, best, bf, cles, nc, pris3, fams, nf,
+                    ligne, x, part, j, bj, sans_bilan) {
+  L = _larg()
+  F_TOK = "   %-" L "s %6d %8s %11s %12s %8s   %s · %s\n"
+
+  # --- 9. les tokens, ticket par ticket -------------------------------------------------------
+  # L'en-tête est écrit tel quel : `printf` compte des octets sous LC_ALL=C, et « entrée »,
+  # « écrit », « médian » en ont un de plus que de caractères — la colonne glisserait d'autant.
+  printf "── Où passent les tokens, ticket par ticket — un message compté une fois\n"
+  printf "   %-" L "s  tours   entrée  cache relu  cache écrit   sortie   contexte médian · pic\n", "ticket"
+  sans_bilan = 0
+  for (ti = 1; ti <= nb_tickets; ti++) {
+    k = tickets[ti]
+    if (!(k in T_tours)) continue
+    n = T_tours[k]
+    split("", B)
+    for (i = 1; i <= n; i++) B[i] = CTX[k SUBSEP i]
+    med = _mediane(B, n)
+    if (!(k in T_bilan)) sans_bilan++
+    printf F_TOK, _etiq(k), n, _tok(T_in[k]), _tok(T_cr[k]), _tok(T_cw[k]),
+           (k in T_bilan ? _tok(T_out[k]) : "?"), _tok(med), _tok(T_pic[k])
+  }
+  if (nb_tickets > 1)
+    printf F_TOK, (nb_runs > 1 ? "TOTAL" : "run"), n_ctx, _tok(run_in), _tok(run_cr), _tok(run_cw),
+           _tok(run_out) (sans_bilan > 0 ? "+?" : ""), _tok(_mediane(CTX_RUN, n_ctx)), _tok(pic_run)
+  printf "\n"
+  printf "   Un tour est un message du modèle ; son contexte, l'entrée et le cache relu ou écrit\n"
+  printf "   qu'il relit. Les événements d'un même message sont regroupés par `message.id`.\n"
+  printf "   La sortie n'est connue qu'au bilan `result` d'une session"
+  if (sans_bilan > 0) printf " : « ? », la session n'en a rendu aucun"
+  printf ".\n"
+  if (sous_msg > 0)
+    printf "   Sous-agents, comptés à part : %d message(s), %s tokens de contexte — hors contexte principal.\n",
+           sous_msg, _tok(sous_tok)
+  printf "\n"
+
+  # --- 10. par famille d'appels ---------------------------------------------------------------
+  # La part se compte sur le CONTEXTE des tours : la sortie n'est connue que par session.
+  printf "── Par famille d'appels — le contexte d'un tour imputé aux outils qu'il appelle\n"
+  printf "   %10s %6s %11s  cache écrit %7s %10s   %s\n", "tokens", "part", "cache relu", "appels",
+         "temps", "famille"
+  nc = 0
+  for (x in F_tok) cles[++nc] = x
+  for (rangf = 1; rangf <= nc; rangf++) {
+    best = -1; bf = ""
+    for (i = 1; i <= nc; i++) if (!(cles[i] in pris3) && F_tok[cles[i]] > best) { best = F_tok[cles[i]]; bf = cles[i] }
+    if (bf == "") break
+    pris3[bf] = 1
+    printf "   %10s %5.0f%% %11s %12s %7d %10s   %s\n", _tok(F_tok[bf]),
+           (tot_tok_c > 0 ? 100 * F_tok[bf] / tot_tok_c : 0), _tok(F_cr[bf]), _tok(F_cw[bf]),
+           F_n[bf], (bf in FA_t ? _duree(FA_t[bf]) : "-"), bf
+  }
+  printf "\n"
+  printf "   Un tour qui appelle trois outils de front leur partage son contexte à parts égales.\n"
+  printf "   « temps » est la somme des appels de la famille, sous-agents compris — « Par outil ».\n"
+  if (nb_tickets > 1) {
+    printf "\n   Par ticket, les trois premières familles :\n"
+    for (ti = 1; ti <= nb_tickets; ti++) {
+      k = tickets[ti]
+      if (!(k in FT_tot) || FT_tot[k] <= 0) continue
+      nf = split(FT_fams[k], fams, "\n")
+      ligne = ""
+      split("", pris3)
+      for (j = 1; j <= 3 && j <= nf; j++) {
+        best = -1; bj = 0
+        for (i = 1; i <= nf; i++) if (!(i in pris3) && FT_tok[k SUBSEP fams[i]] > best) { best = FT_tok[k SUBSEP fams[i]]; bj = i }
+        if (bj == 0) break
+        pris3[bj] = 1
+        part = 100 * FT_tok[k SUBSEP fams[bj]] / FT_tot[k]
+        ligne = ligne (ligne == "" ? "" : " · ") fams[bj] " " sprintf("%.0f%%", part)
+      }
+      printf "   %-" L "s %s\n", _etiq(k), ligne
+    }
+  }
+  printf "\n"
+
+  # --- 11. le poids du contexte ---------------------------------------------------------------
+  # Le poids d'un résultat est sa taille multipliée par les tours qui le suivent : chacun le relit.
+  # C'est ce poids, et non la taille seule, qui dit ce qu'une lecture coûte — un fichier lu au
+  # premier tour d'une session de deux cents tours pèse deux cents fois sa taille.
+  if (tot_poids > 0) {
+    printf "── Le poids du contexte — un résultat d'outil, relu à chaque tour qui le suit\n"
+    printf "   %10s %6s %7s %10s   %s\n", "poids", "part", "appels", "taille", "famille"
+    nc = 0; split("", cles); split("", pris3)
+    for (x in P_poids) cles[++nc] = x
+    for (rangf = 1; rangf <= nc; rangf++) {
+      best = -1; bf = ""
+      for (i = 1; i <= nc; i++) if (!(cles[i] in pris3) && P_poids[cles[i]] > best) { best = P_poids[cles[i]]; bf = cles[i] }
+      if (bf == "") break
+      pris3[bf] = 1
+      printf "   %10s %5.0f%% %7d %10s   %s\n", _tok(P_poids[bf]), 100 * P_poids[bf] / tot_poids,
+             P_n[bf], _tok(P_taille[bf]), bf
+    }
+    printf "\n"
+    printf "   %s tokens relus du fait des résultats d'outils, soit %.0f%% du contexte des tours.\n",
+           _tok(tot_poids), (tot_ctx > 0 ? 100 * tot_poids / tot_ctx : 0)
+    printf "   Taille ≈ caractères / 4 ; une image compte %d tokens, quelle que soit sa taille.\n", IMAGE_TOK
+    printf "\n"
+
+    # --- 12. les fichiers les plus relus ------------------------------------------------------
+    nc = 0; split("", cles); split("", pris3)
+    for (x in FI_poids) cles[++nc] = x
+    if (nc > 0) {
+      printf "── Les fichiers les plus relus — lus par Read, au poids qu'ils font relire\n"
+      printf "   %10s %6s %8s %10s   %s\n", "poids", "part", "lectures", "taille", "fichier"
+      for (rangf = 1; rangf <= 10 && rangf <= nc; rangf++) {
+        best = -1; bf = ""
+        for (i = 1; i <= nc; i++) if (!(cles[i] in pris3) && FI_poids[cles[i]] > best) { best = FI_poids[cles[i]]; bf = cles[i] }
+        if (bf == "") break
+        pris3[bf] = 1
+        printf "   %10s %5.0f%% %8d %10s   %s\n", _tok(FI_poids[bf]), 100 * FI_poids[bf] / tot_poids,
+               FI_n[bf], _tok(FI_taille[bf]), _court(bf, 70)
+      }
+      printf "\n"
+    }
+  }
 }
 
 # _classe : un tableau temps + un tableau comptes, du plus coûteux au moins coûteux.
@@ -1514,9 +1965,13 @@ commande_audit() {
       id="$(basename "$f")"; id="${id%%.*}"
       case " $vus " in *" $id_run/$id "*) continue ;; esac
       vus="$vus $id_run/$id"
+      # LC_ALL=C : une ligne de flux pèse jusqu'à des centaines de Ko, et un awk en locale UTF-8 y
+      # paie chaque `substr`/`index` en caractères ; les octets suffisent à tout ce qu'on y cherche.
       case "$f" in
-        *.gz) brut="$brut$(gzip -dc "$f" 2>/dev/null | awk -v run="$id_run" -v iid="$id" "$AWK_AUDIT_EXTRAIT")"$'\n' ;;
-        *)    brut="$brut$(awk -v run="$id_run" -v iid="$id" "$AWK_AUDIT_EXTRAIT" "$f")"$'\n' ;;
+        *.gz) brut="$brut$(gzip -dc "$f" 2>/dev/null | LC_ALL=C awk -v run="$id_run" -v iid="$id" \
+                -v IMAGE_TOK="$IMAGE_TOK_AUDIT" "$AWK_AUDIT_EXTRAIT")"$'\n' ;;
+        *)    brut="$brut$(LC_ALL=C awk -v run="$id_run" -v iid="$id" -v IMAGE_TOK="$IMAGE_TOK_AUDIT" \
+                "$AWK_AUDIT_EXTRAIT" "$f")"$'\n' ;;
       esac
     done
   done <<EOF
@@ -1529,7 +1984,8 @@ EOF
   esac
 
   # LC_ALL=C : les comptes et les tris se font sur des octets, comme partout ailleurs dans ce dépôt.
-  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v SEUIL_TROU="$SEUIL_TROU_AUDIT" "$AWK_AUDIT_AGREGE"
+  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v SEUIL_TROU="$SEUIL_TROU_AUDIT" \
+    -v IMAGE_TOK="$IMAGE_TOK_AUDIT" "$AWK_AUDIT_AGREGE"
   return 0
 }
 

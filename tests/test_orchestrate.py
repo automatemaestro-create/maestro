@@ -7206,6 +7206,252 @@ def test_audit_ne_touche_a_rien_et_mesure_un_run_encore_en_vol(depot: Depot) -> 
     assert {p: p.stat().st_mtime_ns for p in fichiers} == empreinte, "l'audit n'écrit rien"
 
 
+# Où passent les tokens (#1465)
+# -------------------------------------------------------------------------------------
+# Le flux de ces tests a la FORME d'un vrai flux `stream-json`, relevée sur le run
+# 20261008-080648 : un message du modèle arrive en plusieurs événements, un par bloc, qui portent
+# chacun l'usage du message entier ; `parent_tool_use_id` vaut null pour la session et l'appel
+# parent pour un sous-agent ; le CLI recopie ce qu'un outil a rendu dans `tool_use_result`, hors
+# du message ; la sortie n'est écrite qu'au bilan `result`. Les nombres sont choisis pour que
+# l'arrondi à la centaine de tokens absorbe l'enveloppe JSON d'un résultat : ce qu'on vérifie est
+# la règle de mesure, pas le gabarit du flux.
+
+
+def _usage(entree: int, relu: int, ecrit: int) -> dict:
+    """L'usage que porte chaque événement d'un message — sa sortie n'y est jamais la bonne."""
+    return {"input_tokens": entree, "cache_creation_input_tokens": ecrit,
+            "cache_read_input_tokens": relu, "output_tokens": 3}
+
+
+def _tour(instant: float, message: str, usage: dict, *blocs: dict,
+          parent: str | None = None) -> str:
+    """Un message du modèle, en autant d'événements que de blocs : chacun répète l'usage entier."""
+    blocs = blocs or ({"type": "text", "text": "Fait."},)
+    return "".join(_jsonl({
+        "type": "assistant",
+        "message": {"model": "claude-opus-5-5", "id": message, "type": "message",
+                    "role": "assistant", "content": [bloc], "usage": usage},
+        "parent_tool_use_id": parent, "session_id": "s", "timestamp": _t(instant + rang / 1000),
+    }) for rang, bloc in enumerate(blocs))
+
+
+def _outil(ident: str, outil: str, cible: str) -> dict:
+    """Un bloc `tool_use`, à poser dans un `_tour`."""
+    return {"type": "tool_use", "id": ident, "name": outil, "input": _entree(outil, cible)}
+
+
+def _resultat(instant: float, ident: str, contenu: str | list, *, double: str = "") -> str:
+    """Un résultat d'outil, suivi du double `tool_use_result` que le modèle ne lit jamais."""
+    return _jsonl({
+        "type": "user",
+        "message": {"role": "user", "content": [
+            {"tool_use_id": ident, "type": "tool_result", "content": contenu}]},
+        "parent_tool_use_id": None, "session_id": "s", "timestamp": _t(instant),
+        "tool_use_result": {"stdout": double},
+    })
+
+
+def _bilan(sortie: int) -> str:
+    """Le bilan `result` d'un passage. Le détail par itération PRÉCÈDE ici la sortie du passage :
+    l'ordre des clés n'est pas stable, et ce détail porte ses propres `output_tokens`."""
+    return _jsonl({"type": "result", "subtype": "success", "session_id": "s", "usage": {
+        "iterations": [{"input_tokens": 2, "output_tokens": 99}],
+        "output_tokens_details": {"thinking_tokens": 1}, "input_tokens": 0,
+        "output_tokens": sortie}})
+
+
+def _image() -> list:
+    """Une capture d'écran : 100 000 caractères de base64, que le modèle lit comme une image."""
+    return [{"type": "image", "source": {"type": "base64", "data": "A" * 100_000,
+                                         "media_type": "image/png"}}]
+
+
+def _run_jetons(depot: Depot, run_id: str) -> None:
+    """Deux tickets dont chaque chiffre du relevé se calcule à la main.
+
+    #601 : trois tours de contexte 120 010, 132 010 (deux appels de front, qui se le partagent)
+    et 151 010 (une réponse sans appel) ; un sous-agent de 50 005, hors contexte ; deux bilans,
+    l'un à zéro (un réveil par tâche de fond), l'autre à 7 777. Le même fichier est lu deux fois,
+    sous ses deux séparateurs.
+    #602 : quatre tours de 60 010 (le banc), 61 010 (une capture), 70 510 (une écriture) et
+    80 510 (un push) ; aucun bilan — la session a été coupée.
+    """
+    gros = "E:/P/.claude/worktrees/601-jetons/maestro/gros.py"
+    _journal_audit(depot, run_id, {
+        601: (
+            _tour(0, "msg_601a", _usage(10, 100_000, 20_000),
+                  {"type": "thinking", "thinking": ""}, _outil("toolu_a", "Read", gros))
+            + _resultat(5, "toolu_a", "x" * 40_000, double="x" * 40_000)
+            + _tour(6, "msg_601b", _usage(10, 130_000, 2_000),
+                    _outil("toolu_b", "Bash", "bash scripts/ci/local.sh"),
+                    _outil("toolu_c", "Read", gros.replace("/", "\\")))
+            + _resultat(66, "toolu_b", "y" * 4_000)
+            + _resultat(67, "toolu_c", "x" * 40_000)
+            + _tour(70, "msg_601s", _usage(5, 0, 50_000), parent="toolu_zz")
+            + _tour(80, "msg_601c", _usage(10, 150_000, 1_000))
+            + _bilan(0) + _bilan(7_777)
+        ),
+        602: (
+            _tour(0, "msg_602a", _usage(10, 50_000, 10_000), _outil(
+                "toolu_d", "Bash", 'cd "E:/P/.claude/worktrees/602-jetons" && env '
+                "PYTHONUNBUFFERED=1 bash scripts/controltower/start.sh --etat-banc --rejouer=S2"))
+            + _resultat(500, "toolu_d", "z" * 2_000)
+            + _tour(501, "msg_602b", _usage(10, 60_000, 1_000), _outil(
+                "toolu_e", "mcp__chrome-maestro__browser_take_screenshot", "accueil.png"))
+            + _resultat(503, "toolu_e", _image())
+            + _tour(504, "msg_602c", _usage(10, 70_000, 500),
+                    _outil("toolu_f", "Edit", "maestro/gros.py"))
+            + _resultat(505, "toolu_f", "ok")
+            + _tour(506, "msg_602d", _usage(10, 80_000, 500), _outil("toolu_g", "Bash", "git push"))
+            + _resultat(510, "toolu_g", "ok")
+        ),
+    })
+
+
+# « <ticket> <tours> <entrée> <cache relu> <cache écrit> <sortie> <médian> · <pic> »
+_JETONS = re.compile(
+    r"^\s+(?P<t>#\d+|run|TOTAL)\s+(?P<tours>\d+)\s+(?P<entree>\S+)\s+(?P<relu>\S+)"
+    r"\s+(?P<ecrit>\S+)\s+(?P<sortie>\S+)\s+(?P<mediane>\S+) · (?P<pic>\S+)\s*$"
+)
+# « <tokens> <part>% <cache relu> <cache écrit> <appels> <temps> <famille> »
+_FAMILLE = re.compile(
+    r"^\s+(?P<tokens>\S+)\s+(?P<part>\d+)%\s+\S+\s+\S+\s+(?P<appels>\d+)\s+(?:-|\S+(?: min)?)"
+    r"\s+(?P<famille>.+?)\s*$"
+)
+# « <poids> <part>% <appels ou lectures> <taille> <famille ou fichier> »
+_POIDS = re.compile(
+    r"^\s+(?P<poids>\S+)\s+(?P<part>\d+)%\s+(?P<n>\d+)\s+(?P<taille>\S+)\s+(?P<nom>.+?)\s*$"
+)
+
+
+def _table(sortie: str, titre: str, motif: re.Pattern, cle: str) -> dict[str, dict]:
+    """Une table du relevé : sa clé -> les colonnes que `motif` nomme."""
+    trouves = {}
+    for ligne in _section_audit(sortie, titre):
+        m = motif.match(ligne)
+        if m:
+            trouves[m[cle]] = {k: v for k, v in m.groupdict().items() if k != cle}
+    return trouves
+
+
+def test_audit_rend_les_tokens_par_ticket_et_leur_part_par_famille(depot: Depot) -> None:
+    """Le relevé de #1465 sur un flux figé : tours, entrée, cache relu, cache écrit et sortie,
+    par ticket et pour le run, puis la part de chaque famille d'appels.
+
+    Chaque règle de la méthode a son témoin dans le flux, et sa faute aurait un chiffre :
+    - un message en deux événements compté DEUX fois ferait 4 tours à #601 et 480,0k de cache relu ;
+    - le sous-agent mêlé à la session lui ferait 4 tours et 73,0k de cache écrit ;
+    - la sortie lue sur les événements vaudrait 9 (trois fois 3), et le détail par itération du
+      bilan, lu à sa place, 99 — la vraie est 7 777, au total des deux passages ;
+    - l'usage du tour à deux appels donné entier à chacun ferait passer la lecture de 28 à 37 %.
+    """
+    _run_jetons(depot, "jetons")
+    r = depot.lance("journal.sh", "audit", "jetons")
+    assert r.returncode == 0, r.stderr
+
+    tickets = _table(r.stdout, "Où passent les tokens", _JETONS, "t")
+    assert tickets == {
+        "#601": {"tours": "3", "entree": "30", "relu": "380.0k", "ecrit": "23.0k",
+                 "sortie": "7.8k", "mediane": "132.0k", "pic": "151.0k"},
+        "#602": {"tours": "4", "entree": "40", "relu": "260.0k", "ecrit": "12.0k",
+                 "sortie": "?", "mediane": "65.8k", "pic": "80.5k"},
+        "run": {"tours": "7", "entree": "70", "relu": "640.0k", "ecrit": "35.0k",
+                "sortie": "7.8k+?", "mediane": "80.5k", "pic": "151.0k"},
+    }, r.stdout
+    assert "Sous-agents, comptés à part : 1 message(s), 50.0k" in r.stdout, r.stdout
+
+    familles = _table(r.stdout, "Par famille d'appels", _FAMILLE, "famille")
+    assert {f: (c["tokens"], c["part"]) for f, c in familles.items()} == {
+        "lecture de code": ("186.0k", "28"),
+        "sans appel (réponse, réflexion)": ("151.0k", "22"),
+        "forge et git": ("80.5k", "12"),
+        "écriture": ("70.5k", "10"),
+        "tests et filet local": ("66.0k", "10"),
+        "relecture visuelle et navigateur": ("61.0k", "9"),
+        "banc": ("60.0k", "9"),
+    }, r.stdout
+    assert familles["lecture de code"]["appels"] == "2", "deux `Read`, dont un parti de front"
+    assert list(familles)[0] == "lecture de code", "la table se lit du plus lourd au plus léger"
+
+    par_ticket = {ligne.split()[0]: ligne.split(None, 1)[1]
+                  for ligne in _section_audit(r.stdout, "Par famille d'appels")
+                  if ligne.strip().startswith("#")}
+    assert par_ticket == {
+        "#601": "lecture de code 46% · sans appel (réponse, réflexion) 37%"
+                " · tests et filet local 16%",
+        "#602": "forge et git 30% · écriture 26% · relecture visuelle et navigateur 22%",
+    }, r.stdout
+
+
+def test_audit_rend_le_poids_du_contexte_et_les_fichiers_les_plus_relus(depot: Depot) -> None:
+    """Le poids d'un résultat d'outil est sa taille multipliée par les tours qui le suivent.
+
+    Trois fautes possibles, et le chiffre que chacune rendrait :
+    - compter le double `tool_use_result` porterait la première lecture de `gros.py` à 20k
+      tokens, et la lecture de code à 50,1k ;
+    - compter le base64 d'une capture comme du texte (25k tokens, relus deux fois) mettrait la
+      relecture visuelle à 50k, en tête du relevé, devant la lecture de code ;
+    - ne pas reconnaître un fichier sous ses deux séparateurs le couperait en deux lignes d'une
+      lecture chacune.
+    Le relevé est décrit en docs/10 §11.12 : chacune de ses sections y est nommée.
+    """
+    _run_jetons(depot, "poids")
+    r = depot.lance("journal.sh", "audit", "poids")
+    assert r.returncode == 0, r.stderr
+
+    poids = _table(r.stdout, "Le poids du contexte", _POIDS, "nom")
+    assert {f: (c["poids"], c["n"]) for f, c in poids.items()} == {
+        "lecture de code": ("30.1k", "2"),        # 10 024 × 2 tours + 10 024 × 1
+        "relecture visuelle et navigateur": ("3.3k", "1"),   # (1 600 + enveloppe) × 2
+        "banc": ("1.6k", "1"),                    # 524 × 3
+        "tests et filet local": ("1.0k", "1"),    # 1 024 × 1
+        "écriture": ("25", "1"),
+        "forge et git": ("0", "1"),               # le dernier résultat : aucun tour ne le relit
+    }, r.stdout
+    assert poids["lecture de code"]["part"] == "84", r.stdout
+    assert "36.0k tokens relus du fait des résultats d'outils" in r.stdout, r.stdout
+
+    fichiers = _table(r.stdout, "Les fichiers les plus relus", _POIDS, "nom")
+    assert fichiers == {
+        "maestro/gros.py": {"poids": "30.1k", "part": "84", "n": "2", "taille": "20.0k"},
+    }, f"une écriture n'est pas une lecture, et un fichier se nomme sans son worktree :\n{r.stdout}"
+
+    doc = DOC_WORKFLOW.read_text(encoding="utf-8")
+    section = doc.split("### 11.12", 1)[1].split("### 11.13", 1)[0]
+    titres = [ligne[3:].split(" — ", 1)[0] for ligne in r.stdout.splitlines()
+              if ligne.startswith("── ")]
+    for titre in titres[titres.index("Où passent les tokens, ticket par ticket"):]:
+        assert titre in section, f"docs/10 §11.12 ne décrit pas la section « {titre} »"
+
+
+def test_audit_ne_fait_rien_relire_par_dela_une_compaction(depot: Depot) -> None:
+    """Une compaction retire du contexte tout ce qui la précède : un résultat reçu avant elle
+    n'est relu que par les tours qui la précèdent aussi.
+
+    Sans la borne, la première lecture pèserait trois tours (30,1k) au lieu d'un, et la seconde,
+    reçue au tour même de la compaction, un tour de plus au lieu d'aucun.
+    """
+    flux = (
+        _tour(0, "msg_a", _usage(1, 100_000, 1_000), _outil("toolu_a", "Read", "maestro/gros.py"))
+        + _resultat(1, "toolu_a", "x" * 40_000)
+        + _tour(2, "msg_b", _usage(1, 120_000, 1_000),
+                _outil("toolu_b", "Read", "maestro/petit.py"))
+        + _resultat(3, "toolu_b", "p" * 4_000)
+        + _jsonl({"type": "system", "subtype": "compact_boundary", "session_id": "s",
+                  "parent_tool_use_id": None, "timestamp": _t(4)})
+        + _tour(5, "msg_c", _usage(1, 20_000, 5_000))
+        + _tour(6, "msg_d", _usage(1, 25_000, 1_000))
+    )
+    _journal_audit(depot, "compaction", {603: flux})
+    r = depot.lance("journal.sh", "audit", "compaction")
+    assert r.returncode == 0, r.stderr
+
+    fichiers = _table(r.stdout, "Les fichiers les plus relus", _POIDS, "nom")
+    assert {f: c["poids"] for f, c in fichiers.items()} == {
+        "maestro/gros.py": "10.0k", "maestro/petit.py": "0",
+    }, r.stdout
+
+
 # =====================================================================================
 # L'audit se JOUE en fin de run, au lieu de s'inviter (#530)
 # =====================================================================================

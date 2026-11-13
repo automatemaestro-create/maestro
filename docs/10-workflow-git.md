@@ -8675,6 +8675,62 @@ quelques secondes ne serait qu'un second flux brut.
 principal**, y compris appelé depuis un worktree (§11.7) : c'est là que le pilote écrit, et y
 renvoyer par un chemin absolu ferait refuser la lecture.
 
+**Où passent les tokens (#1465).** Le temps ne dit pas le coût. Ce sont les tokens qui font le
+coût et vident la fenêtre de 5 h, et le contexte relu à chaque tour en fait l'essentiel
+([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md) §2). Quatre sections suivent celles
+du temps, tirées du même flux, et c'est ce relevé qui juge les tickets du chantier « coût d'un
+ticket » :
+
+| Section | Ce qu'elle montre |
+| --- | --- |
+| **Où passent les tokens, ticket par ticket** | les tours de chaque session et ses tokens (entrée, cache relu, cache écrit, sortie), le contexte médian d'un tour et son pic, puis le run |
+| **Par famille d'appels** | la part du contexte qui revient à chaque famille, à côté du temps de ses appels ; puis les trois premières familles de chaque ticket |
+| **Le poids du contexte** | ce que chaque famille fait relire : la taille d'un résultat d'outil multipliée par les tours qui le suivent, puisque chacun le relit |
+| **Les fichiers les plus relus** | le même poids, fichier par fichier, pour ce que `Read` a lu |
+
+Les familles sont lecture de code, écriture, banc, stack et exercice, relecture visuelle et
+navigateur, tests et filet local, forge et git, attente, sous-agent, web, autre. Elles ont **une
+seule définition**, la même pour le temps et pour les tokens : une commande se range sur son premier
+mot une fois le `cd` et les `env VAR=…` de tête écartés. Une lecture le reste, même du journal du
+banc. Une commande qui nomme le banc, ou qui attend un pipeline, se range sur ce qu'elle déclenche.
+
+La méthode est celle de la mesure du 2026-10-09, et ses trois règles ne se défont pas :
+
+* **Un message se compte une fois.** Il arrive en plusieurs événements, un par bloc, et chacun
+  répète l'usage du message entier : on regroupe par `message.id`.
+* **Un sous-agent est compté à part.** Un événement qui porte un `parent_tool_use_id` vient d'un
+  contexte qui n'est pas celui de la session ; ses tokens se disent sur une ligne à part.
+* **L'usage d'un tour va aux outils qu'il appelle**, à parts égales s'il en appelle plusieurs de
+  front. Un tour sans appel reste « sans appel ».
+
+Trois choses viennent du flux lui-même :
+
+* **La sortie n'est pas dans les événements d'un message.** Leur compteur est celui du début de la
+  génération : 1,4k sur toute la session de #1400, contre 83k à son bilan. Elle se lit au bilan
+  `result` de chaque passage, donc par ticket et jamais par famille ; sans bilan, elle vaut « ? ».
+* **Un résultat se pèse sur le message seul.** Le CLI recopie ce que l'outil a rendu dans
+  `tool_use_result`, que le modèle ne lit pas. Une **image** compte au forfait de 1 600 tokens,
+  jamais la longueur de son base64, qui la ferait peser cent fois plus.
+* **Une compaction borne les tours** qui relisent ce qui la précède.
+
+**Rejoué sur le réel le 2026-11-13.** Sur `20261008-080648`, l'entrée, le cache relu et le cache
+écrit de chaque session qui a rendu son bilan concordent **au token près** avec ce bilan, ce qui
+prouve le regroupement par message et l'écart des sous-agents. Sur `20260927-105454`, #1177 et #1182,
+qui ont des sous-agents, concordent de même. Face à la mesure du 2026-10-09 :
+
+| Mesure du 2026-10-09 | Relevé |
+| --- | --- |
+| pic du contexte à 535k le 08/10, à 965k le 27/09 | 535,1k et 967,0k |
+| lecture de code : 82 % du poids des résultats le 08/10 | 88 % |
+| lecture de code : 64 % fin septembre (runs du 26/09 et du 27/09) | 85 % le 27/09 ; le run du 26/09 n'est plus au journal |
+| en tête, `orchestration.py`, `executor.py`, `chat.py` | trois des quatre premiers fichiers du 27/09 (6 %, 6 %, 3 %) |
+| banc : 7,6 % des tokens le 08/10, de 2 à 16 % selon le ticket | 4 % du contexte ; 13 % sur #1399 |
+| contexte médian d'un tour de 200 à 375k | 247k le 08/10, 456k le 27/09 |
+
+Les deux derniers écarts ne se départagent pas : la mesure de la main n'a laissé que sa méthode, pas
+la liste des commandes qu'elle rangeait au banc. Le relevé, lui, écrit sa règle. Il coûte à l'audit
+un quart de temps de plus : 13,4 s contre 10,7 s sur les dix-sept sessions du 27/09.
+
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), sur un journal **jeté**
 > aux horodatages posés à la main — un audit qui se jugerait sur un vrai run mesurerait la machine
 > et non le code. Cinq questions : l'appariement par `tool_use_id` **y compris entrelacé** (trois
@@ -8696,6 +8752,14 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > section vide ou un parser mal branché rendraient un ✓ sur une question jamais posée. Le second
 > tient le **total** du titre (20 s de rejeu réel, là où la clé d'avant en annonçait 1,8 min) et sa
 > **portée** écrite dans l'intitulé.
+>
+> Trois de plus pour #1465, sur un flux qui a la **forme** d'un vrai flux `stream-json` : messages
+> en plusieurs événements, sous-agent, double `tool_use_result`, bilans dont le détail par itération
+> précède la sortie. Chaque règle de la méthode y a un témoin dont la faute rendrait un chiffre
+> nommé dans le test. Le premier tient les tours et les tokens par ticket et pour le run, et la part
+> de chaque famille. Le second tient le poids du contexte et les fichiers relus (une capture comptée
+> au forfait, un fichier reconnu sous ses deux séparateurs), puis vérifie que cette section-ci
+> nomme chacune des quatre sections. Le troisième tient la borne d'une compaction.
 >
 > S'y ajoutent, pour l'écriture de fin de run (#530), trois questions posées **sur un vrai run** du
 > harnais et non sur un journal fabriqué — c'est le pilote qu'elles gardent, pas l'audit : le
