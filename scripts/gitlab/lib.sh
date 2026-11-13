@@ -3989,8 +3989,8 @@ gl_begin() {
 
 # --- Dates & time tracking ----------------------------------------------------------------------
 # Renseignés automatiquement le long du cycle de vie (voir docs/10-workflow-git.md §3.3) :
-#   • date de début + échéance  → posées par /ticket-start (gl_start_dates), avec l'INSTANT du
-#                                 démarrage (`demarre`, #1244)
+#   • date de début + échéance  → posées par /ticket-start (`begin` → st_begin ; unitaire :
+#                                 gl_start_dates), avec l'INSTANT du démarrage (`demarre`, #1244)
 #   • temps passé               → MESURÉ puis loggé par /ticket-finish (gl_log_time_mesure), jamais
 #                                 estimé
 # Tout passe par la mutation workItemUpdate, comme gl_set_workflow (widgets startAndDueDate / timeTracking).
@@ -7511,7 +7511,10 @@ st_begin() {
 
   # Les dates ensuite : leur échec ne défait pas le démarrage (le ticket est pris, c'est ce qui
   # compte pour l'anti-collision), mais il se dit — un début non posé fausserait /ticket-finish.
-  gh_set_dates "$iid" "$start" "$due" >/dev/null ||
+  # L'instant UTC borne la mesure du temps passé (#1244) : sans lui, elle se borne au JOUR de
+  # `debut` et compte en entier un tour ouvert la veille (#1661). gh_set_dates ne le pose que s'il
+  # manque, donc un second démarrage garde celui d'origine.
+  gh_set_dates "$iid" "$start" "$due" "$(date -u +%FT%TZ)" >/dev/null ||
     printf '  ~ dates non posées sur #%s (suivi maison hors d'\''atteinte) — à reposer à la main.\n' "$iid" >&2
 
   printf '#%s démarré : assigné=%s, cycle de vie « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
