@@ -2937,6 +2937,56 @@ def test_le_demarrage_consigne_son_instant_une_seule_fois(depot: Depot) -> None:
     assert "demarre=2026-09-23T08:00:00Z" not in corps
 
 
+def regles_begin(*lignes_du_suivi: str) -> list[dict]:
+    """Ce que `begin 400` lit : le contexte du ticket, la pose du Status, puis le fil du suivi."""
+    return [
+        regle_owner("À faire", [], iid="400"),
+        regle_pose_status(),
+        regle_commentaires(commentaire(ID_SUIVI, suivi(*lignes_du_suivi))),
+    ]
+
+
+def suivi_ecrit_par(depot: Depot) -> str:
+    """Le corps du suivi tel que la dernière écriture l'a laissé (un PATCH sur son commentaire)."""
+    ecrits = [e for e in ecritures(depot) if f"issues/comments/{ID_SUIVI}" in e]
+    assert ecrits, f"le suivi n'a pas été écrit — {ecritures(depot)}"
+    return corps_ecrit(ecrits[-1])
+
+
+def test_begin_consigne_l_instant_du_demarrage_en_utc(depot: Depot) -> None:
+    """`/ticket-start` passe par `begin`, et c'est lui qui doit poser `demarre` (#1661).
+
+    Sans lui, `log-time-mesure` se borne au JOUR de `debut`, et un tour ouvert la veille au soir
+    qui finit après minuit compte en entier : 10 h 32 au lieu de 35 min sur #1650. L'instant est
+    comparé à l'horloge UTC du test, ce qui prend aussi une heure locale suffixée d'un « Z ».
+    """
+    depot.pose_etat(graphql=regles_begin("debut=2026-09-23"), rest=[])
+    avant = datetime.now(UTC).replace(microsecond=0)
+
+    acheve = depot.lib("begin", "400")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    apres = datetime.now(UTC)
+
+    corps = suivi_ecrit_par(depot)
+    instants = re.findall(r"^demarre=(\S+)$", corps, re.MULTILINE)
+    assert len(instants) == 1, corps
+    pose = datetime.strptime(instants[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert avant <= pose <= apres, f"{pose} hors de [{avant}, {apres}] : pas l'instant UTC"
+
+
+def test_un_second_begin_ne_deplace_pas_l_instant_du_demarrage(depot: Depot) -> None:
+    """Rejouer `/ticket-start` sur un ticket déjà démarré garde la borne d'origine de la mesure."""
+    depot.pose_etat(
+        graphql=regles_begin("debut=2026-09-20", "demarre=2026-09-20T07:00:00Z"), rest=[]
+    )
+
+    acheve = depot.lib("begin", "400")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    corps = suivi_ecrit_par(depot)
+    assert re.findall(r"^demarre=(\S+)$", corps, re.MULTILINE) == ["2026-09-20T07:00:00Z"], corps
+
+
 def etape_12_de_ticket_finish() -> str:
     """L'étape du temps passé dans `/ticket-finish`, espaces normalisés."""
     texte = " ".join(
