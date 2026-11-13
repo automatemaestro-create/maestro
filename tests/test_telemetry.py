@@ -1,27 +1,26 @@
-"""Tests de la télémétrie (ticket #8) : mesure d'usage, collecteur, rédaction, journal.
+"""Tests of telemetry (#8): usage measure, collector, redaction, journal.
 
-Aucun appel réseau. Couvre les critères d'acceptation : le coût par étape est
-mesuré, agrégé et traçable (run_id) ; les textes journalisés sont expurgés des
-secrets (valeurs d'environnement comme motifs de clés).
+No network call. Covers the acceptance criteria: the cost of each step is
+measured, aggregated and traceable (run_id); journaled texts are redacted of
+secrets (environment values as well as key patterns).
 
-Couvre aussi le suivi de coût par tâche (#49, tests différés → #59) :
+Also covers the per-task cost tracking (#49):
 
-- **comptabilité par tâche** (#55) : `RunCost.from_journal` attribue chaque
-  ligne du journal à sa tâche (annexes comprises), une seule fois — le total
-  retombe sur `RunJournal.usage_totale` — et s'exporte en JSON (la forme de
-  l'API, #57) ;
-- **plafond de dépense** (#56) : `SpendingCap` relit ce grand livre à chaque
-  vérification (aucun compteur parallèle) et lève `SpendingCapExceeded` au
-  dépassement — relayé par `report_usage` chez l'appelant du fournisseur, la
-  mesure fautive restant comptée (le coût reste visible).
+- **per-task accounting** (#55): `RunCost.from_journal` assigns each line of the
+  journal to its task (side steps included), exactly once (the total matches
+  `RunJournal.usage_totale`), and exports to JSON (the shape of the API, #57);
+- **spending cap** (#56): `SpendingCap` rereads that ledger at each check (no
+  parallel counter) and raises `SpendingCapExceeded` when the cap is crossed,
+  relayed by `report_usage` to the caller of the provider, the faulty measure
+  staying counted (the cost stays visible).
 
-Et, depuis #989, **le temps** que ces deux objets rapportent :
+And **the time** these two objects report (#989):
 
-- la durée d'une tâche est son **temps de travail** — l'horloge moins ses
-  attentes (arbitrage #584, créneau d'agent #86, atelier de projet #839), qui se
-  lisent à part et gardent chacune son nom ;
-- la durée d'un **run** est l'**union** des intervalles de ses étapes, jamais
-  leur somme : deux tâches menées de front ne l'occupent qu'une fois.
+- the duration of a task is its **working time**: the wall clock minus its
+  waits (approval #584, agent slot #86, project workshop #839), which read apart
+  and each keep their own name;
+- the duration of a **run** is the **union** of the intervals of its steps, never
+  their sum: two tasks run side by side occupy it only once.
 """
 
 import json
@@ -47,136 +46,136 @@ from maestro.telemetry import (
     union_ms,
 )
 
-# --- StepUsage : agrégation ------------------------------------------------------------
+# --- StepUsage: aggregation ------------------------------------------------------------
 
 
-def test_fusion_somme_les_compteurs_et_unit_les_outils():
+def test_merge_adds_up_counters_and_joins_tools():
     a = StepUsage(
-        appels=1, tokens_entree=100, tokens_sortie=10, cout_usd=0.01,
-        duree_api_ms=1000, tours=2, outils=("Read", "Write"),
+        calls=1, input_tokens=100, output_tokens=10, cost_usd=0.01,
+        api_duration_ms=1000, turns=2, tools=("Read", "Write"),
     )
     b = StepUsage(
-        appels=1, tokens_entree=50, tokens_sortie=5, cout_usd=0.02,
-        duree_api_ms=500, tours=1, outils=("Write", "Bash"),
+        calls=1, input_tokens=50, output_tokens=5, cost_usd=0.02,
+        api_duration_ms=500, turns=1, tools=("Write", "Bash"),
     )
-    total = a.fusion(b)
+    total = a.merge(b)
 
-    assert total.appels == 2
-    assert total.tokens_entree == 150
-    assert total.tokens_sortie == 15
-    assert total.tokens_total == 165
-    assert total.cout_usd == pytest.approx(0.03)
-    assert total.duree_api_ms == 1500
-    assert total.tours == 3
-    assert total.outils == ("Read", "Write", "Bash")
-
-
-def test_fusion_preserve_l_absence_de_cout():
-    # Un fournisseur qui ne rapporte pas de coût laisse cout_usd à None (inconnu ≠ 0).
-    assert StepUsage().fusion(StepUsage()).cout_usd is None
-    assert StepUsage(cout_usd=0.5).fusion(StepUsage()).cout_usd == 0.5
+    assert total.calls == 2
+    assert total.input_tokens == 150
+    assert total.output_tokens == 15
+    assert total.total_tokens == 165
+    assert total.cost_usd == pytest.approx(0.03)
+    assert total.api_duration_ms == 1500
+    assert total.turns == 3
+    assert total.tools == ("Read", "Write", "Bash")
 
 
-def test_avec_duree_pose_la_duree_horloge():
-    usage = StepUsage(appels=1).avec_duree(1234)
-    assert usage.duree_ms == 1234
-    assert usage.appels == 1  # le reste de la mesure est préservé
+def test_merge_keeps_an_absent_cost():
+    # A provider that reports no cost leaves cost_usd at None (unknown ≠ 0).
+    assert StepUsage().merge(StepUsage()).cost_usd is None
+    assert StepUsage(cost_usd=0.5).merge(StepUsage()).cost_usd == 0.5
 
 
-def test_resume_court_avec_et_sans_usage_fournisseur():
-    sans = StepUsage().avec_duree(2000).resume_court()
-    assert "aucun usage fournisseur rapporté" in sans
-    assert "2.0 s" in sans
-
-    avec = StepUsage(appels=1, tokens_entree=10, tokens_sortie=5, cout_usd=0.0123)
-    resume = avec.avec_duree(500).resume_court()
-    assert "15 tokens" in resume
-    assert "0.0123 $" in resume
-
-    # Sans coût rapporté, le résumé l'affiche comme inconnu, pas comme nul.
-    assert "coût n/d" in StepUsage(appels=1).resume_court()
+def test_with_duration_sets_the_wall_clock_duration():
+    usage = StepUsage(calls=1).with_duration(1234)
+    assert usage.duration_ms == 1234
+    assert usage.calls == 1  # the rest of the measure is kept
 
 
-# --- Collecteur de contexte ------------------------------------------------------------
+def test_short_summary_with_and_without_provider_usage():
+    without_usage = StepUsage().with_duration(2000).short_summary()
+    assert "aucun usage fournisseur rapporté" in without_usage
+    assert "2.0 s" in without_usage
+
+    with_usage = StepUsage(calls=1, input_tokens=10, output_tokens=5, cost_usd=0.0123)
+    summary = with_usage.with_duration(500).short_summary()
+    assert "15 tokens" in summary
+    assert "0.0123 $" in summary
+
+    # Without a reported cost, the summary shows it as unknown, not as zero.
+    assert "coût n/d" in StepUsage(calls=1).short_summary()
 
 
-def test_report_usage_hors_collecteur_est_sans_effet():
-    report_usage(StepUsage(appels=1))  # ne doit pas lever
+# --- Context collector -----------------------------------------------------------------
 
 
-def test_collect_usage_recolte_puis_referme_le_canal():
-    with collect_usage() as recolte:
-        report_usage(StepUsage(appels=1, tokens_entree=10, cout_usd=0.01))
-        report_usage(StepUsage(appels=1, tokens_sortie=5, cout_usd=0.02))
-
-    assert recolte.total.appels == 2
-    assert recolte.total.tokens_total == 15
-    assert recolte.total.cout_usd == pytest.approx(0.03)
-
-    # Hors du bloc, plus rien n'est récolté.
-    report_usage(StepUsage(appels=1))
-    assert recolte.total.appels == 2
+def test_report_usage_outside_a_collector_does_nothing():
+    report_usage(StepUsage(calls=1))  # must not raise
 
 
-def test_collect_usage_imbrique_masque_le_collecteur_englobant():
-    # Pas de double comptage : un bloc imbriqué capte seul les mesures de son étape.
-    with collect_usage() as externe:
-        with collect_usage() as interne:
-            report_usage(StepUsage(appels=1))
-        assert interne.total.appels == 1
-        assert externe.total.appels == 0
+def test_collect_usage_gathers_then_closes_the_channel():
+    with collect_usage() as collector:
+        report_usage(StepUsage(calls=1, input_tokens=10, cost_usd=0.01))
+        report_usage(StepUsage(calls=1, output_tokens=5, cost_usd=0.02))
+
+    assert collector.total.calls == 2
+    assert collector.total.total_tokens == 15
+    assert collector.total.cost_usd == pytest.approx(0.03)
+
+    # Outside the block, nothing is gathered any more.
+    report_usage(StepUsage(calls=1))
+    assert collector.total.calls == 2
 
 
-# --- Rédaction des secrets -------------------------------------------------------------
+def test_nested_collect_usage_masks_the_enclosing_collector():
+    # No double counting: a nested block alone captures the measures of its step.
+    with collect_usage() as outer:
+        with collect_usage() as inner:
+            report_usage(StepUsage(calls=1))
+        assert inner.total.calls == 1
+        assert outer.total.calls == 0
 
 
-def test_redact_masque_les_valeurs_d_environnement(monkeypatch):
+# --- Secret redaction ------------------------------------------------------------------
+
+
+def test_redact_masks_environment_values(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "cle-tres-secrete-123")
-    texte = redact_secrets("la clé est cle-tres-secrete-123, la voilà")
-    assert "cle-tres-secrete-123" not in texte
-    assert SECRET_MARKER in texte
+    text = redact_secrets("la clé est cle-tres-secrete-123, la voilà")
+    assert "cle-tres-secrete-123" not in text
+    assert SECRET_MARKER in text
 
 
-def test_redact_masque_les_motifs_de_cles_hors_environnement(monkeypatch):
+def test_redact_masks_key_patterns_outside_the_environment(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    texte = redact_secrets("export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghij")
-    assert "sk-ant-api03-abcdefghij" not in texte
-    assert SECRET_MARKER in texte
+    text = redact_secrets("export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghij")
+    assert "sk-ant-api03-abcdefghij" not in text
+    assert SECRET_MARKER in text
 
 
-def test_redact_masque_un_bloc_de_cle_privee_entier():
-    # Une clé SSH ou TLS ne se reconnaît pas à un préfixe mais à son bloc : depuis
-    # que la lecture des sources se fait par le contenu (#1163), un `id_rsa` sans
-    # extension entre comme du texte, et c'est ce motif qui l'arrête (#1264).
-    cle = (
+def test_redact_masks_a_whole_private_key_block():
+    # An SSH or TLS key is recognized by its block, not by a prefix. Sources are
+    # read by their content (#1163), so an `id_rsa` without an extension comes in
+    # as text, and this pattern is what stops it (#1264).
+    key = (
         "-----BEGIN RSA PRIVATE KEY-----\n"
         "MIIEowIBAAKCAQEAsecret1264\nligne2secrete\n"
         "-----END RSA PRIVATE KEY-----"
     )
-    texte = redact_secrets(f"avant\n{cle}\naprès")
-    assert "secret1264" not in texte
-    assert "ligne2secrete" not in texte
-    assert texte == f"avant\n{SECRET_MARKER}\naprès"
+    text = redact_secrets(f"avant\n{key}\naprès")
+    assert "secret1264" not in text
+    assert "ligne2secrete" not in text
+    assert text == f"avant\n{SECRET_MARKER}\naprès"
 
 
-def test_redact_masque_une_cle_privee_coupee_avant_sa_fin():
-    # Une lecture tronquée peut couper le bloc avant sa ligne `END` : ce qui suit
-    # l'en-tête est masqué jusqu'au bout plutôt que laissé en clair.
-    texte = redact_secrets("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE-coupee")
-    assert "b3BlbnNzaC1rZXktdjE" not in texte
-    assert SECRET_MARKER in texte
+def test_redact_masks_a_private_key_cut_before_its_end():
+    # A truncated read can cut the block before its `END` line: what follows the
+    # header is masked to the end rather than left in clear.
+    text = redact_secrets("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE-coupee")
+    assert "b3BlbnNzaC1rZXktdjE" not in text
+    assert SECRET_MARKER in text
 
 
-def test_redact_laisse_un_certificat_et_une_cle_publique_intacts():
-    # Un certificat ou une clé publique n'est pas un secret : les masquer ferait
-    # disparaître du contexte ce qu'un livrable publie à dessein.
+def test_redact_leaves_a_certificate_and_a_public_key_intact():
+    # A certificate or a public key is not a secret: masking them would remove
+    # from the context what a deliverable publishes on purpose.
     public = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYI\n-----END PUBLIC KEY-----"
-    certificat = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmg\n-----END CERTIFICATE-----"
+    certificate = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmg\n-----END CERTIFICATE-----"
     assert redact_secrets(public) == public
-    assert redact_secrets(certificat) == certificat
+    assert redact_secrets(certificate) == certificate
 
 
-def test_redact_laisse_le_texte_ordinaire_intact():
+def test_redact_leaves_ordinary_text_intact():
     assert redact_secrets("bonjour le monde") == "bonjour le monde"
     assert redact_secrets("") == ""
 
@@ -203,7 +202,7 @@ def _consigne(journal, **surcharges):
 def test_journal_emet_une_ligne_json_par_etape(caplog):
     journal = RunJournal(run_id="run-test")
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        _consigne(journal, usage=StepUsage(appels=1, cout_usd=0.01).avec_duree(10))
+        _consigne(journal, usage=StepUsage(calls=1, cost_usd=0.01).with_duration(10))
 
     assert len(caplog.messages) == 1
     ligne = json.loads(caplog.messages[0])
@@ -237,381 +236,380 @@ def test_journal_expurge_les_secrets(monkeypatch, caplog):
 
 def test_usage_totale_agrege_les_etapes():
     journal = RunJournal()
-    _consigne(journal, etape="t1", usage=StepUsage(appels=1, cout_usd=0.01))
-    _consigne(journal, etape="t2", usage=StepUsage(appels=2, cout_usd=0.02))
+    _consigne(journal, etape="t1", usage=StepUsage(calls=1, cost_usd=0.01))
+    _consigne(journal, etape="t2", usage=StepUsage(calls=2, cost_usd=0.02))
 
     assert [r.etape for r in journal.records] == ["t1", "t2"]
-    assert journal.usage_totale.appels == 3
-    assert journal.usage_totale.cout_usd == pytest.approx(0.03)
+    assert journal.usage_totale.calls == 3
+    assert journal.usage_totale.cost_usd == pytest.approx(0.03)
 
 
 def test_chaque_journal_recoit_un_run_id_distinct():
     assert RunJournal().run_id != RunJournal().run_id
 
 
-# --- Comptabilité par tâche (#55) --------------------------------------------------------
+# --- Per-task accounting (#55) ---------------------------------------------------------
 
 
-def test_depuis_journal_attribue_chaque_ligne_a_sa_tache():
+def test_from_journal_assigns_each_line_to_its_task():
     journal = RunJournal(run_id="run-compta")
     _consigne(journal, etape=STEP_PLANNING, nom="Planification",
               agent="orchestrateur", role="Orchestrateur",
-              usage=StepUsage(appels=1, cout_usd=0.01))
+              usage=StepUsage(calls=1, cost_usd=0.01))
     _consigne(journal, etape="t1", usage=StepUsage(
-        appels=1, tokens_entree=100, tokens_sortie=10, cout_usd=0.02))
+        calls=1, input_tokens=100, output_tokens=10, cost_usd=0.02))
     _consigne(journal, etape="t2", nom="Tâche 2", agent="qa", role="QA / Testeur",
-              usage=StepUsage(appels=1, cout_usd=0.04))
-    # Étape annexe de t1 (validation humaine) : rattachée à sa tâche, pas une entrée à part.
+              usage=StepUsage(calls=1, cost_usd=0.04))
+    # Side step of t1 (human approval): attached to its task, not an entry of its own.
     _consigne(journal, etape="t1:validation", statut="approuve",
-              usage=StepUsage(cout_usd=0.005))
+              usage=StepUsage(cost_usd=0.005))
 
-    cout = RunCost.from_journal(journal)
+    cost = RunCost.from_journal(journal)
 
-    assert cout.run_id == "run-compta"
-    assert cout.planning.cout_usd == pytest.approx(0.01)
-    # Une entrée par tâche, dans l'ordre de première apparition au journal.
-    assert [t.task_id for t in cout.tasks] == ["t1", "t2"]
-    t1, t2 = cout.tasks
-    assert t1.name == "Tâche 1" and t1.agent == "dev"  # l'identité vient de l'étape de la tâche
-    assert t1.usage.cout_usd == pytest.approx(0.025)  # étape + annexe fusionnées
-    assert t2.usage.cout_usd == pytest.approx(0.04)
-    # Chaque ligne comptée exactement une fois : le total retombe sur le journal.
-    assert cout.total.cout_usd == pytest.approx(journal.usage_totale.cout_usd)
-    assert cout.total.appels == journal.usage_totale.appels
+    assert cost.run_id == "run-compta"
+    assert cost.planning.cost_usd == pytest.approx(0.01)
+    # One entry per task, in the order of first appearance in the journal.
+    assert [t.task_id for t in cost.tasks] == ["t1", "t2"]
+    t1, t2 = cost.tasks
+    assert t1.name == "Tâche 1" and t1.agent == "dev"  # the identity comes from the task step
+    assert t1.usage.cost_usd == pytest.approx(0.025)  # step and side step merged
+    assert t2.usage.cost_usd == pytest.approx(0.04)
+    # Each line counted exactly once: the total matches the journal's.
+    assert cost.total.cost_usd == pytest.approx(journal.usage_totale.cost_usd)
+    assert cost.total.calls == journal.usage_totale.calls
 
 
-def test_une_tache_connue_par_sa_seule_annexe_reste_sans_identite():
-    # Comptabilité partielle en cours de run : une annexe peut précéder l'étape de la tâche.
+def test_a_task_known_only_by_its_side_step_stays_without_identity():
+    # Partial accounting during a run: a side step can come before the task step.
     journal = RunJournal()
     _consigne(journal, etape="t1:message", statut="envoye",
-              usage=StepUsage(appels=1, cout_usd=0.01))
+              usage=StepUsage(calls=1, cost_usd=0.01))
 
-    (tache,) = RunCost.from_journal(journal).tasks
+    (task,) = RunCost.from_journal(journal).tasks
 
-    assert tache.task_id == "t1"
-    assert tache.name == "" and tache.agent == "" and tache.status == ""
-    assert tache.usage.cout_usd == pytest.approx(0.01)  # l'usage est déjà compté
+    assert task.task_id == "t1"
+    assert task.name == "" and task.agent == "" and task.status == ""
+    assert task.usage.cost_usd == pytest.approx(0.01)  # the usage is already counted
 
 
-def test_le_cout_inconnu_reste_inconnu_dans_la_comptabilite():
-    # Un fournisseur qui ne rapporte pas de coût laisse la tâche à coût None (≠ 0).
+def test_an_unknown_cost_stays_unknown_in_the_accounting():
+    # A provider that reports no cost leaves the task at a None cost (≠ 0).
     journal = RunJournal()
-    _consigne(journal, usage=StepUsage(appels=1))
+    _consigne(journal, usage=StepUsage(calls=1))
 
-    cout = RunCost.from_journal(journal)
+    cost = RunCost.from_journal(journal)
 
-    assert cout.tasks[0].usage.cout_usd is None
-    assert cout.total.cout_usd is None
+    assert cost.tasks[0].usage.cost_usd is None
+    assert cost.total.cost_usd is None
 
 
-def test_la_comptabilite_s_exporte_en_json():
+def test_the_accounting_exports_to_json():
     journal = RunJournal(run_id="run-json")
     _consigne(journal, etape=STEP_PLANNING, nom="Planification",
               agent="orchestrateur", role="Orchestrateur",
-              usage=StepUsage(appels=1, cout_usd=0.01))
-    _consigne(journal, etape="t1", usage=StepUsage(appels=1, tokens_entree=7, cout_usd=0.02))
+              usage=StepUsage(calls=1, cost_usd=0.01))
+    _consigne(journal, etape="t1", usage=StepUsage(calls=1, input_tokens=7, cost_usd=0.02))
 
-    forme = RunCost.from_journal(journal).to_dict()
+    shape = RunCost.from_journal(journal).to_dict()
 
-    assert forme["run_id"] == "run-json"
-    assert forme["planification"]["cout_usd"] == pytest.approx(0.01)
-    assert forme["total"]["cout_usd"] == pytest.approx(0.03)
-    (t1,) = forme["taches"]
+    assert shape["run_id"] == "run-json"
+    assert shape["planification"]["cout_usd"] == pytest.approx(0.01)
+    assert shape["total"]["cout_usd"] == pytest.approx(0.03)
+    (t1,) = shape["taches"]
     assert t1["tache_id"] == "t1" and t1["usage"]["tokens_entree"] == 7
-    json.dumps(forme)  # la forme de l'API (#57) : JSON-sérialisable de bout en bout
+    json.dumps(shape)  # the shape of the API (#57): JSON-serializable end to end
 
 
-# --- Plafond de dépense (#56) ------------------------------------------------------------
+# --- Spending cap (#56) ----------------------------------------------------------------
 
 
-def test_le_plafond_relit_la_comptabilite_a_chaque_verification():
+def test_the_cap_rereads_the_accounting_at_each_check():
     journal = RunJournal()
-    plafond = SpendingCap(journal, max_cost_usd=0.03)
-    plafond.verifie(StepUsage(cout_usd=0.02))  # 0.02 ≤ 0.03 : rien à signaler
+    spending_cap = SpendingCap(journal, max_cost_usd=0.03)
+    spending_cap.check(StepUsage(cost_usd=0.02))  # 0.02 ≤ 0.03: nothing to report
 
-    _consigne(journal, usage=StepUsage(cout_usd=0.02))
+    _consigne(journal, usage=StepUsage(cost_usd=0.02))
 
-    # Même mesure en cours, mais le grand livre a bougé : le contrôle le voit
-    # (aucun compteur interne — la télémétrie est la source unique du coût).
+    # Same measure in progress, but the ledger has moved: the control sees it
+    # (no internal counter: telemetry is the single source of the cost).
     with pytest.raises(SpendingCapExceeded) as exc:
-        plafond.verifie(StepUsage(cout_usd=0.02))
+        spending_cap.check(StepUsage(cost_usd=0.02))
     assert "plafond de dépense dépassé" in str(exc.value)
 
 
-def test_atteindre_le_plafond_sans_le_depasser_ne_stoppe_rien():
+def test_reaching_the_cap_without_crossing_it_stops_nothing():
     journal = RunJournal()
-    _consigne(journal, usage=StepUsage(cout_usd=0.01))
-    SpendingCap(journal, max_cost_usd=0.01).verifie(StepUsage())  # ne lève pas
+    _consigne(journal, usage=StepUsage(cost_usd=0.01))
+    SpendingCap(journal, max_cost_usd=0.01).check(StepUsage())  # does not raise
 
 
-def test_un_cout_inconnu_n_est_pas_plafonnable():
-    # Fournisseur muet sur le coût : dépense inconnue, le plafond *en USD* n'a pas
-    # prise (mais le plafond en tokens, lui, plafonne — cf. tests #113 plus bas).
+def test_an_unknown_cost_cannot_be_capped():
+    # A provider silent on the cost: the spend is unknown and the cap *in USD* has
+    # no hold (the token cap, however, does cap: see the #113 tests below).
     journal = RunJournal()
-    _consigne(journal, usage=StepUsage(appels=3))
-    SpendingCap(journal, max_cost_usd=0.0001).verifie(StepUsage(appels=1))
+    _consigne(journal, usage=StepUsage(calls=3))
+    SpendingCap(journal, max_cost_usd=0.0001).check(StepUsage(calls=1))
 
 
-def test_un_plafond_invalide_est_refuse():
-    for invalide in (0, -1.5):
+def test_an_invalid_cap_is_refused():
+    for invalid in (0, -1.5):
         with pytest.raises(ValueError):
-            SpendingCap(RunJournal(), invalide)
+            SpendingCap(RunJournal(), invalid)
 
 
-# --- Plafond en tokens : opérant sans coût rapporté (#113) ----------------------------
+# --- Token cap: effective without a reported cost (#113) -------------------------------
 
 
-def test_le_plafond_en_tokens_stoppe_un_fournisseur_sans_cout_rapporte():
-    # Cœur du #113 : coût inconnu (None), mais les tokens sont toujours rapportés —
-    # le plafond en tokens plafonne là où le plafond en USD serait sans prise.
+def test_the_token_cap_stops_a_provider_without_a_reported_cost():
+    # The heart of #113: the cost is unknown (None), but tokens are always
+    # reported, so the token cap caps where the cap in USD would have no hold.
     journal = RunJournal()
-    _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=800, cout_usd=None))
-    plafond = SpendingCap(journal, max_tokens=1000)
+    _consigne(journal, usage=StepUsage(calls=1, output_tokens=800, cost_usd=None))
+    spending_cap = SpendingCap(journal, max_tokens=1000)
 
-    # 800 (déjà consigné) + 150 en cours ≤ 1000 : rien à signaler.
-    plafond.verifie(StepUsage(tokens_entree=150))
+    # 800 (already recorded) + 150 in progress ≤ 1000: nothing to report.
+    spending_cap.check(StepUsage(input_tokens=150))
 
-    # 800 + 300 > 1000 : le garde-fou stoppe, alors même que le coût reste inconnu.
+    # 800 + 300 > 1000: the guardrail stops, even though the cost stays unknown.
     with pytest.raises(SpendingCapExceeded) as exc:
-        plafond.verifie(StepUsage(tokens_entree=300))
+        spending_cap.check(StepUsage(input_tokens=300))
     assert "plafond de tokens dépassé" in str(exc.value)
 
 
-def test_les_deux_plafonds_cohabitent_le_premier_creve_stoppe():
-    # Coût et tokens armés ensemble : le coût connu tranche d'abord, sinon les tokens.
+def test_both_caps_coexist_and_the_first_crossed_stops():
+    # Cost and tokens armed together: the known cost decides first, then the tokens.
     journal = RunJournal()
-    _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=10, cout_usd=0.05))
-    plafond = SpendingCap(journal, max_cost_usd=0.04, max_tokens=10_000)
+    _consigne(journal, usage=StepUsage(calls=1, output_tokens=10, cost_usd=0.05))
+    spending_cap = SpendingCap(journal, max_cost_usd=0.04, max_tokens=10_000)
     with pytest.raises(SpendingCapExceeded) as exc:
-        plafond.verifie(StepUsage())
-    assert "plafond de dépense dépassé" in str(exc.value)  # le coût, pas les tokens
+        spending_cap.check(StepUsage())
+    assert "plafond de dépense dépassé" in str(exc.value)  # the cost, not the tokens
 
 
-def test_un_plafond_en_tokens_invalide_est_refuse():
-    for invalide in (0, -3):
+def test_an_invalid_token_cap_is_refused():
+    for invalid in (0, -3):
         with pytest.raises(ValueError):
-            SpendingCap(RunJournal(), max_tokens=invalide)
+            SpendingCap(RunJournal(), max_tokens=invalid)
 
 
-def test_un_controle_sans_aucun_plafond_est_refuse():
+def test_a_control_without_any_cap_is_refused():
     with pytest.raises(ValueError):
         SpendingCap(RunJournal())
 
 
-# --- spending_control_summary : quel contrôle a réellement tenu (#113) -----------------
+# --- spending_control_summary: which control actually held (#113) ----------------------
 
 
-def test_resume_dit_cout_reel_quand_le_fournisseur_rapporte_un_cout():
-    resume = spending_control_summary(1.0, None, StepUsage(cout_usd=0.5, tokens_sortie=42))
-    assert "coût réel" in resume and "0.5000/1.0000 $" in resume
+def test_summary_says_real_cost_when_the_provider_reports_a_cost():
+    summary = spending_control_summary(1.0, None, StepUsage(cost_usd=0.5, output_tokens=42))
+    assert "coût réel" in summary and "0.5000/1.0000 $" in summary
 
 
-def test_resume_signale_un_plafond_de_cout_sans_prise():
-    # Le cas visé par #113 : plafond en USD armé, fournisseur muet sur le coût.
-    resume = spending_control_summary(1.0, None, StepUsage(appels=1, tokens_sortie=42))
-    assert "SANS PRISE" in resume
-    assert "--plafond-tokens" in resume
+def test_summary_flags_a_cost_cap_without_hold():
+    # The case #113 targets: a cap in USD armed, a provider silent on the cost.
+    summary = spending_control_summary(1.0, None, StepUsage(calls=1, output_tokens=42))
+    assert "SANS PRISE" in summary
+    assert "--plafond-tokens" in summary
 
 
-def test_resume_annonce_le_plafond_en_tokens_actif():
-    resume = spending_control_summary(None, 1000, StepUsage(appels=1, tokens_sortie=200))
-    assert "tokens hors cache relu (200/1000)" in resume
+def test_summary_announces_the_active_token_cap():
+    summary = spending_control_summary(None, 1000, StepUsage(calls=1, output_tokens=200))
+    assert "tokens hors cache relu (200/1000)" in summary
 
 
-def test_resume_expose_le_cout_inoperant_quand_les_tokens_prennent_le_relais():
-    resume = spending_control_summary(1.0, 1000, StepUsage(appels=1, tokens_sortie=200))
-    assert "tokens hors cache relu (200/1000)" in resume
-    assert "coût inopérant" in resume
+def test_summary_shows_the_cost_cap_inoperative_when_tokens_take_over():
+    summary = spending_control_summary(1.0, 1000, StepUsage(calls=1, output_tokens=200))
+    assert "tokens hors cache relu (200/1000)" in summary
+    assert "coût inopérant" in summary
 
 
-def test_resume_sans_aucun_plafond():
+def test_summary_without_any_cap():
     assert spending_control_summary(None, None, StepUsage()) == "aucun plafond armé"
 
 
-def test_report_usage_leve_chez_l_appelant_quand_le_plafond_creve():
-    # Le canal de mesure relaie le garde-fou (#9) : le signalement fautif lève,
-    # mais la mesure est déjà comptabilisée — le coût du dépassement reste visible.
-    plafond = SpendingCap(RunJournal(), max_cost_usd=0.01)
-    with collect_usage(plafond=plafond) as recolte:
-        report_usage(StepUsage(appels=1, cout_usd=0.008))
+def test_report_usage_raises_at_the_caller_when_the_cap_is_crossed():
+    # The measuring channel relays the guardrail (#9): the faulty report raises,
+    # but the measure is already counted, so the cost of the overrun stays visible.
+    spending_cap = SpendingCap(RunJournal(), max_cost_usd=0.01)
+    with collect_usage(spending_cap=spending_cap) as collector:
+        report_usage(StepUsage(calls=1, cost_usd=0.008))
         with pytest.raises(SpendingCapExceeded):
-            report_usage(StepUsage(appels=1, cout_usd=0.008))
+            report_usage(StepUsage(calls=1, cost_usd=0.008))
 
-    assert recolte.total.appels == 2
-    assert recolte.total.cout_usd == pytest.approx(0.016)
-
-
-# --- #989 : la durée d'une tâche est son temps de travail ------------------------------
+    assert collector.total.calls == 2
+    assert collector.total.cost_usd == pytest.approx(0.016)
 
 
-def test_la_duree_de_travail_retire_les_trois_attentes():
-    # Le cas du retex du 2026-09-11 (G4), chiffres compris : 24 min 17 s
-    # annoncées, dont 13 min à attendre son tour — il reste ~11 min de travail.
-    usage = StepUsage().avec_duree(
+# --- The duration of a task is its working time (#989) ---------------------------------
+
+
+def test_the_work_duration_removes_the_three_waits():
+    # The case of the retex of 2026-09-11 (G4), figures included: 24 min 17 s
+    # announced, of which 13 min spent waiting for its turn: ~11 min of work remain.
+    usage = StepUsage().with_duration(
         1_457_000,
-        arbitrage_ms=12_000,
-        attente_creneau_ms=48_000,
-        attente_atelier_ms=780_000,
+        approval_ms=12_000,
+        slot_wait_ms=48_000,
+        workshop_wait_ms=780_000,
     )
 
-    assert usage.duree_attente_ms == 840_000
-    assert usage.duree_execution_ms == 617_000
+    assert usage.wait_duration_ms == 840_000
+    assert usage.work_duration_ms == 617_000
 
 
-def test_une_attente_non_mesuree_ne_vaut_pas_zero():
-    # La distinction de `cout_usd`, et elle vaut pour la même raison : une
-    # mesure absente n'est pas une mesure nulle. Un appelant qui ne mesure
-    # aucune attente (files, boucle de planification) ne déclare pas qu'il n'y
-    # en a pas eu, et sa durée de travail reste son horloge.
-    sans_mesure = StepUsage().avec_duree(5_000)
-    assert sans_mesure.duree_attente_ms is None
-    assert sans_mesure.duree_execution_ms == 5_000
+def test_an_unmeasured_wait_is_not_zero():
+    # The distinction `cost_usd` makes, and for the same reason: an absent
+    # measure is not a zero measure. A caller that measures no wait (queues,
+    # planning loop) does not declare there was none, and its work duration
+    # stays its wall clock.
+    unmeasured = StepUsage().with_duration(5_000)
+    assert unmeasured.wait_duration_ms is None
+    assert unmeasured.work_duration_ms == 5_000
 
-    # Mesurée à zéro, en revanche, l'attente est un fait : on l'a regardée.
-    mesuree = StepUsage().avec_duree(5_000, attente_creneau_ms=0, attente_atelier_ms=0)
-    assert mesuree.duree_attente_ms == 0
-    assert mesuree.duree_execution_ms == 5_000
-
-
-def test_la_duree_de_travail_ne_devient_jamais_negative():
-    # Les mesures viennent d'horloges qui ne partent pas au même instant :
-    # bornée à zéro plutôt que de rendre une durée négative.
-    usage = StepUsage().avec_duree(1_000, attente_atelier_ms=4_000)
-    assert usage.duree_execution_ms == 0
+    # Measured at zero, on the other hand, the wait is a fact: someone looked.
+    measured = StepUsage().with_duration(5_000, slot_wait_ms=0, workshop_wait_ms=0)
+    assert measured.wait_duration_ms == 0
+    assert measured.work_duration_ms == 5_000
 
 
-def test_les_attentes_voyagent_en_json_avec_leurs_derivees():
-    usage = StepUsage().avec_duree(
-        10_000, arbitrage_ms=1_000, attente_creneau_ms=2_000, attente_atelier_ms=3_000
+def test_the_work_duration_never_goes_negative():
+    # The measures come from clocks that do not start at the same instant:
+    # bounded at zero rather than returning a negative duration.
+    usage = StepUsage().with_duration(1_000, workshop_wait_ms=4_000)
+    assert usage.work_duration_ms == 0
+
+
+def test_the_waits_travel_in_json_with_their_derived_values():
+    usage = StepUsage().with_duration(
+        10_000, approval_ms=1_000, slot_wait_ms=2_000, workshop_wait_ms=3_000
     )
-    forme = usage.to_dict()
+    shape = usage.to_dict()
 
-    assert forme["duree_attente_creneau_ms"] == 2_000
-    assert forme["duree_attente_atelier_ms"] == 3_000
-    # Les dérivées voyagent calculées, comme `tokens_total` : l'écran ne
-    # réécrit pas la règle « ce qui est du travail, ce qui est de l'attente ».
-    assert forme["duree_attente_ms"] == 6_000
-    assert forme["duree_execution_ms"] == 4_000
-    # …et sont ignorées au retour : l'aller-retour reste fidèle.
-    assert StepUsage.from_dict(forme) == usage
-
-
-def test_une_ligne_de_journal_d_avant_989_se_relit_sans_attente_mesuree():
-    # Inconnu, pas zéro : rien ne permet après coup de dire ce qu'une tâche a
-    # attendu, et sa durée de travail reste donc son horloge.
-    relu = StepUsage.from_dict({"duree_ms": 4_000})
-    assert relu.duree_attente_creneau_ms is None
-    assert relu.duree_attente_ms is None
-    assert relu.duree_execution_ms == 4_000
+    assert shape["duree_attente_creneau_ms"] == 2_000
+    assert shape["duree_attente_atelier_ms"] == 3_000
+    # The derived values travel computed, like `tokens_total`: the screen does
+    # not rewrite the rule "what is work, what is waiting".
+    assert shape["duree_attente_ms"] == 6_000
+    assert shape["duree_execution_ms"] == 4_000
+    # …and are ignored on the way back: the round trip stays faithful.
+    assert StepUsage.from_dict(shape) == usage
 
 
-def test_le_resume_court_nomme_chaque_attente_et_tait_les_nulles():
-    resume = StepUsage(appels=1).avec_duree(
-        20_000, arbitrage_ms=0, attente_creneau_ms=0, attente_atelier_ms=8_000
-    ).resume_court()
-
-    assert "d'atelier de projet" in resume
-    # Les deux attentes nulles ne sont pas annoncées : « dont 0,0 s » sur
-    # chacune des tâches d'un run apprendrait à ne plus lire la mention (#584).
-    assert "d'arbitrage" not in resume
-    assert "de file d'agent" not in resume
+def test_a_journal_line_from_before_989_reads_back_without_a_measured_wait():
+    # Unknown, not zero: nothing tells after the fact what a task waited for,
+    # so its work duration stays its wall clock.
+    reread = StepUsage.from_dict({"duree_ms": 4_000})
+    assert reread.slot_wait_duration_ms is None
+    assert reread.wait_duration_ms is None
+    assert reread.work_duration_ms == 4_000
 
 
-# --- #989 : la durée d'un run est l'union de ses intervalles ---------------------------
+def test_the_short_summary_names_each_wait_and_omits_the_zero_ones():
+    summary = StepUsage(calls=1).with_duration(
+        20_000, approval_ms=0, slot_wait_ms=0, workshop_wait_ms=8_000
+    ).short_summary()
+
+    assert "d'atelier de projet" in summary
+    # The two zero waits are not announced: "of which 0.0 s" on every task of a
+    # run would teach the reader to skip the mention (#584).
+    assert "d'arbitrage" not in summary
+    assert "de file d'agent" not in summary
 
 
-def _intervalle(debut_s: float, fin_s: float) -> tuple[datetime, datetime]:
-    """Un intervalle en secondes depuis une origine fixe — de quoi lire le test."""
-    origine = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
-    return (origine + timedelta(seconds=debut_s), origine + timedelta(seconds=fin_s))
+# --- The duration of a run is the union of its intervals (#989) ------------------------
 
 
-def test_l_union_ne_compte_pas_deux_fois_un_recouvrement():
-    # L'erreur que le produit répétait et que l'outillage avait corrigée (#497) :
-    # 47 min annoncées pour 43,5 min de mur. Deux tâches de 60 s qui se
-    # recouvrent de 30 s occupent 90 s, pas 120.
-    assert union_ms([_intervalle(0, 60), _intervalle(30, 90)]) == 90_000
+def _interval(start_s: float, end_s: float) -> tuple[datetime, datetime]:
+    """An interval in seconds from a fixed origin, so that the test reads easily."""
+    origin = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+    return (origin + timedelta(seconds=start_s), origin + timedelta(seconds=end_s))
 
 
-def test_l_union_additionne_les_intervalles_disjoints():
-    # L'autre moitié : sans recouvrement, l'union **est** la somme — le trou
-    # entre les deux n'est pas du temps occupé.
-    assert union_ms([_intervalle(0, 10), _intervalle(40, 50)]) == 20_000
+def test_the_union_does_not_count_an_overlap_twice():
+    # Adding up the durations announces 47 min for 43.5 min of wall clock (#497).
+    # Two tasks of 60 s that overlap by 30 s occupy 90 s, not 120.
+    assert union_ms([_interval(0, 60), _interval(30, 90)]) == 90_000
 
 
-def test_l_union_absorbe_un_intervalle_entierement_contenu():
-    # Une tâche courte pendant une longue n'ajoute rien, et ne raccourcit rien.
-    assert union_ms([_intervalle(0, 100), _intervalle(20, 30)]) == 100_000
+def test_the_union_adds_up_disjoint_intervals():
+    # The other half: without overlap, the union **is** the sum, and the gap
+    # between the two is not occupied time.
+    assert union_ms([_interval(0, 10), _interval(40, 50)]) == 20_000
 
 
-def test_l_union_ignore_l_ordre_dans_lequel_les_etapes_sont_consignees():
-    # `RunJournal.records` suit l'ordre d'**achèvement** : des tâches menées de
-    # front y arrivent dans le désordre de leurs débuts.
-    desordre = [_intervalle(30, 90), _intervalle(0, 60)]
-    assert union_ms(desordre) == 90_000
+def test_the_union_absorbs_a_fully_contained_interval():
+    # A short task during a long one adds nothing, and shortens nothing.
+    assert union_ms([_interval(0, 100), _interval(20, 30)]) == 100_000
 
 
-def test_l_union_sans_intervalle_est_inconnue_et_non_nulle():
+def test_the_union_ignores_the_order_in_which_steps_are_recorded():
+    # `RunJournal.records` follows the order of **completion**: tasks run side by
+    # side arrive there out of the order of their starts.
+    out_of_order = [_interval(30, 90), _interval(0, 60)]
+    assert union_ms(out_of_order) == 90_000
+
+
+def test_the_union_without_any_interval_is_unknown_not_zero():
     assert union_ms([]) is None
 
 
-def test_un_intervalle_se_deduit_de_l_horodatage_et_de_la_duree():
-    debut, fin = interval_from("2026-09-20T10:00:40+00:00", 40_000)
-    assert fin - debut == timedelta(seconds=40)
-    assert debut == datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+def test_an_interval_derives_from_the_timestamp_and_the_duration():
+    start, end = interval_from("2026-09-20T10:00:40+00:00", 40_000)
+    assert end - start == timedelta(seconds=40)
+    assert start == datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(
-    "horodatage, duree_ms",
+    "timestamp, duration_ms",
     [
-        ("2026-09-20T10:00:40+00:00", None),  # rien de mesuré
-        ("2026-09-20T10:00:40+00:00", 0),  # durée nulle : aucun temps occupé
-        ("2026-09-20T10:00:40+00:00", -5),  # horloges désaccordées
-        ("pas une date", 40_000),  # horodatage illisible
-        ("", 40_000),  # horodatage absent
+        ("2026-09-20T10:00:40+00:00", None),  # nothing measured
+        ("2026-09-20T10:00:40+00:00", 0),  # zero duration: no occupied time
+        ("2026-09-20T10:00:40+00:00", -5),  # clocks out of step
+        ("pas une date", 40_000),  # unreadable timestamp
+        ("", 40_000),  # missing timestamp
     ],
 )
-def test_une_etape_sans_intervalle_lisible_ne_fausse_pas_l_union(horodatage, duree_ms):
-    assert interval_from(horodatage, duree_ms) is None
+def test_a_step_without_a_readable_interval_does_not_skew_the_union(timestamp, duration_ms):
+    assert interval_from(timestamp, duration_ms) is None
 
 
-def test_le_grand_livre_rend_l_union_et_non_la_somme_des_durees():
-    # De bout en bout, sur un vrai journal : deux tâches d'une minute
-    # consignées coup sur coup se recouvrent presque entièrement. La somme
-    # annoncerait deux minutes ; l'occupation du run en vaut une.
+def test_the_ledger_returns_the_union_not_the_sum_of_durations():
+    # End to end, on a real journal: two one-minute tasks recorded back to back
+    # overlap almost entirely. The sum would announce two minutes; the run is
+    # occupied for one.
     journal = RunJournal()
-    _consigne(journal, etape="t1", usage=StepUsage(appels=1).avec_duree(60_000))
-    _consigne(journal, etape="t2", usage=StepUsage(appels=1).avec_duree(60_000))
-    cout = RunCost.from_journal(journal)
+    _consigne(journal, etape="t1", usage=StepUsage(calls=1).with_duration(60_000))
+    _consigne(journal, etape="t2", usage=StepUsage(calls=1).with_duration(60_000))
+    cost = RunCost.from_journal(journal)
 
-    # Les compteurs, eux, se somment bien : deux tâches de front coûtent deux fois.
-    assert cout.total.appels == 2
-    # La durée, non. Une seconde de marge : les deux consignations peuvent
-    # tomber de part et d'autre d'un tic d'horloge (horodatage à la seconde).
-    assert cout.wall_clock_ms is not None
-    assert 60_000 <= cout.wall_clock_ms <= 61_000
-    assert cout.total.duree_ms == cout.wall_clock_ms
+    # The counters, however, do add up: two tasks run side by side cost twice.
+    assert cost.total.calls == 2
+    # The duration does not. One second of margin: the two records can fall on
+    # either side of a clock tick (timestamps to the second).
+    assert cost.wall_clock_ms is not None
+    assert 60_000 <= cost.wall_clock_ms <= 61_000
+    assert cost.total.duration_ms == cost.wall_clock_ms
 
 
-def test_le_total_du_run_ne_porte_aucune_attente():
-    # Une somme d'attentes de tâches parallèles n'est pas une attente du run,
-    # et la retrancher d'une union donnerait un « travail du run » qui ne veut
-    # rien dire. Au niveau du run, la durée est une seule mesure.
+def test_the_run_total_carries_no_wait():
+    # A sum of the waits of parallel tasks is not a wait of the run, and
+    # subtracting it from a union would give a "work of the run" that means
+    # nothing. At the level of the run, the duration is a single measure.
     journal = RunJournal()
     _consigne(
         journal,
         etape="t1",
-        usage=StepUsage(appels=1).avec_duree(60_000, attente_atelier_ms=30_000),
+        usage=StepUsage(calls=1).with_duration(60_000, workshop_wait_ms=30_000),
     )
     total = RunCost.from_journal(journal).total
 
-    assert total.duree_attente_ms is None
-    assert total.duree_execution_ms == total.duree_ms
+    assert total.wait_duration_ms is None
+    assert total.work_duration_ms == total.duration_ms
 
 
-def test_une_etape_de_reprise_n_occupe_pas_le_run():
-    # Marqueur de run (#96), rattaché à aucune tâche : il ne compte pas au grand
-    # livre, il n'occupe donc rien non plus.
+def test_a_resume_step_does_not_occupy_the_run():
+    # A run marker (#96), attached to no task: it does not count in the ledger,
+    # so it occupies nothing either.
     journal = RunJournal()
-    _consigne(journal, etape="reprise", usage=StepUsage().avec_duree(90_000))
+    _consigne(journal, etape="reprise", usage=StepUsage().with_duration(90_000))
     assert RunCost.from_journal(journal).wall_clock_ms is None

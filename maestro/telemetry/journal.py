@@ -199,7 +199,7 @@ class RunJournal:
         """Agrégat de l'usage de toutes les étapes consignées."""
         total = StepUsage()
         for record in self._records:
-            total = total.fusion(record.usage)
+            total = total.merge(record.usage)
         return total
 
     def consigne(

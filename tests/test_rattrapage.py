@@ -61,7 +61,7 @@ from maestro.telemetry import RunCost, RunJournal, StepUsage, report_usage
 _ENTETE_RATTRAPAGE = "# Playbook — Chef de projet : le rattrapage"
 
 #: Ce que coûte un diagnostic, chez le Chef de projet factice.
-_USAGE_DIAGNOSTIC = StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01)
+_USAGE_DIAGNOSTIC = StepUsage(calls=1, input_tokens=100, output_tokens=20, cost_usd=0.01)
 
 
 class ChefDeProjet(ModelProvider):
@@ -428,10 +428,10 @@ def test_le_cout_des_diagnostics_et_des_tentatives_entre_au_rapport_comme_au_jou
     # Deux diagnostics au plus ici (le juge de l'exécuteur, puis celui de la
     # boucle, qui réemploie le premier) : un seul appel, un seul coût.
     assert len(chef.demandes) == 1
-    assert rapport.usage_totale.cout_usd == pytest.approx(_USAGE_DIAGNOSTIC.cout_usd)
+    assert rapport.usage_totale.cost_usd == pytest.approx(_USAGE_DIAGNOSTIC.cost_usd)
     grand_livre = RunCost.from_journal(journal)
     (t1,) = [t for t in grand_livre.tasks if t.task_id == "t1"]
-    assert t1.usage.cout_usd == pytest.approx(_USAGE_DIAGNOSTIC.cout_usd)
+    assert t1.usage.cost_usd == pytest.approx(_USAGE_DIAGNOSTIC.cost_usd)
 
 
 # --- Ce qui ne se rattrape pas ------------------------------------------------------------
@@ -461,7 +461,7 @@ def test_un_budget_epuise_ne_se_rattrape_pas():
 
     class Couteux(Executant):
         async def generate(self, prompt, *, model, system_prompt=None):
-            report_usage(StepUsage(appels=1, cout_usd=1.0))
+            report_usage(StepUsage(calls=1, cost_usd=1.0))
             return await super().generate(prompt, model=model, system_prompt=system_prompt)
 
     executant = Couteux({"APPROCHE-A": "livré", "AVAL-T2": "ok"})
@@ -500,7 +500,7 @@ def test_un_diagnostic_qui_depense_le_budget_ne_pose_pas_de_question_pour_rien()
             # Sans relance, l'exécuteur ne juge rien : c'est le diagnostic de la
             # boucle, et lui seul, qui franchit le plafond.
             relance=None,
-            guardrails=Guardrails(plafond_cout_usd=_USAGE_DIAGNOSTIC.cout_usd / 2),
+            guardrails=Guardrails(plafond_cout_usd=_USAGE_DIAGNOSTIC.cost_usd / 2),
         ).run("Objectif", journal=RunJournal())
     )
 

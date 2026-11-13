@@ -329,12 +329,12 @@ def test_claude_generate_signale_l_usage_au_collecteur(monkeypatch):
         result = asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
 
     assert result == "Réponse"
-    assert recolte.total.appels == 1
-    assert recolte.total.tokens_entree == 120
-    assert recolte.total.tokens_sortie == 30
-    assert recolte.total.cout_usd == pytest.approx(0.042)
-    assert recolte.total.duree_api_ms == 1200
-    assert recolte.total.tours == 1
+    assert recolte.total.calls == 1
+    assert recolte.total.input_tokens == 120
+    assert recolte.total.output_tokens == 30
+    assert recolte.total.cost_usd == pytest.approx(0.042)
+    assert recolte.total.api_duration_ms == 1200
+    assert recolte.total.turns == 1
 
 
 def test_claude_run_agent_releve_les_outils_utilises(monkeypatch):
@@ -358,10 +358,10 @@ def test_claude_run_agent_releve_les_outils_utilises(monkeypatch):
         )
 
     assert result == "j'écris puis livré."
-    assert recolte.total.outils == ("Write", "Bash")
-    assert recolte.total.tours == 2
+    assert recolte.total.tools == ("Write", "Bash")
+    assert recolte.total.turns == 2
     # Coût non rapporté par le SDK → inconnu (None), pas zéro.
-    assert recolte.total.cout_usd is None
+    assert recolte.total.cost_usd is None
 
 
 # --- Ticket #91 : le plafond de tours est mué en erreur typée de la couche -------------

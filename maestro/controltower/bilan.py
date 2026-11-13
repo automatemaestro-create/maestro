@@ -554,10 +554,10 @@ def _lecture_du_volume(usage: StepUsage) -> list[str]:
     une mesure sans cache rapporté ni contexte mesuré se lit comme avant.
     """
     morceaux = []
-    if usage.tokens_cache_lus:
-        morceaux.append(f"dont {_nombre(usage.tokens_cache_lus)} relus en cache")
-    if usage.contexte_max is not None:
-        morceaux.append(f"contexte max {_nombre(usage.contexte_max)}")
+    if usage.cache_read_tokens:
+        morceaux.append(f"dont {_nombre(usage.cache_read_tokens)} relus en cache")
+    if usage.max_context is not None:
+        morceaux.append(f"contexte max {_nombre(usage.max_context)}")
     return morceaux
 
 
@@ -567,18 +567,18 @@ def _usage_en_phrase(usage: StepUsage) -> str:
     `40 874 tokens pour 0,1415 $US, en 2 tours et 31 s` : une phrase, et non la suite
     de champs que le modèle lit (`_usage_en_mots`).
     """
-    texte = _tokens(usage.tokens_total)
+    texte = _tokens(usage.total_tokens)
     precisions = _lecture_du_volume(usage)
-    if usage.tokens_non_tarifes:
-        precisions.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
+    if usage.unpriced_tokens:
+        precisions.append(f"dont {_nombre(usage.unpriced_tokens)} sans prix")
     if precisions:
         texte += f" ({', '.join(precisions)})"
-    texte += f" pour {_montant(usage.cout_usd)}" if usage.cout_usd is not None else ", coût inconnu"
+    texte += f" pour {_montant(usage.cost_usd)}" if usage.cost_usd is not None else ", coût inconnu"
     temps = []
-    if usage.tours:
-        temps.append(_compte(usage.tours, "tour"))
-    if usage.duree_ms is not None:
-        temps.append(f"{usage.duree_ms / 1000:.0f} s")
+    if usage.turns:
+        temps.append(_compte(usage.turns, "tour"))
+    if usage.duration_ms is not None:
+        temps.append(f"{usage.duration_ms / 1000:.0f} s")
     if temps:
         texte += ", en " + " et ".join(temps)
     return texte
@@ -590,16 +590,16 @@ def _usage_en_mots(usage: StepUsage) -> str:
     En format d'interface (#1285) — la vue du run montre ce texte tel quel, et le
     modèle lit le même : `40 720 tokens, coût 0,2199 $US, 2 tours, 31 s`.
     """
-    morceaux = [_tokens(usage.tokens_total), *_lecture_du_volume(usage)]
-    if usage.tokens_non_tarifes:
-        morceaux.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
+    morceaux = [_tokens(usage.total_tokens), *_lecture_du_volume(usage)]
+    if usage.unpriced_tokens:
+        morceaux.append(f"dont {_nombre(usage.unpriced_tokens)} sans prix")
     morceaux.append(
-        f"coût {_montant(usage.cout_usd)}" if usage.cout_usd is not None else "coût inconnu"
+        f"coût {_montant(usage.cost_usd)}" if usage.cost_usd is not None else "coût inconnu"
     )
-    if usage.tours:
-        morceaux.append(_compte(usage.tours, "tour"))
-    if usage.duree_ms is not None:
-        morceaux.append(f"{usage.duree_ms / 1000:.0f} s")
+    if usage.turns:
+        morceaux.append(_compte(usage.turns, "tour"))
+    if usage.duration_ms is not None:
+        morceaux.append(f"{usage.duration_ms / 1000:.0f} s")
     return ", ".join(morceaux)
 
 
@@ -627,7 +627,7 @@ def _syntheses(
     )
     # La sonde du point de contrôle (#1398) a sa ligne au run : nommée quand elle a
     # coûté, tue sinon — un run sans garde-fou n'en joue pas.
-    a_sonde = bool(cout.probe.appels or cout.probe.tokens_total)
+    a_sonde = bool(cout.probe.calls or cout.probe.total_tokens)
     sonde_mots = f" ; sonde du point de contrôle {_usage_en_mots(cout.probe)}" if a_sonde else ""
     sonde_phrase = (
         f" ; sonde du point de contrôle : {_usage_en_phrase(cout.probe)}" if a_sonde else ""
@@ -662,7 +662,7 @@ def _syntheses(
             e.id for e in entrees
             if e.type == EVENEMENT_TACHE_STATUT and e.statut in STATUTS_TACHE_TERMINAUX
         )
-        sans_resultat = ligne.status != STATUT_TERMINEE or ligne.usage.tokens_non_tarifes > 0
+        sans_resultat = ligne.status != STATUT_TERMINEE or ligne.usage.unpriced_tokens > 0
         nom = ligne.name or titres.get(ligne.task_id, "")
         pieces.append(
             Piece(
@@ -1421,7 +1421,7 @@ class JugeModele:
         debut = perf_counter()
         with collect_usage() as collecteur:
             texte = await provider.generate(prompt, model=modele, system_prompt=SYSTEME)
-        usage = collecteur.total.avec_duree(int((perf_counter() - debut) * 1000))
+        usage = collecteur.total.with_duration(int((perf_counter() - debut) * 1000))
         return (texte or "").strip(), usage
 
     def _resolu(self, agent: Agent) -> tuple[ModelProvider, str]:
@@ -1690,7 +1690,7 @@ class ServiceBilan:
                     statut=statut,
                     detail=detail,
                     usage=usage,
-                    cout_usd=usage.cout_usd if usage is not None else None,
+                    cout_usd=usage.cost_usd if usage is not None else None,
                     projet_id=execution.projet_id,
                     etape_run=STEP_ASSESSMENT,
                     bilan=bilan.to_dict() if bilan is not None else None,

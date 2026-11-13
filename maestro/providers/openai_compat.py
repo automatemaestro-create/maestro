@@ -507,7 +507,7 @@ def _usage_depuis(payload: Any, duree_ms: int) -> StepUsage:
     """Traduit le bloc `usage` de la réponse en mesure d'usage d'un appel modèle.
 
     Le dialecte ne rapporte pas de coût : `cout_usd` reste None (inconnu, pas nul).
-    `duree_api_ms` est la durée mesurée de l'aller-retour HTTP — le proxy le plus
+    `api_duration_ms` est la durée mesurée de l'aller-retour HTTP — le proxy le plus
     proche du temps API, qu'aucun champ de réponse ne porte ici.
 
     Un appel est un tour : son prompt est donc le **contexte** qu'il a atteint, et
@@ -520,14 +520,14 @@ def _usage_depuis(payload: Any, duree_ms: int) -> StepUsage:
     details = usage.get("prompt_tokens_details")
     relus = int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
     return StepUsage(
-        appels=1,
-        tokens_entree=entree,
-        tokens_sortie=int(usage.get("completion_tokens") or 0),
-        cout_usd=None,
-        duree_api_ms=duree_ms,
-        tours=1,
-        tokens_cache_lus=relus,
-        contexte_max=entree or None,
+        calls=1,
+        input_tokens=entree,
+        output_tokens=int(usage.get("completion_tokens") or 0),
+        cost_usd=None,
+        api_duration_ms=duree_ms,
+        turns=1,
+        cache_read_tokens=relus,
+        max_context=entree or None,
     )
 
 

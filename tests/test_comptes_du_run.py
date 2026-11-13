@@ -98,7 +98,7 @@ def tache(tache_id: str, statut: str, cout: float = 0.0) -> Event:
         agent="developpeur",
         role="Développeur",
         statut=statut,
-        usage=StepUsage(appels=1, cout_usd=cout) if cout else None,
+        usage=StepUsage(calls=1, cost_usd=cout) if cout else None,
         projet_id=PROJET,
     )
 
@@ -258,7 +258,7 @@ def _ligne(etape: str) -> dict:
         "agent": "developpeur",
         "role": "Développeur",
         "statut": "terminee",
-        "usage": StepUsage(appels=1, cout_usd=0.1).to_dict(),
+        "usage": StepUsage(calls=1, cost_usd=0.1).to_dict(),
         "horodatage": "2026-09-20T10:00:00+00:00",
         "projet_id": PROJET,
     }

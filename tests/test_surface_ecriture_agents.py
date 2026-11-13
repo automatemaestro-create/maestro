@@ -328,7 +328,7 @@ def test_un_mot_a_un_pair_absent_est_consigne_malgre_tout():
     # Elle est rattachée à la tâche de l'expéditeur et au run, et ne coûte rien :
     # une observation n'entre pas au grand livre (docs/31 §3.2).
     assert etape.run_id == "run-721"
-    assert etape.usage.cout_usd in (None, 0.0)
+    assert etape.usage.cost_usd in (None, 0.0)
 
     # Le run, lui, s'est déroulé normalement — écrire à un pair n'échoue rien.
     assert [r.ok for r in rapport.resultats] == [True, True]

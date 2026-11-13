@@ -48,7 +48,7 @@ ouverte autour d'un chemin qui peut ne consulter personne mesure alors une duré
 que rien ne justifie : quelques centaines de microsecondes sur un exécutant
 chargé, que `ecoule_ms()` tronque à `1`. Le journal ne dit plus « aucun
 arbitrage » mais « une milliseconde d'arbitrage », et la sonde qui garde cette
-distinction (`duree_arbitrage_ms == 0`) rougit un jour sur N — ce qui est arrivé
+distinction (`approval_duration_ms == 0`) rougit un jour sur N — ce qui est arrivé
 sur un diff qui ne touchait que de la documentation. Le remède est de position et
 non de tolérance : `_valide_si_sensible` n'ouvre sa fenêtre qu'**après** avoir
 établi que la tâche est sensible, donc qu'une personne va être consultée. Ce que

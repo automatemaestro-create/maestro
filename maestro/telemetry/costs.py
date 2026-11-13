@@ -81,7 +81,7 @@ def interval_from(
 
 def _interval(record: StepRecord) -> tuple[datetime, datetime] | None:
     """The interval occupied by a journal line — see `interval_from`."""
-    return interval_from(record.horodatage, record.usage.duree_ms)
+    return interval_from(record.horodatage, record.usage.duration_ms)
 
 
 def union_ms(intervals: list[tuple[datetime, datetime]]) -> int | None:
@@ -171,7 +171,7 @@ STEP_ASSESSMENT = "bilan"
 #: that a Maestro refusal holds on its side. It costs (≈ 20 k tokens on the real
 #: CLI) and used to fall into the first task that armed it: the probe runs in an
 #: asyncio task born from the agent session, hence under its collector (#1398).
-#: It is now recorded through `report_usage_du_run`, on this run line. To declare
+#: It is now recorded through `report_run_usage`, on this run line. To declare
 #: here for the reason of `STEP_BRIEF`: without this line, the default rule would
 #: open a phantom task named "sonde".
 STEP_PROBE = "sonde"
@@ -298,19 +298,19 @@ class RunCost:
         spending of the run.
         """
         total = (
-            self.planning.fusion(self.brief)
-            .fusion(self.assessment)
-            .fusion(self.probe)
-            .fusion(self.acceptance)
+            self.planning.merge(self.brief)
+            .merge(self.assessment)
+            .merge(self.probe)
+            .merge(self.acceptance)
         )
         for task in self.tasks:
-            total = total.fusion(task.usage)
+            total = total.merge(task.usage)
         return replace(
             total,
-            duree_ms=self.wall_clock_ms,
-            duree_arbitrage_ms=None,
-            duree_attente_creneau_ms=None,
-            duree_attente_atelier_ms=None,
+            duration_ms=self.wall_clock_ms,
+            approval_duration_ms=None,
+            slot_wait_duration_ms=None,
+            workshop_wait_duration_ms=None,
         )
 
     @classmethod
@@ -337,30 +337,30 @@ class RunCost:
                 # The assessment (#1284): rendered after the end, it costs the
                 # run without occupying it — its interval stays out of the wall
                 # clock time.
-                assessment = assessment.fusion(record.usage)
+                assessment = assessment.merge(record.usage)
                 continue
             if record.etape != STEP_RESUME:
                 interval = _interval(record)
                 if interval is not None:
                     intervals.append(interval)
             if record.etape == STEP_PLANNING:
-                planning = planning.fusion(record.usage)
+                planning = planning.merge(record.usage)
                 continue
             if record.etape == STEP_PROBE:
                 # The checkpoint probe (#1398): a spending of the run, played
                 # during a task without being part of it.
-                probe = probe.fusion(record.usage)
+                probe = probe.merge(record.usage)
                 continue
             if record.etape == STEP_ACCEPTANCE:
                 # The run acceptance (#1530): a step of the run, on its path — its
                 # interval is taken above, its usage on its own line.
-                acceptance = acceptance.fusion(record.usage)
+                acceptance = acceptance.merge(record.usage)
                 continue
             if record.etape == STEP_BRIEF:
                 # A step of the run, not a task (#318) — and merged rather than
                 # assigned: a regenerated brief (#321) records one line per turn,
                 # and the ledger must carry the sum.
-                brief = brief.fusion(record.usage)
+                brief = brief.merge(record.usage)
                 continue
             if record.etape == STEP_RESUME:
                 # Run marker (#96), attached to no task: nothing to account for —
@@ -394,10 +394,10 @@ class RunCost:
                     agent=record.agent,
                     role=record.role,
                     status=record.statut,
-                    usage=entry.usage.fusion(record.usage),
+                    usage=entry.usage.merge(record.usage),
                 )
             else:
-                entry = replace(entry, usage=entry.usage.fusion(record.usage))
+                entry = replace(entry, usage=entry.usage.merge(record.usage))
             entries[task_id] = entry
         return cls(
             run_id=journal.run_id,
@@ -428,7 +428,7 @@ class SpendingCapExceeded(RuntimeError):
     """Raised when the spending of a run exceeds its cap (#9).
 
     Emitted from `report_usage` (hence from the provider, between two model
-    calls) when `SpendingCap.verifie` notices the overrun: it interrupts the
+    calls) when `SpendingCap.check` notices the overrun: it interrupts the
     current step, which the caller records as stopped by the guardrail.
     """
 
@@ -437,7 +437,7 @@ class SpendingCap:
     """Spending guardrail of a run (#9), backed by the ledger (#56).
 
     This is the control the usage collector consults at each measurement
-    (`collect_usage(plafond=...)`). It keeps **no counter**: at each check, the
+    (`collect_usage(spending_cap=...)`). It keeps **no counter**: at each check, the
     spending already committed is reread in the accounting of the run
     (`RunCost.from_journal`) — the telemetry is the single source of the cost —
     and completed with the usage of the current step, not yet recorded in the
@@ -450,8 +450,8 @@ class SpendingCap:
     are checked: crossing either one stops the task.
 
     ⚠ **The token cap counts excluding cache reads** (#1398,
-    `StepUsage.tokens_hors_cache_lu`) — a decision, not a detail. It used to rest
-    on `tokens_total`, which adds up the context of **every** turn: a long task
+    `StepUsage.tokens_excluding_cache_reads`) — a decision, not a detail. It used to rest
+    on `total_tokens`, which adds up the context of **every** turn: a long task
     served by the cache rereads everything that precedes at each call there, and
     got cut on what it rereads (1,845,438 tokens on p5 for $1.87), not on what it
     consumes. Ruled out: the total, for this reason; the context reached alone,
@@ -483,14 +483,14 @@ class SpendingCap:
         self._max_cost_usd = max_cost_usd
         self._max_tokens = max_tokens
 
-    def verifie(self, en_cours: StepUsage) -> None:
-        """Raises `SpendingCapExceeded` if the run spending, `en_cours` included, exceeds.
+    def check(self, current: StepUsage) -> None:
+        """Raises `SpendingCapExceeded` if the run spending, `current` included, exceeds.
 
         The cost goes first (the most telling message when it is known), tokens
         next — the token threshold holds even when the cost is unknown.
         """
-        total = RunCost.from_journal(self._journal).total.fusion(en_cours)
-        cost = total.cout_usd
+        total = RunCost.from_journal(self._journal).total.merge(current)
+        cost = total.cost_usd
         if (
             self._max_cost_usd is not None
             and cost is not None
@@ -502,10 +502,11 @@ class SpendingCap:
             )
         if (
             self._max_tokens is not None
-            and total.tokens_hors_cache_lu > self._max_tokens
+            and total.tokens_excluding_cache_reads > self._max_tokens
         ):
             raise SpendingCapExceeded(
-                f"plafond de tokens dépassé : {total.tokens_hors_cache_lu} tokens consommés "
+                f"plafond de tokens dépassé : {total.tokens_excluding_cache_reads} "
+                "tokens consommés "
                 f"hors cache relu sur l'exécution pour un plafond de {self._max_tokens} "
                 "— tâche stoppée."
             )
@@ -519,20 +520,20 @@ def spending_control_summary(
     """Describes the active spending control in one line, for the operator (#113).
 
     Makes the "silently ineffective cap" case visible: a cost cap armed on a
-    provider that reports no cost (`usage.cout_usd` None) has no grip — only a
+    provider that reports no cost (`usage.cost_usd` None) has no grip — only a
     token cap then really caps. Meant for the run summary and the JSON report
-    (`RunReport`), not for the control logic (carried by `SpendingCap.verifie`).
+    (`RunReport`), not for the control logic (carried by `SpendingCap.check`).
     """
     controls: list[str] = []
     if max_tokens is not None:
         # What the cap counts, stated with the figure (#1398): a "tokens
         # (175438/500000)" next to a total of 1.8 M would read as an error.
         controls.append(
-            f"tokens hors cache relu ({usage.tokens_hors_cache_lu}/{max_tokens})"
+            f"tokens hors cache relu ({usage.tokens_excluding_cache_reads}/{max_tokens})"
         )
     if max_cost_usd is not None:
-        if usage.cout_usd is not None:
-            controls.append(f"coût réel ({usage.cout_usd:.4f}/{max_cost_usd:.4f} $)")
+        if usage.cost_usd is not None:
+            controls.append(f"coût réel ({usage.cost_usd:.4f}/{max_cost_usd:.4f} $)")
         elif max_tokens is None:
             # The only cap set has no grip: spending is bounded by nothing.
             return (

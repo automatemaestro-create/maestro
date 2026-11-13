@@ -50,7 +50,7 @@ _LOGGER = logging.getLogger("maestro.controltower")
 
 def _a_depense(usage: StepUsage) -> bool:
     """La mesure dit-elle quoi que ce soit — un appel, des tokens, un coût ?"""
-    return bool(usage.appels or usage.tokens_total or usage.cout_usd)
+    return bool(usage.calls or usage.total_tokens or usage.cost_usd)
 
 
 #: Sous le demi-centime, un montant s'arrondirait à « 0,00 $US » et se lirait nul :
@@ -70,8 +70,8 @@ def en_clair(usage: StepUsage) -> str:
     `/couts` (relecture visuelle de #1534). Un coût inconnu se dit tel, jamais
     « 0 $ ».
     """
-    tokens = f"{usage.tokens_total:,}".replace(",", " ") + " tokens"
-    cout = usage.cout_usd
+    tokens = f"{usage.total_tokens:,}".replace(",", " ") + " tokens"
+    cout = usage.cost_usd
     if cout is None:
         return f"{tokens} · coût pas encore tarifé"
     if 0 < cout < _DEMI_CENTIME:
@@ -143,8 +143,8 @@ async def _publier(
                 projet_id=projet_id or None,
                 conversation=conversation,
                 usage=usage,
-                cout_usd=usage.cout_usd,
+                cout_usd=usage.cost_usd,
             )
         )
     except Exception:  # noqa: BLE001 — l'observateur ne casse jamais l'observé
-        _LOGGER.exception("Dépense du fil non publiée (%s) : %s", titre, usage.resume_court())
+        _LOGGER.exception("Dépense du fil non publiée (%s) : %s", titre, usage.short_summary())

@@ -268,7 +268,7 @@ async def plan(payload: dict[str, Any]) -> dict[str, Any]:
                 entree=goal,
                 sortie="",
                 erreur=str(exc),
-                usage=collected.total.avec_duree(_ecoule_ms(start)),
+                usage=collected.total.with_duration(_ecoule_ms(start)),
             )
             # Not retryable: a rejected plan (undecodable answer, broken schema)
             # will be rejected the same way next time. The CLI presents it as in
@@ -276,7 +276,7 @@ async def plan(payload: dict[str, Any]) -> dict[str, Any]:
             raise ApplicationError(
                 str(exc), type=type(exc).__name__, non_retryable=True
             ) from exc
-    usage = collected.total.avec_duree(_ecoule_ms(start))
+    usage = collected.total.with_duration(_ecoule_ms(start))
     journal.consigne(
         etape="planification",
         nom="Planification de l'objectif",

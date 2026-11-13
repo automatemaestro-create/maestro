@@ -362,9 +362,9 @@ class RunReport:
     @property
     def usage_totale(self) -> StepUsage:
         """Usage agrégé de l'exécution : cadrage, planification et toutes les tâches."""
-        total = self.planification.fusion(self.cadrage)
+        total = self.planification.merge(self.cadrage)
         for r in self.resultats:
-            total = total.fusion(r.usage)
+            total = total.merge(r.usage)
         return total
 
     @property
@@ -428,7 +428,7 @@ class RunReport:
             "",
             f"{len(self.reussies)}/{len(self.resultats)} tâche(s) réussie(s).",
             f"Usage total (cadrage et planification inclus) : "
-            f"{self.usage_totale.resume_court()}",
+            f"{self.usage_totale.short_summary()}",
             f"Contrôle de dépense : {self.controle_depense}",
             # Le régime du brief est **toujours** annoncé (#320), y compris « sans » :
             # savoir qu'un run n'a attendu personne est une information, pas une
@@ -472,7 +472,7 @@ class RunReport:
                 lignes.append(f"- Worker : `{r.worker}`")
             if r.playbook_version is not None:
                 lignes.append(f"- Playbook : v{r.playbook_version}")
-            lignes.append(f"- Usage : {r.usage.resume_court()}")
+            lignes.append(f"- Usage : {r.usage.short_summary()}")
             if r.ok:
                 lignes.extend(["", r.sortie, ""])
                 if r.fichiers:
@@ -1217,17 +1217,17 @@ class OrchestrationEngine:
                     async with semaphore:
                         result = await self._executor.execute(courante, dependances, journal)
                 if au_plafond is None or not result.au_plafond:
-                    if depense.appels or depense.tokens_total or depense.cout_usd is not None:
+                    if depense.calls or depense.total_tokens or depense.cost_usd is not None:
                         # Ce que les tentatives mises de côté avaient dépensé
                         # voyage avec l'issue : le rapport dit ce que la tâche a
                         # coûté en tout, comme le grand livre.
-                        result = replace(result, usage=depense.fusion(result.usage))
+                        result = replace(result, usage=depense.merge(result.usage))
                     return result
                 # Au plafond (#1182) : la tâche est mise de côté — sa dépense est
                 # au grand livre, son travail sur sa branche — et le run demande.
                 # Le créneau est rendu **avant** d'attendre : une personne qui
                 # répond dans une heure ne retient pas le parallélisme du run.
-                depense = depense.fusion(result.usage)
+                depense = depense.merge(result.usage)
                 commencee = result.agent != "—"
                 if commencee or dernier is None:
                     dernier = result
@@ -1543,7 +1543,7 @@ class OrchestrationEngine:
                 # précédentes : le rapport garde une issue par tâche, et il ne
                 # doit pas perdre ce que la première a coûté.
                 refaits[producteur.id] = replace(
-                    refait, usage=amont[renvoi.tache_id].usage.fusion(refait.usage)
+                    refait, usage=amont[renvoi.tache_id].usage.merge(refait.usage)
                 )
             dependances = [refaits.get(dep.task_id, dep) for dep in dependances]
             if not all(dep.ok for dep in dependances):
@@ -1552,7 +1552,7 @@ class OrchestrationEngine:
                 break
             rejuge = await executer(task, dependances)
             self._solde_si_suspendue(task, rejuge, journal)
-            result = replace(rejuge, usage=result.usage.fusion(rejuge.usage))
+            result = replace(rejuge, usage=result.usage.merge(rejuge.usage))
         return result
 
     def _solde_si_suspendue(self, task: Task, result: TaskResult, journal: RunJournal) -> None:
@@ -1690,7 +1690,7 @@ class OrchestrationEngine:
                 dernier_tour=tour >= tours_max,
                 tour=tour,
             )
-            cadrage = cadrage.fusion(usage)
+            cadrage = cadrage.merge(usage)
         if brief.a_des_questions:
             brief = brief.questions_en_hypotheses(motif_sans_reponse(tour))
         return cadrage, brief, tour
@@ -1754,11 +1754,11 @@ class OrchestrationEngine:
                     entree=objective,
                     sortie="",
                     erreur=str(exc),
-                    usage=recolte.total.avec_duree(_ecoule_ms(debut)),
+                    usage=recolte.total.with_duration(_ecoule_ms(debut)),
                     projet_id=projet_id,
                 )
                 raise
-        usage = recolte.total.avec_duree(_ecoule_ms(debut))
+        usage = recolte.total.with_duration(_ecoule_ms(debut))
         journal.consigne(
             etape="planification",
             nom="Planification de l'objectif",
@@ -2403,7 +2403,7 @@ class OrchestrationEngine:
                         verdict = retenu
                         if verdict is None:
                             verdict, cout = await juge.juge(dossier, journal)
-                            usage = usage.fusion(cout)
+                            usage = usage.merge(cout)
                     elif isinstance(retenu, Rattrapage):
                         # Les tentatives sont épuisées : ce que le juge proposait ne
                         # part pas, mais ce qu'il a compris va dans la question.
@@ -2426,7 +2426,7 @@ class OrchestrationEngine:
                         resultat, executees, geste = await self._retente(
                             task, verdict, dependances, journal, executer, tours, dossier
                         )
-                        usage = usage.fusion(resultat.usage)
+                        usage = usage.merge(resultat.usage)
                         if resultat.ok:
                             ajustements.update(verdict.ajustements)
                             return replace(resultat, usage=usage)
@@ -2500,7 +2500,7 @@ class OrchestrationEngine:
                         # Ce qui manquait est donné : la tâche reprend telle
                         # quelle — rien d'autre n'était à changer en elle.
                         resultat = await executer(derniere_tache, dependances)
-                        usage = usage.fusion(resultat.usage)
+                        usage = usage.merge(resultat.usage)
                         suspendue = self._executor.suspendue(resultat)
                         if resultat.ok:
                             return replace(
@@ -2865,7 +2865,7 @@ class OrchestrationEngine:
         resultats = [issues[sous_tache.id].result() for sous_tache in ordre]
         usage = StepUsage()
         for resultat in resultats:
-            usage = usage.fusion(resultat.usage)
+            usage = usage.merge(resultat.usage)
         echecs = [resultat for resultat in resultats if not resultat.ok]
         derniere = resultats[-1]
         if echecs:
@@ -3033,11 +3033,11 @@ class OrchestrationEngine:
                     entree=objectif,
                     sortie="",
                     erreur=str(exc),
-                    usage=recolte.total.avec_duree(_ecoule_ms(debut)),
+                    usage=recolte.total.with_duration(_ecoule_ms(debut)),
                     projet_id=projet_id,
                 )
                 raise
-        usage = recolte.total.avec_duree(_ecoule_ms(debut))
+        usage = recolte.total.with_duration(_ecoule_ms(debut))
         journal.consigne(
             etape=STEP_BRIEF,
             nom=f"Brief de l'objectif{rang}",
@@ -3328,10 +3328,10 @@ class _AuPlafond:
             run_id=self._journal.run_id,
             projet_id=self._projet_id,
             objectif=self._objectif,
-            depense_usd=total.cout_usd,
+            depense_usd=total.cost_usd,
             # Ce que le plafond en tokens compte — hors cache relu (#1398) —, et non
             # le total : la question montre le chiffre qui l'a fait poser.
-            depense_tokens=total.tokens_hors_cache_lu,
+            depense_tokens=total.tokens_excluding_cache_reads,
             plafond_cout_usd=cout,
             plafond_tokens=jetons,
             raison=raison,

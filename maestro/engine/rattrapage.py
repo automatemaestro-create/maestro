@@ -391,11 +391,11 @@ class JugeDesEchecs:
         panne = ""
         try:
             if compte_a_part:
-                with collect_usage(plafond=self._plafond(journal)) as recolte:
+                with collect_usage(spending_cap=self._plafond(journal)) as recolte:
                     try:
                         verdict = await self._orchestrator.rattrapage(echec, equipe=equipe)
                     finally:
-                        usage = recolte.total.avec_duree(_ecoule_ms(debut))
+                        usage = recolte.total.with_duration(_ecoule_ms(debut))
             else:
                 verdict = await self._orchestrator.rattrapage(echec, equipe=equipe)
         except asyncio.CancelledError:

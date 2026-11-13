@@ -322,8 +322,8 @@ def test_la_tache_expose_sa_mesure_detaillee(client, state):
     state.appliquer(Event(
         type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
         agent="developpeur", role="Développeur", statut="terminee", cout_usd=0.3,
-        usage=StepUsage(appels=1, tokens_entree=500, tokens_sortie=40,
-                        cout_usd=0.3, duree_ms=2000),
+        usage=StepUsage(calls=1, input_tokens=500, output_tokens=40,
+                        cost_usd=0.3, duration_ms=2000),
     ))
 
     (tache,) = client.get("/api/taches?projet=tous").json()
@@ -338,14 +338,14 @@ def test_grand_livre_d_une_execution(client, state):
     state.appliquer(Event(
         type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1",
         agent="orchestrateur", role="Orchestrateur", statut="terminee",
-        usage=StepUsage(appels=1, tokens_entree=200, tokens_sortie=20, cout_usd=0.1),
+        usage=StepUsage(calls=1, input_tokens=200, output_tokens=20, cost_usd=0.1),
     ))
     state.appliquer(Event(
         type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
         titre="Implémenter", agent="developpeur", role="Développeur",
         statut="terminee", cout_usd=0.4,
-        usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=150,
-                        cout_usd=0.4, duree_ms=1200),
+        usage=StepUsage(calls=2, input_tokens=1000, output_tokens=150,
+                        cost_usd=0.4, duration_ms=1200),
     ))
 
     cout = client.get("/api/executions/run-1/cout").json()
@@ -379,13 +379,13 @@ def test_le_cadrage_a_son_seau_dans_le_grand_livre(client, state):
         type=EVENEMENT_AGENT_ACTIVITE, run_id="run-brief",
         agent="orchestrateur", role="Orchestrateur", statut="terminee",
         etape_run="brief", titre="Brief de l'objectif",
-        usage=StepUsage(appels=1, tokens_entree=300, cout_usd=0.02, duree_ms=3000),
+        usage=StepUsage(calls=1, input_tokens=300, cost_usd=0.02, duration_ms=3000),
     ))
     state.appliquer(Event(
         type=EVENEMENT_AGENT_ACTIVITE, run_id="run-brief",
         agent="orchestrateur", role="Orchestrateur", statut="terminee",
         etape_run="planification", titre="Planification",
-        usage=StepUsage(appels=1, tokens_entree=200, cout_usd=0.05, duree_ms=2000),
+        usage=StepUsage(calls=1, input_tokens=200, cost_usd=0.05, duration_ms=2000),
     ))
 
     cout = client.get("/api/executions/run-brief/cout").json()
@@ -406,7 +406,7 @@ def test_une_activite_de_run_sans_etape_nommee_reste_en_planification(client, st
         type=EVENEMENT_AGENT_ACTIVITE, run_id="run-ancien",
         agent="orchestrateur", role="Orchestrateur", statut="terminee",
         titre="Brief de l'objectif",
-        usage=StepUsage(appels=1, cout_usd=0.02),
+        usage=StepUsage(calls=1, cost_usd=0.02),
     ))
 
     cout = client.get("/api/executions/run-ancien/cout").json()
@@ -427,13 +427,13 @@ def test_la_duree_d_un_run_unit_les_intervalles_de_ses_taches(client, state):
         type=EVENEMENT_TACHE_STATUT, run_id="run-union", tache_id="t1",
         titre="Une", agent="dev", role="Développeur", statut="terminee",
         horodatage="2026-09-20T10:01:00+00:00",
-        usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=60_000),
+        usage=StepUsage(calls=1, cost_usd=0.1, duration_ms=60_000),
     ))
     state.appliquer(Event(
         type=EVENEMENT_TACHE_STATUT, run_id="run-union", tache_id="t2",
         titre="Deux", agent="qa", role="QA", statut="terminee",
         horodatage="2026-09-20T10:01:30+00:00",
-        usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=60_000),
+        usage=StepUsage(calls=1, cost_usd=0.1, duration_ms=60_000),
     ))
 
     cout = client.get("/api/executions/run-union/cout").json()
@@ -454,8 +454,8 @@ def test_la_duree_d_une_tache_du_grand_livre_est_son_travail(client, state):
     state.appliquer(Event(
         type=EVENEMENT_TACHE_STATUT, run_id="run-attente", tache_id="t1",
         titre="Attendue", agent="dev", role="Développeur", statut="terminee",
-        usage=StepUsage(appels=1, cout_usd=0.1).avec_duree(
-            780_000, attente_creneau_ms=0, attente_atelier_ms=720_000
+        usage=StepUsage(calls=1, cost_usd=0.1).with_duration(
+            780_000, slot_wait_ms=0, workshop_wait_ms=720_000
         ),
     ))
 
@@ -479,17 +479,17 @@ def test_le_grand_livre_survit_au_redemarrage_de_l_api():
     evenements = [
         Event(type=EVENEMENT_AGENT_ACTIVITE, run_id="run-persistant",
               agent="orchestrateur", role="Orchestrateur", statut="terminee",
-              usage=StepUsage(appels=1, tokens_entree=200, tokens_sortie=20, cout_usd=0.1)),
+              usage=StepUsage(calls=1, input_tokens=200, output_tokens=20, cost_usd=0.1)),
         Event(type=EVENEMENT_TACHE_STATUT, run_id="run-persistant", tache_id="t1",
               titre="Schéma", agent="bdd", role="Base de données", statut="terminee",
               cout_usd=0.4,
-              usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=150,
-                              cout_usd=0.4, duree_ms=900)),
+              usage=StepUsage(calls=2, input_tokens=1000, output_tokens=150,
+                              cost_usd=0.4, duration_ms=900)),
         Event(type=EVENEMENT_TACHE_STATUT, run_id="run-persistant", tache_id="t2",
               titre="API", agent="developpeur", role="Développeur", statut="terminee",
               cout_usd=0.2,
-              usage=StepUsage(appels=1, tokens_entree=500, tokens_sortie=60,
-                              cout_usd=0.2, duree_ms=400)),
+              usage=StepUsage(calls=1, input_tokens=500, output_tokens=60,
+                              cost_usd=0.2, duration_ms=400)),
     ]
 
     async def _consigner():
@@ -517,12 +517,12 @@ def test_grand_livre_rattache_les_annexes_a_leur_tache(client, state):
     state.appliquer(Event(
         type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1", tache_id="t1",
         agent="devops", role="DevOps / SRE", statut="approuve",
-        usage=StepUsage(appels=1, cout_usd=0.05),
+        usage=StepUsage(calls=1, cost_usd=0.05),
     ))
     state.appliquer(Event(
         type=EVENEMENT_MESSAGE_INTER_AGENTS, run_id="run-1", tache_id="t1",
         agent="qa", role="QA / Testeur", detail="handoff",
-        usage=StepUsage(cout_usd=0.01),
+        usage=StepUsage(cost_usd=0.01),
     ))
 
     cout = client.get("/api/executions/run-1/cout").json()
@@ -551,12 +551,12 @@ def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state
     journal.consigne(etape="planification", nom="Planification de l'objectif",
                      agent="orchestrateur", role="Orchestrateur", statut="terminee",
                      entree="objectif", sortie="2 tâche(s) planifiée(s)",
-                     usage=StepUsage(appels=1, tokens_entree=300, tokens_sortie=30,
-                                     cout_usd=0.05))
+                     usage=StepUsage(calls=1, input_tokens=300, output_tokens=30,
+                                     cost_usd=0.05))
     journal.consigne(etape="t1", nom="Implémenter", agent="developpeur",
                      role="Développeur", statut="terminee", entree="e", sortie="s",
-                     usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=100,
-                                     cout_usd=0.3, duree_ms=1000))
+                     usage=StepUsage(calls=2, input_tokens=1000, output_tokens=100,
+                                     cost_usd=0.3, duration_ms=1000))
     journal.consigne(etape="t1:validation", nom="Validation — Implémenter",
                      agent="devops", role="DevOps / SRE", statut="approuve",
                      entree="e", sortie="s", usage=StepUsage())
@@ -574,8 +574,8 @@ def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state
 
 def _usage(cout_usd, *, entree=100, sortie=10, appels=1):
     """Mesure d'usage compacte pour les scénarios analytics."""
-    return StepUsage(appels=appels, tokens_entree=entree, tokens_sortie=sortie,
-                     cout_usd=cout_usd)
+    return StepUsage(calls=appels, input_tokens=entree, output_tokens=sortie,
+                     cost_usd=cout_usd)
 
 
 @pytest.fixture()
@@ -1043,8 +1043,8 @@ def test_la_ligne_de_journal_embarque_la_mesure_complete():
 
     (event,) = evenements_depuis_step(record)
 
-    assert event.usage == StepUsage(appels=2, tokens_entree=100, tokens_sortie=10,
-                                    cout_usd=0.12, duree_ms=1500)
+    assert event.usage == StepUsage(calls=2, input_tokens=100, output_tokens=10,
+                                    cost_usd=0.12, duration_ms=1500)
     assert event.cout_usd == pytest.approx(0.12)  # le raccourci scalaire reste posé
 
 
@@ -1061,7 +1061,7 @@ def test_le_journal_publie_ses_etapes_en_evenements():
         journal = RunJournal(run_id="run-42")
         journal.consigne(etape="t1", nom="Implémenter", agent="developpeur",
                          role="Développeur", statut="terminee", entree="e",
-                         sortie="s", usage=StepUsage(cout_usd=0.05))
+                         sortie="s", usage=StepUsage(cost_usd=0.05))
     finally:
         logging.getLogger(LOGGER_NAME).removeHandler(handler)
 
@@ -1092,7 +1092,7 @@ def test_du_debut_a_l_issue_le_kanban_suit_la_tache(client, state):
 
     journal.consigne(etape="t1", nom="Implémenter", agent="developpeur",
                      role="Développeur", statut="terminee", entree="e", sortie="s",
-                     usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=1200))
+                     usage=StepUsage(calls=1, cost_usd=0.1, duration_ms=1200))
     for event in evenements_depuis_step(journal.records[-1].to_dict()):
         state.appliquer(event)
 
@@ -2032,8 +2032,8 @@ def test_evenement_avec_usage_aller_retour_json():
     event = Event(
         type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
         statut="terminee", cout_usd=0.3,
-        usage=StepUsage(appels=1, tokens_entree=10, tokens_sortie=2,
-                        cout_usd=0.3, duree_ms=800, outils=("Read", "Bash")),
+        usage=StepUsage(calls=1, input_tokens=10, output_tokens=2,
+                        cost_usd=0.3, duration_ms=800, tools=("Read", "Bash")),
     )
     assert Event.from_json(event.to_json()) == event
 

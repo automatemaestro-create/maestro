@@ -202,14 +202,14 @@ from maestro.sandbox.verification import (
 )
 from maestro.telemetry import (
     STEP_ACCEPTANCE,
-    ConsigneDepenseDuRun,
     RunJournal,
+    RunSpendRecorder,
     SpendingCap,
     SpendingCapExceeded,
     StepUsage,
     collect_usage,
-    depenses_du_run,
-    usage_en_cours,
+    current_usage,
+    run_spend_channel,
 )
 
 #: Statuts terminaux d'une tâche, alignés sur la machine à états (docs/03 §3).
@@ -1344,8 +1344,8 @@ class LocalExecutor(TaskExecutor):
         # point de contrôle (#1304) — part sur une ligne du run (#1398), et non
         # dans le collecteur ci-dessous, qui le rangeait chez la première tâche.
         with (
-            depenses_du_run(_consigne_depense_du_run(journal, task.projet_id)),
-            collect_usage(plafond=plafond, on_mesure=releve.mesure) as recolte,
+            run_spend_channel(_consigne_depense_du_run(journal, task.projet_id)),
+            collect_usage(spending_cap=plafond, on_measure=releve.mesure) as recolte,
         ):
             refus = _refus_plafond_creve(task, plafond)
             if refus is not None:
@@ -1483,11 +1483,11 @@ class LocalExecutor(TaskExecutor):
         # chose.
         result = replace(
             result,
-            usage=recolte.total.avec_duree(
+            usage=recolte.total.with_duration(
                 _ecoule_ms(debut),
-                arbitrage_ms=deliberation.credit.ecoule_ms(),
-                attente_creneau_ms=attente_creneau_ms,
-                attente_atelier_ms=attente_atelier_ms,
+                approval_ms=deliberation.credit.ecoule_ms(),
+                slot_wait_ms=attente_creneau_ms,
+                workshop_wait_ms=attente_atelier_ms,
             ),
             blocages=tuple(blocages),
         )
@@ -1659,7 +1659,7 @@ class LocalExecutor(TaskExecutor):
                 "aucune tâche du run n'a abouti : il n'y a pas de livrable intégré à confronter",
             )
         else:
-            with collect_usage(plafond=self._plafonds.controle(journal)) as recolte:
+            with collect_usage(spending_cap=self._plafonds.controle(journal)) as recolte:
                 async with self._lieu_de_la_recette(run_id, projet) as (
                     espace,
                     origine,
@@ -1687,7 +1687,7 @@ class LocalExecutor(TaskExecutor):
                     )
             usage = recolte.total
         recette, redaction = await self._ecrit_la_recette(recette, projet, run_id, brief)
-        usage = usage.fusion(redaction)
+        usage = usage.merge(redaction)
         journal.consigne(
             etape=STEP_ACCEPTANCE,
             nom="Recette du run — les critères du brief",
@@ -1697,7 +1697,7 @@ class LocalExecutor(TaskExecutor):
             entree=f"{len(criteres)} critère(s) d'acceptation du brief, sur le livrable intégré",
             sortie=recette.resume(),
             description=recette.preuves(),
-            usage=usage.avec_duree(_ecoule_ms(debut)),
+            usage=usage.with_duration(_ecoule_ms(debut)),
             projet_id=projet_id,
             verification=recette.to_dict(),
         )
@@ -3488,7 +3488,7 @@ class LocalExecutor(TaskExecutor):
             # tentatives précédentes sur une relance. C'est ce qui distingue,
             # dès la colonne « En cours », une tâche qui n'a encore rien
             # dépensé d'une tâche dont on ne sait rien.
-            self._releve_usage(task, agent, journal, usage_en_cours())
+            self._releve_usage(task, agent, journal, current_usage())
             try:
                 sortie, fichiers = await self._produce(
                     agent, task, description, playbook, serveurs_mcp, politique, journal,
@@ -4046,8 +4046,8 @@ class LocalExecutor(TaskExecutor):
         tarifé, et `None` s'il ne l'a pas encore fait (le SDK Claude ne tarife
         qu'au résultat) : les tokens, eux, sont toujours là.
         """
-        if not usage.appels and not usage.tokens_total and not usage.tours:
-            usage = replace(usage, cout_usd=0.0)
+        if not usage.calls and not usage.total_tokens and not usage.turns:
+            usage = replace(usage, cost_usd=0.0)
         journal.releve(
             tache_id=task.id,
             nom=task.titre,
@@ -4977,7 +4977,7 @@ def _refus_plafond_creve(task: Task, plafond: SpendingCap | None) -> TaskResult 
     if plafond is None:
         return None
     try:
-        plafond.verifie(StepUsage())
+        plafond.check(StepUsage())
     except SpendingCapExceeded as exc:
         return _echec(
             task,
@@ -4991,7 +4991,7 @@ def _refus_plafond_creve(task: Task, plafond: SpendingCap | None) -> TaskResult 
     return None
 
 
-def _consigne_depense_du_run(journal: RunJournal, projet_id: str | None) -> ConsigneDepenseDuRun:
+def _consigne_depense_du_run(journal: RunJournal, projet_id: str | None) -> RunSpendRecorder:
     """Le consignataire des dépenses du run nées pendant une tâche (#1398).
 
     Une ligne du journal à l'étape que le fournisseur nomme — une étape **du run**,
@@ -5008,7 +5008,7 @@ def _consigne_depense_du_run(journal: RunJournal, projet_id: str | None) -> Cons
             role=ROLE_ORCHESTRATEUR,
             statut=STATUT_TERMINEE,
             entree="",
-            sortie=usage.resume_court(),
+            sortie=usage.short_summary(),
             usage=usage,
             projet_id=projet_id,
         )
@@ -5028,18 +5028,18 @@ def _resume_releve(usage: StepUsage) -> str:
     dit sa part relue en cache : « 1 845 438 tokens » seul se lisait comme une
     tâche gloutonne, quand il additionne le contexte de chacun de ses tours.
     """
-    if not usage.appels and not usage.tokens_total and not usage.tours:
+    if not usage.calls and not usage.total_tokens and not usage.turns:
         return "rien consommé encore"
-    morceaux = [] if usage.contexte_max is None else [f"contexte {usage.contexte_max} tokens"]
+    morceaux = [] if usage.max_context is None else [f"contexte {usage.max_context} tokens"]
     morceaux.append(
-        f"{usage.tokens_total} tokens traités dont {usage.tokens_cache_lus} relus en cache"
-        if usage.tokens_cache_lus
-        else f"{usage.tokens_total} tokens"
+        f"{usage.total_tokens} tokens traités dont {usage.cache_read_tokens} relus en cache"
+        if usage.cache_read_tokens
+        else f"{usage.total_tokens} tokens"
     )
-    if usage.tours:
-        morceaux.append(f"{usage.tours} tour(s)")
-    if usage.cout_usd is not None:
-        morceaux.append(f"{usage.cout_usd:.4f} $ engagés")
+    if usage.turns:
+        morceaux.append(f"{usage.turns} tour(s)")
+    if usage.cost_usd is not None:
+        morceaux.append(f"{usage.cost_usd:.4f} $ engagés")
     else:
         morceaux.append("coût pas encore tarifé")
     return " · ".join(morceaux)
@@ -5048,7 +5048,7 @@ def _resume_releve(usage: StepUsage) -> str:
 class _ReleveUsage:
     """L'observateur du collecteur d'une exécution (#835) : relève à débit borné.
 
-    Rappelé par le collecteur à chaque mesure (`collect_usage(on_mesure=…)`), il
+    Rappelé par le collecteur à chaque mesure (`collect_usage(on_measure=…)`), il
     relève le cumul au journal **au plus une fois par fenêtre** — celle des salves
     d'activité, `PERIODE_RELEVE_S` — et la première fois sans attendre. Sauter un
     relevé ne perd rien (le suivant porte le cumul, l'étape finale solde tout) ;

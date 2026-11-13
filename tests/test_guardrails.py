@@ -164,8 +164,8 @@ class DepensierProvider(ModelProvider):
         return True
 
     async def generate(self, prompt, *, model, system_prompt=None):
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
-        report_usage(StepUsage(appels=1, cout_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
+        report_usage(StepUsage(calls=1, cost_usd=0.006))
         self.acheves += 1
         return "LIVRABLE coûteux"
 
@@ -181,7 +181,7 @@ def test_le_plafond_de_depense_stoppe_la_tache_en_cours():
     # Stoppée entre les deux signalements : le travail postérieur n'a pas eu lieu…
     assert provider.acheves == 0
     # …mais le coût déjà engagé reste visible sur la tâche.
-    assert tache.usage.cout_usd == pytest.approx(0.012)
+    assert tache.usage.cost_usd == pytest.approx(0.012)
 
 
 def test_sous_le_plafond_la_tache_s_execute_normalement():
@@ -191,7 +191,7 @@ def test_sous_le_plafond_la_tache_s_execute_normalement():
 
     assert all(r.ok for r in report.resultats)
     assert provider.acheves == 1
-    assert report.usage_totale.cout_usd == pytest.approx(0.012)
+    assert report.usage_totale.cost_usd == pytest.approx(0.012)
 
 
 def _plan_deux_taches_independantes():
@@ -222,13 +222,13 @@ def test_le_plafond_est_un_budget_d_execution_pas_par_tache():
 
     premiere, seconde = report.resultats
     assert premiere.ok
-    assert premiere.usage.cout_usd == pytest.approx(0.012)
+    assert premiere.usage.cost_usd == pytest.approx(0.012)
     assert seconde.statut == "echec"
     assert "plafond de dépense dépassé" in (seconde.erreur or "")
     # Stoppée entre ses deux signalements (0.018 $ puis 0.024 $ de cumul run) :
     # le travail postérieur n'a pas eu lieu, le coût engagé reste visible.
     assert provider.acheves == 1
-    assert seconde.usage.cout_usd == pytest.approx(0.012)
+    assert seconde.usage.cost_usd == pytest.approx(0.012)
 
 
 def test_une_execution_au_budget_epuise_ne_demarre_plus_aucune_tache():
@@ -252,8 +252,8 @@ def test_une_execution_au_budget_epuise_ne_demarre_plus_aucune_tache():
     assert "plafond de dépense dépassé" in (seconde.erreur or "")
     # Jamais démarrée : ni agent élu, ni appel modèle, ni coût engagé.
     assert seconde.agent == "—" and seconde.role == "non exécutée"
-    assert seconde.usage.appels == 0
-    assert seconde.usage.cout_usd is None
+    assert seconde.usage.calls == 0
+    assert seconde.usage.cost_usd is None
     assert provider.acheves == 0
 
 
@@ -277,8 +277,8 @@ class SansCoutProvider(ModelProvider):
         return True
 
     async def generate(self, prompt, *, model, system_prompt=None):
-        report_usage(StepUsage(appels=1, tokens_sortie=400, cout_usd=None))
-        report_usage(StepUsage(appels=1, tokens_sortie=400, cout_usd=None))
+        report_usage(StepUsage(calls=1, output_tokens=400, cost_usd=None))
+        report_usage(StepUsage(calls=1, output_tokens=400, cost_usd=None))
         self.acheves += 1
         return "LIVRABLE sans coût rapporté"
 
@@ -297,8 +297,8 @@ def test_le_plafond_en_tokens_stoppe_un_run_sans_cout_rapporte():
     # postérieur au dépassement n'a pas eu lieu…
     assert provider.acheves == 0
     # …mais les tokens engagés (et le coût, toujours inconnu) restent visibles.
-    assert tache.usage.tokens_total == 800
-    assert tache.usage.cout_usd is None
+    assert tache.usage.total_tokens == 800
+    assert tache.usage.cost_usd is None
 
 
 def test_le_rapport_dit_que_le_controle_en_tokens_a_tenu_sans_cout():
@@ -360,7 +360,7 @@ def test_le_timeout_stoppe_la_tache_trop_longue_sans_gener_les_autres():
     lente, rapide = report.resultats
     assert lente.statut == "echec"
     assert "time-out" in (lente.erreur or "")
-    assert lente.usage.duree_ms is not None  # la durée de la tâche stoppée reste mesurée
+    assert lente.usage.duration_ms is not None  # la durée de la tâche stoppée reste mesurée
     assert rapide.ok  # la boucle continue : l'autre tâche aboutit
 
 

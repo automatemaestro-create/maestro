@@ -1471,7 +1471,7 @@ franchi en plein tour — laisse ses tokens au grand livre **sans coût**, et l'
 soldait le relevé : le run redevenait `cout_partiel: false`. Mesuré sur le run
 `3fe501fc0878` (2026-09-24) : 1,17 $ affichés « complets » pour 2 794 675 tokens, dont
 2 092 911 sans prix. La mesure porte désormais la part que le coût ne couvre pas,
-`StepUsage.tokens_non_tarifes` : **tous** les tokens d'une mesure sans coût, posé à la
+`StepUsage.unpriced_tokens` : **tous** les tokens d'une mesure sans coût, posé à la
 construction — un fournisseur qui ne tarife pas, un tour signalé avant son résultat
 ou une ligne de journal plus ancienne le disent sans rien déclarer. La fusion la
 **somme** (1,17 $ tarifés plus 2 M de tokens sans prix font un coût de 1,17 $ **et**
@@ -2209,9 +2209,9 @@ commentaire le disait déjà : *« attendre son tour n'est pas travailler »*. #
 l'**arbitrage** de cette durée ; ces deux-là y restaient, et l'écran affichait de toute façon
 l'horloge brute.
 
-**Ce qui est mesuré.** `StepUsage` porte désormais `duree_attente_creneau_ms` et
-`duree_attente_atelier_ms` à côté de `duree_arbitrage_ms` — des **parts** de `duree_ms`, jamais un
-temps de plus. `duree_attente_ms` en porte le cumul et `duree_execution_ms` ce qui reste : le
+**Ce qui est mesuré.** `StepUsage` porte désormais `slot_wait_duration_ms` et
+`workshop_wait_duration_ms` à côté de `approval_duration_ms` — des **parts** de `duration_ms`, jamais un
+temps de plus. `wait_duration_ms` en porte le cumul et `work_duration_ms` ce qui reste : le
 travail. Deux champs d'attente et non un, parce que les deux n'appellent pas le même geste — un
 créneau qui manque se corrige en ajoutant des instances à l'agent, un atelier qui bloque est le
 régime de sérialisation d'un projet non versionné, qu'on ne change pas à la légère. Les fondre

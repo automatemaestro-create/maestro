@@ -266,7 +266,7 @@ class NotificateurRun:
             entree=message,
             sortie=sortie,
             erreur=erreur,
-            usage=recolte.total.avec_duree(duree_ms),
+            usage=recolte.total.with_duration(duree_ms),
         )
 
 
@@ -291,7 +291,7 @@ def _message_fin_de_run(report: Any) -> str:
         f"• Tâches : {len(report.reussies)}/{len(report.resultats)} réussie(s)"
         + (f", {len(report.echouees)} en échec" if report.echouees else "")
         + (f", {len(report.bloquees)} bloquée(s)" if report.bloquees else ""),
-        f"• Usage : {report.usage_totale.resume_court()}",
+        f"• Usage : {report.usage_totale.short_summary()}",
     ]
     if report.run_id:
         lignes.append(f"• run_id : {report.run_id}")

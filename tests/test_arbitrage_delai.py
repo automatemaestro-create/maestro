@@ -249,7 +249,7 @@ def test_un_arbitrage_plus_long_que_le_delai_ne_tue_pas_la_tache(store):
     assert len(validateur.demandes) == 1  # la personne a bien été consultée
     # Et la preuve que le scénario a bien joué ce qu'il prétend jouer : le temps
     # d'arbitrage mesuré dépasse le délai qui aurait dû tuer la tâche.
-    assert resultat.usage.duree_arbitrage_ms >= DELAI_S * 1000
+    assert resultat.usage.approval_duration_ms >= DELAI_S * 1000
 
 
 def test_le_delai_tue_toujours_une_tache_simplement_lente(store):
@@ -307,7 +307,7 @@ def test_le_temps_paye_avant_l_armement_du_delai_n_est_pas_rendu():
     assert resultat.statut == "echec"
     assert "time-out" in (resultat.erreur or "")
     # La validation a bien été payée, et elle se lit dans le journal…
-    assert resultat.usage.duree_arbitrage_ms >= DELIBERATION_S * 1000
+    assert resultat.usage.approval_duration_ms >= DELIBERATION_S * 1000
     # …sans avoir été rendue au délai : le message ne l'annonce pas.
     assert "rendues à l'arbitrage" not in (resultat.erreur or "")
 
@@ -509,15 +509,15 @@ def test_le_journal_distingue_le_temps_d_execution_du_temps_d_arbitrage(store):
     resultat, journal = _joue(_moteur(ProviderQuiArbitre(), store, guardrails=garde))
 
     usage = resultat.usage
-    assert usage.duree_arbitrage_ms >= DELIBERATION_S * 1000
+    assert usage.approval_duration_ms >= DELIBERATION_S * 1000
     # Une **part** de la durée horloge, jamais un temps de plus.
-    assert usage.duree_arbitrage_ms <= usage.duree_ms
+    assert usage.approval_duration_ms <= usage.duration_ms
     # Ce qui reste est le temps réellement passé à travailler — proche de zéro
     # ici, où le fournisseur factice ne fait rien d'autre qu'attendre.
-    assert usage.duree_execution_ms < DELIBERATION_S * 1000
+    assert usage.work_duration_ms < DELIBERATION_S * 1000
     # Et c'est bien l'étape finale de la tâche qui le porte, pas une étape annexe.
     (finale,) = [r for r in journal.records if r.etape == "tache-unique"]
-    assert finale.usage.duree_arbitrage_ms == usage.duree_arbitrage_ms
+    assert finale.usage.approval_duration_ms == usage.approval_duration_ms
 
 
 def test_une_fenetre_ouverte_sans_arbitrage_serait_bien_comptee():
@@ -537,7 +537,7 @@ def test_une_fenetre_ouverte_sans_arbitrage_serait_bien_comptee():
 
     assert resultat.ok, resultat.erreur
     assert provider.credit.sollicite  # une fenêtre a bien été ouverte…
-    assert resultat.usage.duree_arbitrage_ms >= 50  # …et son temps est compté
+    assert resultat.usage.approval_duration_ms >= 50  # …et son temps est compté
 
 
 def test_sans_arbitrage_la_part_est_nulle_et_la_duree_reste_celle_du_travail():
@@ -547,8 +547,8 @@ def test_sans_arbitrage_la_part_est_nulle_et_la_duree_reste_celle_du_travail():
 
     resultat, _ = _joue(_moteur(provider))
 
-    assert resultat.usage.duree_arbitrage_ms == 0
-    assert resultat.usage.duree_execution_ms == resultat.usage.duree_ms
+    assert resultat.usage.approval_duration_ms == 0
+    assert resultat.usage.work_duration_ms == resultat.usage.duration_ms
     # Et le `0` ci-dessus est un **fait**, pas une mesure assez petite pour être
     # tronquée (#880) : le crédit n'a jamais été sollicité, donc aucune horloge
     # n'a été lue. C'est cette moitié-là qui rend la sonde insensible à la charge
@@ -559,12 +559,12 @@ def test_sans_arbitrage_la_part_est_nulle_et_la_duree_reste_celle_du_travail():
 def test_la_part_d_arbitrage_survit_a_l_aller_retour_json():
     # Le journal est du JSON Lines : ce qui ne fait pas l'aller-retour n'existe
     # pas pour l'audit d'un run, qui le relit (#495).
-    usage = StepUsage(appels=1).avec_duree(12_000, arbitrage_ms=8_000)
+    usage = StepUsage(calls=1).with_duration(12_000, approval_ms=8_000)
 
     relu = StepUsage.from_dict(json.loads(json.dumps(usage.to_dict())))
 
-    assert relu.duree_arbitrage_ms == 8_000
-    assert relu.duree_execution_ms == 4_000
+    assert relu.approval_duration_ms == 8_000
+    assert relu.work_duration_ms == 4_000
 
 
 def test_une_mesure_ecrite_avant_ce_lot_se_relit_sans_part_d_arbitrage():
@@ -572,16 +572,16 @@ def test_une_mesure_ecrite_avant_ce_lot_se_relit_sans_part_d_arbitrage():
     # d'exécution retombe alors sur la durée horloge — ce qu'elle a toujours été.
     relu = StepUsage.from_dict({"appels": 1, "duree_ms": 5_000})
 
-    assert relu.duree_arbitrage_ms is None
-    assert relu.duree_execution_ms == 5_000
+    assert relu.approval_duration_ms is None
+    assert relu.work_duration_ms == 5_000
 
 
 def test_le_resume_ne_nomme_l_arbitrage_que_s_il_a_eu_lieu():
     # Annoncer « dont 0,0 s d'arbitrage » sur chaque tâche d'un run apprendrait à
     # ne plus lire la mention — et c'est elle qui doit sauter aux yeux le jour où
     # une tâche a passé quatre minutes à attendre quelqu'un.
-    sans = StepUsage(appels=1).avec_duree(12_000, arbitrage_ms=0).resume_court()
-    avec = StepUsage(appels=1).avec_duree(12_000, arbitrage_ms=8_000).resume_court()
+    sans = StepUsage(calls=1).with_duration(12_000, approval_ms=0).short_summary()
+    avec = StepUsage(calls=1).with_duration(12_000, approval_ms=8_000).short_summary()
 
     assert "arbitrage" not in sans
     assert "durée 12.0 s" in sans
@@ -591,12 +591,12 @@ def test_le_resume_ne_nomme_l_arbitrage_que_s_il_a_eu_lieu():
 def test_la_fusion_agrege_les_deux_durees_sans_perdre_l_inconnu():
     # `None` reste `None` face à `None`, et se laisse absorber par une valeur :
     # la règle de tous les compteurs optionnels de `StepUsage`.
-    inconnu = StepUsage(appels=1)
-    mesure = StepUsage(appels=1).avec_duree(1_000, arbitrage_ms=400)
+    inconnu = StepUsage(calls=1)
+    mesure = StepUsage(calls=1).with_duration(1_000, approval_ms=400)
 
-    assert inconnu.fusion(inconnu).duree_arbitrage_ms is None
-    assert inconnu.fusion(mesure).duree_arbitrage_ms == 400
-    assert mesure.fusion(mesure).duree_arbitrage_ms == 800
+    assert inconnu.merge(inconnu).approval_duration_ms is None
+    assert inconnu.merge(mesure).approval_duration_ms == 400
+    assert mesure.merge(mesure).approval_duration_ms == 800
 
 
 # --- ④ Le crédit : l'union, jamais la somme ---------------------------------------------

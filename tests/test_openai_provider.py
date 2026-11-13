@@ -231,11 +231,11 @@ def test_generate_signale_l_usage_au_collecteur(endpoint):
         _run(_provider(endpoint).generate("Bonjour", model="m"))
 
     total = collecteur.total
-    assert total.appels == 1
-    assert total.tokens_entree == 12
-    assert total.tokens_sortie == 34
-    assert total.cout_usd is None  # le dialecte ne rapporte pas de coût : inconnu, pas nul
-    assert total.duree_api_ms is not None
+    assert total.calls == 1
+    assert total.input_tokens == 12
+    assert total.output_tokens == 34
+    assert total.cost_usd is None  # le dialecte ne rapporte pas de coût : inconnu, pas nul
+    assert total.api_duration_ms is not None
 
 
 def test_generate_signale_une_erreur_http_clairement(endpoint):
@@ -348,10 +348,10 @@ def test_generate_stream_compte_les_tokens_comme_l_aller_simple(endpoint):
         assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
 
     total = collecteur.total
-    assert total.appels == 1
-    assert total.tokens_entree == 12
-    assert total.tokens_sortie == 34
-    assert total.duree_api_ms is not None
+    assert total.calls == 1
+    assert total.input_tokens == 12
+    assert total.output_tokens == 34
+    assert total.api_duration_ms is not None
 
 
 def test_generate_stream_rejoue_sans_l_option_quand_l_endpoint_la_refuse(endpoint):
@@ -376,7 +376,7 @@ def test_generate_stream_rejoue_sans_l_option_quand_l_endpoint_la_refuse(endpoin
         assert _morceaux(_provider(endpoint), model="m") == ["PO", "NG"]
 
     assert vues == [True, False]
-    assert collecteur.total.tokens_sortie == 0
+    assert collecteur.total.output_tokens == 0
 
 
 def test_generate_stream_signale_une_erreur_http_clairement(endpoint):

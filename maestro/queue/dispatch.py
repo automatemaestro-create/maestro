@@ -113,7 +113,7 @@ class CeleryExecutor(TaskExecutor):
                         "— worker indisponible ou tâche toujours en file."
                     ),
                 ),
-                usage=StepUsage().avec_duree(_ecoule_ms(start)),
+                usage=StepUsage().with_duration(_ecoule_ms(start)),
             )
         except Exception as exc:  # transport or worker error: recorded as a failure, never raised
             result = replace(
@@ -124,7 +124,7 @@ class CeleryExecutor(TaskExecutor):
                     score=0,
                     erreur=f"file de tâches : {exc}",
                 ),
-                usage=StepUsage().avec_duree(_ecoule_ms(start)),
+                usage=StepUsage().with_duration(_ecoule_ms(start)),
             )
         journal.consigne(
             etape=task.id,

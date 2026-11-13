@@ -352,7 +352,7 @@ def test_un_reglage_explicite_a_une_instance_est_respecte(tmp_path: Path) -> Non
 
     assert all(r.ok for r in rapport.resultats)
     assert fournisseur.pic == 1
-    attentes = [r.usage.duree_attente_creneau_ms or 0 for r in rapport.resultats]
+    attentes = [r.usage.slot_wait_duration_ms or 0 for r in rapport.resultats]
     assert sum(1 for attente in attentes if attente > 0) == 2, attentes
     # L'annonce dit que ce réglage-là est gardé : c'est lui qui explique la file.
     (annonce,) = _annonces(journal)
@@ -407,7 +407,7 @@ def test_le_plafond_derive_et_son_origine_s_annoncent_avant_la_premiere_tache(
     (annonce,) = _annonces(journal)
     assert annonce.agent == "orchestrateur"
     assert annonce.projet_id == projet.id
-    assert annonce.usage.appels == 0
+    assert annonce.usage.calls == 0
     # Le chiffre et son origine : la largeur du plan.
     assert "3" in annonce.sortie
     assert "largeur" in annonce.entree

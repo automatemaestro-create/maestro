@@ -1,33 +1,32 @@
-"""Mesure d'usage des appels modèle — tokens, coût, durée, outils (ticket #8).
+"""Usage of model calls: tokens, cost, duration, tools (#8).
 
-`StepUsage` est la mesure d'usage d'une étape (un ou plusieurs appels modèle
-agrégés). Sa remontée passe par un **collecteur de contexte** (`contextvars`) :
-l'appelant ouvre `collect_usage()` autour d'un travail, et les fournisseurs
-signalent chaque appel via `report_usage(...)` — hors collecteur, le signalement
-est sans effet. Ce canal évite d'élargir la signature de `ModelProvider` : un
-fournisseur sans télémétrie fonctionne tel quel, ses étapes remontent simplement
-sans usage. Le contexte se propageant à travers `await`, le canal traverse toutes
-les couches (orchestrateur, runtime outillé) sans paramètre supplémentaire.
+`StepUsage` is the usage of one step (one or several model calls, merged). It goes
+up through a **context collector** (`contextvars`): the caller opens
+`collect_usage()` around a piece of work, and providers report each call through
+`report_usage(...)`. Outside a collector, reporting does nothing. This channel
+keeps `ModelProvider`'s signature unchanged: a provider without telemetry works as
+it is, and its steps simply carry no usage. Since the context propagates through
+`await`, the channel crosses every layer (orchestrator, tooled runtime) without an
+extra parameter.
 
-Ce canal **relaie** aussi le plafond de dépense (ticket #9) : c'est entre deux
-appels modèle que la dépense se contrôle. Un collecteur ouvert avec un contrôle
-de dépense (`plafond=`) le consulte à chaque mesure — sans rien compter lui-même :
-le contrôle (`maestro.telemetry.costs.SpendingCap`, #56) relit la comptabilité
-par tâche de l'exécution, source unique du coût, et lève `SpendingCapExceeded`
-depuis `report_usage` dès que le plafond est dépassé — l'appel modèle en cours est
-déjà comptabilisé (le coût reste visible), mais la suite de l'étape est stoppée.
-Un fournisseur qui ne rapporte pas de coût échappe au plafond *en USD* (coût
-« inconnu ») mais reste plafonnable **en tokens** (#113) : le même contrôle
-(`SpendingCap`) accepte un plafond en tokens, toujours opérant.
+The channel also **relays** the spending cap (#9): spending is checked between two
+model calls. A collector opened with a spending control (`spending_cap=`) consults
+it at each measure, without counting anything itself. The control
+(`maestro.telemetry.costs.SpendingCap`, #56) rereads the per-task accounting of the
+run, the single source of the cost, and raises `SpendingCapExceeded` from
+`report_usage` as soon as the cap is crossed. The model call in progress is already
+counted (the cost stays visible), but the rest of the step is stopped. A provider
+that reports no cost escapes a cap *in USD* (unknown cost) but stays cappable **in
+tokens** (#113): the same control (`SpendingCap`) accepts a token cap, which always
+holds.
 
-Depuis #835, ce canal se lit aussi **pendant** le travail : un collecteur ouvert
-avec `on_mesure=` rappelle son appelant à chaque mesure signalée, avec le cumul
-de l'étape — c'est ainsi que le moteur relève la dépense d'une tâche en cours au
-lieu d'attendre son issue —, et `usage_en_cours()` rend ce cumul à qui veut le
-lire sans attendre la mesure suivante (l'ouverture d'une tentative, par
-exemple). Ni l'un ni l'autre ne comptent quoi que ce soit : le cumul reste celui
-que `report_usage` a construit, et la comptabilité du run ne le lit toujours
-qu'à la consignation de l'étape.
+The channel can also be read **during** the work (#835). A collector opened with
+`on_measure=` calls its caller back at each reported measure, with the running
+total of the step: this is how the engine reads the spending of a task in progress
+instead of waiting for its outcome. `current_usage()` returns that running total to
+whoever wants it without waiting for the next measure (when an attempt opens, for
+instance). Neither counts anything: the running total stays the one `report_usage`
+built, and the run accounting only reads it when the step is recorded.
 """
 
 from __future__ import annotations
@@ -41,8 +40,8 @@ from typing import Any, Protocol, TypeVar
 _T = TypeVar("_T", int, float)
 
 
-def _somme_optionnelle(a: _T | None, b: _T | None) -> _T | None:
-    """Somme deux compteurs optionnels en préservant « inconnu » (None ≠ 0)."""
+def _optional_sum(a: _T | None, b: _T | None) -> _T | None:
+    """Adds two optional counters, keeping "unknown" (None ≠ 0)."""
     if a is None:
         return b
     if b is None:
@@ -50,8 +49,8 @@ def _somme_optionnelle(a: _T | None, b: _T | None) -> _T | None:
     return a + b
 
 
-def _max_optionnel(a: int | None, b: int | None) -> int | None:
-    """Le plus grand de deux maxima optionnels, en préservant « inconnu » (#1398)."""
+def _optional_max(a: int | None, b: int | None) -> int | None:
+    """The larger of two optional maxima, keeping "unknown" (#1398)."""
     if a is None:
         return b
     if b is None:
@@ -61,389 +60,375 @@ def _max_optionnel(a: int | None, b: int | None) -> int | None:
 
 @dataclass(frozen=True)
 class StepUsage:
-    """Usage d'une étape : appels modèle, tokens, coût, durées, tours, outils.
+    """Usage of a step: model calls, tokens, cost, durations, turns, tools.
 
-    `duree_ms` est la durée *horloge* de l'étape, posée par l'appelant (le moteur)
-    via `avec_duree` ; `duree_api_ms` le temps API cumulé rapporté par le
-    fournisseur. `cout_usd` reste None quand aucun fournisseur ne l'a rapporté
-    (inconnu, à distinguer d'un coût nul). `tokens_entree` inclut le cache côté
-    fournisseur (cf. `maestro.providers.claude`) — et, depuis #1398, il dit
-    **combien** : voir `tokens_cache_lus` plus bas.
+    `duration_ms` is the *wall-clock* duration of the step, set by the caller (the
+    engine) through `with_duration`; `api_duration_ms` is the cumulated API time
+    the provider reports. `cost_usd` stays None when no provider reported it
+    (unknown, as opposed to a zero cost). `input_tokens` includes the provider-side
+    cache (see `maestro.providers.claude`), and `cache_read_tokens` says how much.
 
-    `tokens_cache_lus` et `tokens_cache_ecrits` (#1398) sont deux **parts** de
-    `tokens_entree`, sur le modèle de `tokens_non_tarifes` : jamais des tokens de
-    plus. `contexte_max` est le **contexte atteint** — le plus grand prompt d'un
-    seul appel d'API —, et il se fusionne par **maximum**, jamais par somme. Sans
-    eux, une tâche longue servie par le cache se lisait comme une tâche gloutonne :
-    `tokens_entree` additionne le contexte de **chaque** tour, si bien que
-    `socle-nextjs` affichait 1 845 438 tokens sur p5 pour un contexte qui n'a jamais
-    dépassé ≈ 66 k, et un coût de 1,87 $ — celui d'un travail relu en cache à 90 %
-    du prix en moins. Le total reste juste, c'est sa lecture seule qui trompait :
-    #8 et #57 l'avaient fait le chiffre de la consommation, il n'en est que le
-    volume traité. `contexte_max` vaut `None` — inconnu — là où personne n'a mesuré
-    un appel isolément (un résultat cumulé, une ligne d'avant ce ticket) : il ne se
-    déduit jamais d'une somme.
+    `cache_read_tokens` and `cache_write_tokens` (#1398) are two **parts** of
+    `input_tokens`, like `unpriced_tokens`: never extra tokens. `max_context` is the
+    **context reached**, the largest prompt of a single API call, and it merges by
+    **maximum**, never by sum. `input_tokens` adds up the context of **every**
+    turn, so a long task served by the cache reads like a greedy one without them:
+    `socle-nextjs` showed 1,845,438 tokens on p5 for a context that never went past
+    ≈ 66 k, and a cost of $1.87 — that of work reread from the cache at 90 % off.
+    The total is right; it measures the volume processed, not the consumption.
+    `max_context` is `None`, unknown, wherever nobody measured a call on its own (a
+    cumulated result, an older journal line): it is never inferred from a sum.
 
-    `duree_arbitrage_ms` (#584) est la part de `duree_ms` passée **suspendue à une
-    décision humaine** (`maestro.deliberation.CreditArbitrage`) — jamais un temps
-    de plus, toujours une part de celui qui est déjà là. C'est ce qui permet de
-    lire « le temps d'exécution » (`duree_execution_ms`) sans le confondre avec le
-    temps qu'un opérateur a mis à trancher : sans ce champ, une tâche suspendue
-    quatre minutes sur un acte sensible se lit exactement comme une tâche lente,
-    et l'audit d'un run (#495) range le second au compte du premier.
+    `approval_duration_ms` (#584) is the part of `duration_ms` spent **suspended
+    on a human decision** (`maestro.deliberation.CreditArbitrage`): never extra
+    time, always a part of the time already there. It lets the working time
+    (`work_duration_ms`) be read apart from the time an operator took to decide.
+    Without it, a task suspended four minutes on a sensitive act reads exactly like
+    a slow task, and the audit of a run (#495) counts the second as the first.
 
-    Il vaut `None` — inconnu — partout où personne n'a mesuré, et `0` là où l'on a
-    mesuré qu'il n'y a pas eu d'arbitrage : la distinction est celle de `cout_usd`,
-    et elle vaut ici pour la même raison. Il n'est posé que sur l'étape **finale**
-    d'une tâche, la seule qui porte sa durée horloge ; le poser aussi sur les
-    étapes annexes (`:validation`, `:refus-outil`, à usage nul) le ferait compter
-    deux fois dans `usage_totale`.
+    It is `None`, unknown, wherever nobody measured, and `0` where it was measured
+    that no approval happened: the distinction is the one `cost_usd` makes, for the
+    same reason. It is only set on the **final** step of a task, the only one that
+    carries its wall-clock duration; setting it on side steps too (`:validation`,
+    `:refus-outil`, with zero usage) would count it twice in `usage_totale`.
 
-    `duree_attente_creneau_ms` et `duree_attente_atelier_ms` (#989) sont les deux
-    autres parts de `duree_ms` qui ne sont pas du travail : le temps passé à
-    attendre un **créneau d'instance** de son agent (#86), puis l'**atelier** de
-    son projet (#839, une tâche à la fois dans la racine d'un projet non
-    versionné). Elles vivent ici pour la raison exacte de `duree_arbitrage_ms` —
-    ce sont des parts d'une durée déjà mesurée, jamais un temps de plus — et le
-    moteur le disait déjà sans le compter : « attendre son tour n'est pas
-    travailler » (`maestro/engine/executor.py`). Sans elles, une tâche restée
-    dix-huit minutes en file se lit exactement comme une tâche lente, mesuré deux
-    fois : 21 min 17 s annoncées pour 8 min 05 s de travail (revue du 2026-08-26),
-    24 min 17 s pour ~11 min (retex du 2026-09-11).
+    `slot_wait_duration_ms` and `workshop_wait_duration_ms` (#989) are the two other
+    parts of `duration_ms` that are not work: the time spent waiting for an
+    **instance slot** of the agent (#86), then for the **workshop** of its project
+    (#839, one task at a time in the root of an unversioned project). They live
+    here for the same reason as `approval_duration_ms`: parts of a duration already
+    measured, never extra time. "Waiting for one's turn is not working"
+    (`maestro/engine/executor.py`). Without them, a task that stayed eighteen
+    minutes in a queue reads exactly like a slow task, measured twice: 21 min 17 s
+    announced for 8 min 05 s of work (review of 2026-08-26), 24 min 17 s for
+    ~11 min (retex of 2026-09-11).
 
-    **Deux champs et non un**, parce que les deux attentes n'appellent pas le même
-    geste : un créneau qui manque se corrige en ajoutant des instances à l'agent,
-    un atelier qui bloque est le régime de sérialisation d'un projet non versionné,
-    qu'on ne change pas à la légère (#839). Les fondre dans un « temps d'attente »
-    unique rendrait le chiffre inactionnable.
+    **Two fields, not one**, because the two waits do not call for the same action:
+    a missing slot is fixed by adding instances to the agent, while a workshop that
+    blocks is the serialization regime of an unversioned project, which is not
+    changed lightly (#839). Merging them into a single "wait time" would make the
+    figure unactionable.
 
-    `tokens_non_tarifes` (#1280) est la part de `tokens_total` qu'**aucun coût ne
-    couvre** — une part, comme les attentes le sont de la durée, jamais des tokens
-    de plus. Une mesure sans coût (`cout_usd` None) a **tous** ses tokens non
-    tarifés, et c'est posé à la construction (`__post_init__`) : un producteur n'a
-    rien à déclarer pour dire « je n'ai pas de prix ». La fusion **somme** cette
-    part comme les autres compteurs, et c'est tout ce qui la rend juste là où la
-    seule règle sur le coût ne l'était pas : 1,17 $ tarifés plus 2 M de tokens sans
-    prix fusionnent en un coût de 1,17 $ — `_somme_optionnelle` garde le connu —
-    **et** 2 M de tokens non tarifés, là où l'on ne voyait plus qu'un total
-    « complet ». Une seule mesure peut **retirer** de cette part : celle d'un
-    fournisseur dont le résultat tarifie après coup des tours déjà signalés (le
-    reste du `ResultMessage` Claude, `maestro.providers.claude._CompteurTours`),
-    qui porte alors une part négative, exactement celle de ses tours. Une session
-    tuée avant son résultat garde donc la sienne, et une relance qui aboutit ne
-    couvre que ses propres tours.
+    `unpriced_tokens` (#1280) is the part of `total_tokens` that **no cost
+    covers**: a part, as the waits are of the duration, never extra tokens. A
+    measure without a cost (`cost_usd` None) has **all** its tokens unpriced, and
+    this is set at construction (`__post_init__`): a producer has nothing to declare
+    to say "I have no price". Merging **adds up** this part like the other
+    counters, and that is what keeps it right where the cost rule alone does not:
+    $1.17 priced plus 2 M tokens without a price merge into a cost of $1.17
+    (`_optional_sum` keeps the known value) **and** 2 M unpriced tokens. A single
+    measure can **remove** from this part: one from a provider whose result prices
+    turns already reported after the fact (the rest of the Claude `ResultMessage`,
+    `maestro.providers.claude._CompteurTours`), which then carries a negative part,
+    exactly that of its turns. A session killed before its result keeps its part,
+    and a retry that succeeds only covers its own turns.
     """
 
-    appels: int = 0
-    tokens_entree: int = 0
-    tokens_sortie: int = 0
-    cout_usd: float | None = None
-    duree_ms: int | None = None
-    duree_api_ms: int | None = None
-    duree_arbitrage_ms: int | None = None
-    duree_attente_creneau_ms: int | None = None
-    duree_attente_atelier_ms: int | None = None
-    tours: int = 0
-    outils: tuple[str, ...] = ()
-    tokens_non_tarifes: int = 0
-    tokens_cache_lus: int = 0
-    tokens_cache_ecrits: int = 0
-    contexte_max: int | None = None
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float | None = None
+    duration_ms: int | None = None
+    api_duration_ms: int | None = None
+    approval_duration_ms: int | None = None
+    slot_wait_duration_ms: int | None = None
+    workshop_wait_duration_ms: int | None = None
+    turns: int = 0
+    tools: tuple[str, ...] = ()
+    unpriced_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    max_context: int | None = None
 
     def __post_init__(self) -> None:
-        # Sans coût, rien de ce que la mesure a consommé n'a de prix (#1280). Posé
-        # ici plutôt que demandé à chaque producteur : un fournisseur qui ne
-        # tarife pas (#113), un tour signalé avant son résultat (#835) ou une
-        # ligne de journal d'avant ce ticket le disent tous sans le savoir. Zéro
-        # vaut « non renseigné » parce qu'une mesure sans coût ne peut pas, en
-        # vérité, avoir moins de tokens non tarifés que de tokens.
-        if self.cout_usd is None and not self.tokens_non_tarifes:
-            object.__setattr__(self, "tokens_non_tarifes", self.tokens_total)
+        # Without a cost, nothing the measure consumed has a price (#1280). Set
+        # here rather than asked of every producer: a provider that does not price
+        # (#113), a turn reported before its result (#835) or an older journal line
+        # all say it without knowing. Zero means "not provided" because a measure
+        # without a cost cannot, in truth, have fewer unpriced tokens than tokens.
+        if self.cost_usd is None and not self.unpriced_tokens:
+            object.__setattr__(self, "unpriced_tokens", self.total_tokens)
 
     @property
-    def tokens_total(self) -> int:
-        """Total des tokens consommés (entrée + sortie)."""
-        return self.tokens_entree + self.tokens_sortie
+    def total_tokens(self) -> int:
+        """Total tokens consumed (input + output)."""
+        return self.input_tokens + self.output_tokens
 
     @property
-    def tokens_hors_cache_lu(self) -> int:
-        """Le total **moins ce que le cache a relu** (#1398) — ce que compte le plafond en tokens.
+    def tokens_excluding_cache_reads(self) -> int:
+        """The total **minus what the cache reread** (#1398): what the token cap counts.
 
-        Relire un contexte déjà en cache n'est pas le consommer une seconde fois :
-        le fournisseur le facture une fraction du prix d'entrée, et c'est ce que
-        chaque tour d'une tâche longue fait de tout ce qui précède. Un plafond en
-        tokens (#113) qui le comptait coupait une tâche sur ce qu'elle **relit** —
-        1 845 438 tokens sur p5 pour 1,87 $ — au lieu de ce qu'elle **traite**. Le
-        prompt frais, le cache écrit et la sortie restent comptés.
+        Rereading a context already in the cache is not consuming it a second time:
+        the provider bills it at a fraction of the input price, and every turn of a
+        long task does that to everything before it. A token cap (#113) that
+        counted it would cut a task on what it **rereads** (1,845,438 tokens on p5
+        for $1.87) instead of what it **processes**. The fresh prompt, the written
+        cache and the output stay counted.
         """
-        return self.tokens_total - self.tokens_cache_lus
+        return self.total_tokens - self.cache_read_tokens
 
     @property
-    def duree_attente_ms(self) -> int | None:
-        """Ce que la tâche a passé à **attendre** : arbitrage, créneau et atelier (#989).
+    def wait_duration_ms(self) -> int | None:
+        """What the task spent **waiting**: approval, slot and workshop (#989).
 
-        `None` — inconnu — tant qu'aucune des trois n'a été mesurée ; sinon la
-        somme de celles qui l'ont été. Ces trois attentes-là **ne se recouvrent
-        pas** : elles sont prises l'une après l'autre (créneau, puis atelier, puis
-        le travail dans lequel un arbitrage peut suspendre), donc les additionner
-        est ici légitime — ce qui ne s'additionne pas est l'occupation de deux
-        tâches menées de front, et cela se règle un cran plus haut
-        (`maestro.telemetry.costs.RunCost`).
+        `None`, unknown, as long as none of the three was measured; otherwise the
+        sum of those that were. These three waits **do not overlap**: they come
+        one after the other (slot, then workshop, then the work in which an
+        approval can suspend), so adding them up is legitimate here. What does not
+        add up is the occupation of two tasks run side by side, and that is handled
+        one level up (`maestro.telemetry.costs.RunCost`).
         """
         parts = (
-            self.duree_arbitrage_ms,
-            self.duree_attente_creneau_ms,
-            self.duree_attente_atelier_ms,
+            self.approval_duration_ms,
+            self.slot_wait_duration_ms,
+            self.workshop_wait_duration_ms,
         )
-        mesurees = [part for part in parts if part is not None]
-        return sum(mesurees) if mesurees else None
+        measured = [part for part in parts if part is not None]
+        return sum(measured) if measured else None
 
     @property
-    def duree_execution_ms(self) -> int | None:
-        """La durée horloge **moins ses attentes** : le temps de travail (#584, #989).
+    def work_duration_ms(self) -> int | None:
+        """The wall-clock duration **minus its waits**: the working time (#584, #989).
 
-        `None` quand la durée horloge l'est — il n'y a alors rien à décomposer.
-        Sans attente mesurée, c'est la durée horloge elle-même : une tâche dont
-        personne n'a mesuré les files a passé, pour ce qu'on en sait, tout son
-        temps à travailler. Bornée à zéro, les mesures venant d'horloges qui ne
-        partent pas au même instant.
-
-        #584 avait nommé ce temps et n'en retirait que l'**arbitrage** ; #989 lui
-        retire les deux attentes que le moteur rangeait déjà hors du travail sans
-        les compter. Le nom ne change pas, parce que le concept ne change pas :
-        c'est son contenu qui était incomplet.
+        `None` when the wall-clock duration is: there is nothing to break down.
+        Without a measured wait, it is the wall-clock duration itself: a task whose
+        queues nobody measured spent, as far as is known, all its time working.
+        Bounded at zero, since the measures come from clocks that do not start at
+        the same instant.
         """
-        if self.duree_ms is None:
+        if self.duration_ms is None:
             return None
-        attente = self.duree_attente_ms
-        if attente is None:
-            return self.duree_ms
-        return max(0, self.duree_ms - attente)
+        wait = self.wait_duration_ms
+        if wait is None:
+            return self.duration_ms
+        return max(0, self.duration_ms - wait)
 
-    def fusion(self, autre: StepUsage) -> StepUsage:
-        """Agrège deux mesures : somme des compteurs, union ordonnée des outils."""
+    def merge(self, other: StepUsage) -> StepUsage:
+        """Merges two measures: counters added up, tools joined in order."""
         return StepUsage(
-            appels=self.appels + autre.appels,
-            tokens_entree=self.tokens_entree + autre.tokens_entree,
-            tokens_sortie=self.tokens_sortie + autre.tokens_sortie,
-            cout_usd=_somme_optionnelle(self.cout_usd, autre.cout_usd),
-            duree_ms=_somme_optionnelle(self.duree_ms, autre.duree_ms),
-            duree_api_ms=_somme_optionnelle(self.duree_api_ms, autre.duree_api_ms),
-            duree_arbitrage_ms=_somme_optionnelle(
-                self.duree_arbitrage_ms, autre.duree_arbitrage_ms
+            calls=self.calls + other.calls,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cost_usd=_optional_sum(self.cost_usd, other.cost_usd),
+            duration_ms=_optional_sum(self.duration_ms, other.duration_ms),
+            api_duration_ms=_optional_sum(self.api_duration_ms, other.api_duration_ms),
+            approval_duration_ms=_optional_sum(
+                self.approval_duration_ms, other.approval_duration_ms
             ),
-            duree_attente_creneau_ms=_somme_optionnelle(
-                self.duree_attente_creneau_ms, autre.duree_attente_creneau_ms
+            slot_wait_duration_ms=_optional_sum(
+                self.slot_wait_duration_ms, other.slot_wait_duration_ms
             ),
-            duree_attente_atelier_ms=_somme_optionnelle(
-                self.duree_attente_atelier_ms, autre.duree_attente_atelier_ms
+            workshop_wait_duration_ms=_optional_sum(
+                self.workshop_wait_duration_ms, other.workshop_wait_duration_ms
             ),
-            tours=self.tours + autre.tours,
-            outils=self.outils + tuple(o for o in autre.outils if o not in self.outils),
-            tokens_non_tarifes=self.tokens_non_tarifes + autre.tokens_non_tarifes,
-            tokens_cache_lus=self.tokens_cache_lus + autre.tokens_cache_lus,
-            tokens_cache_ecrits=self.tokens_cache_ecrits + autre.tokens_cache_ecrits,
-            # Un maximum, jamais une somme (#1398) : deux tours de 60 k n'ont pas
-            # atteint un contexte de 120 k, et c'est exactement l'erreur que
-            # l'additivité de `tokens_entree` faisait lire.
-            contexte_max=_max_optionnel(self.contexte_max, autre.contexte_max),
+            turns=self.turns + other.turns,
+            tools=self.tools + tuple(t for t in other.tools if t not in self.tools),
+            unpriced_tokens=self.unpriced_tokens + other.unpriced_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            # A maximum, never a sum (#1398): two turns of 60 k did not reach a
+            # context of 120 k, and that is exactly the misreading the additivity
+            # of `input_tokens` invites.
+            max_context=_optional_max(self.max_context, other.max_context),
         )
 
-    def avec_duree(
+    def with_duration(
         self,
-        duree_ms: int,
+        duration_ms: int,
         *,
-        arbitrage_ms: int | None = None,
-        attente_creneau_ms: int | None = None,
-        attente_atelier_ms: int | None = None,
+        approval_ms: int | None = None,
+        slot_wait_ms: int | None = None,
+        workshop_wait_ms: int | None = None,
     ) -> StepUsage:
-        """Copie de la mesure avec la durée horloge posée par l'appelant.
+        """Copy of the measure with the wall-clock duration set by the caller.
 
-        `arbitrage_ms` (#584) pose du même geste la part de cette durée passée
-        suspendue à une décision humaine ; `attente_creneau_ms` et
-        `attente_atelier_ms` (#989) les deux parts passées à attendre son tour.
-        Absents, les champs restent `None` : un appelant qui ne mesure pas une
-        attente ne déclare pas qu'il n'y en a pas eu — la plupart des appelants de
-        ce verbe (files, activités durables, boucle de planification) n'ont aucune
-        attente à mesurer.
+        `approval_ms` (#584) sets in the same move the part of that duration spent
+        suspended on a human decision; `slot_wait_ms` and `workshop_wait_ms` (#989)
+        the two parts spent waiting for one's turn. Left out, the fields stay
+        `None`: a caller that does not measure a wait does not declare there was
+        none. Most callers of this verb (queues, durable activities, planning loop)
+        have no wait to measure.
         """
         return replace(
             self,
-            duree_ms=duree_ms,
-            duree_arbitrage_ms=arbitrage_ms,
-            duree_attente_creneau_ms=attente_creneau_ms,
-            duree_attente_atelier_ms=attente_atelier_ms,
+            duration_ms=duration_ms,
+            approval_duration_ms=approval_ms,
+            slot_wait_duration_ms=slot_wait_ms,
+            workshop_wait_duration_ms=workshop_wait_ms,
         )
 
-    def resume_court(self) -> str:
-        """Rend la mesure en une ligne lisible (pour les synthèses Markdown)."""
-        duree = "n/d" if self.duree_ms is None else f"{self.duree_ms / 1000:.1f} s"
-        # Nommées **seulement** quand il y en a eu : annoncer « dont 0,0 s
-        # d'arbitrage » sur chacune des tâches d'un run apprendrait à ne plus
-        # lire la mention, et c'est elle qui doit sauter aux yeux le jour où
-        # une tâche a passé quatre minutes à attendre quelqu'un — ou dix-huit à
-        # attendre son tour (#989).
-        attentes = [
-            f"{part / 1000:.1f} s {mot}"
-            for part, mot in (
-                (self.duree_arbitrage_ms, "d'arbitrage"),
-                (self.duree_attente_creneau_ms, "de file d'agent"),
-                (self.duree_attente_atelier_ms, "d'atelier de projet"),
+    def short_summary(self) -> str:
+        """Renders the measure as one readable line (for Markdown summaries)."""
+        duration = "n/d" if self.duration_ms is None else f"{self.duration_ms / 1000:.1f} s"
+        # Named **only** when there were some: announcing "of which 0.0 s of
+        # approval" on every task of a run would teach the reader to skip the
+        # mention, and it must stand out the day a task spent four minutes waiting
+        # for someone, or eighteen waiting for its turn (#989).
+        waits = [
+            f"{part / 1000:.1f} s {word}"
+            for part, word in (
+                (self.approval_duration_ms, "d'arbitrage"),
+                (self.slot_wait_duration_ms, "de file d'agent"),
+                (self.workshop_wait_duration_ms, "d'atelier de projet"),
             )
             if part
         ]
-        if attentes:
-            duree += " (dont " + ", ".join(attentes) + ")"
-        if not self.appels:
-            return f"aucun usage fournisseur rapporté · durée {duree}"
-        cout = "n/d" if self.cout_usd is None else f"{self.cout_usd:.4f} $"
-        if self.cout_usd is not None and self.tokens_non_tarifes > 0:
-            # Un montant qui ne couvre pas tout ce qui a été consommé (#1280) ne
-            # s'écrit pas comme un solde : c'est un plancher, et il le dit.
-            cout = f"≥ {cout} ({self.tokens_non_tarifes} tokens sans coût)"
-        # Le contexte atteint et la part relue en cache (#1398), nommés quand on
-        # les connaît : sans eux, le total se lit comme une consommation, ce qu'il
-        # n'est pas sur une tâche longue servie par le cache.
-        contexte = (
-            "" if self.contexte_max is None else f" · contexte max {self.contexte_max}"
+        if waits:
+            duration += " (dont " + ", ".join(waits) + ")"
+        if not self.calls:
+            return f"aucun usage fournisseur rapporté · durée {duration}"
+        cost = "n/d" if self.cost_usd is None else f"{self.cost_usd:.4f} $"
+        if self.cost_usd is not None and self.unpriced_tokens > 0:
+            # An amount that does not cover everything consumed (#1280) is not
+            # written as a balance: it is a floor, and it says so.
+            cost = f"≥ {cost} ({self.unpriced_tokens} tokens sans coût)"
+        # The context reached and the part reread from the cache (#1398), named
+        # when known: without them, the total reads as a consumption, which it is
+        # not on a long task served by the cache.
+        context = (
+            "" if self.max_context is None else f" · contexte max {self.max_context}"
         )
-        relus = (
-            f", dont {self.tokens_cache_lus} relus en cache" if self.tokens_cache_lus else ""
+        reread = (
+            f", dont {self.cache_read_tokens} relus en cache" if self.cache_read_tokens else ""
         )
         return (
-            f"{self.appels} appel(s) modèle · {self.tokens_total} tokens "
-            f"({self.tokens_entree} entrée{relus} / {self.tokens_sortie} sortie)"
-            f"{contexte} · coût {cout} · durée {duree}"
+            f"{self.calls} appel(s) modèle · {self.total_tokens} tokens "
+            f"({self.input_tokens} entrée{reread} / {self.output_tokens} sortie)"
+            f"{context} · coût {cost} · durée {duration}"
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet la mesure en dict JSON-sérialisable."""
+        """Renders the measure as a JSON-serializable dict.
+
+        The keys keep their French values: the run journal, the cost ledger, the
+        API and `apps/web` read them (docs/55, rule 3; `tests/test_wire_names.py`).
+        """
         return {
-            "appels": self.appels,
-            "tokens_entree": self.tokens_entree,
-            "tokens_sortie": self.tokens_sortie,
-            "tokens_total": self.tokens_total,
-            "cout_usd": self.cout_usd,
-            "duree_ms": self.duree_ms,
-            "duree_api_ms": self.duree_api_ms,
-            "duree_arbitrage_ms": self.duree_arbitrage_ms,
-            "duree_attente_creneau_ms": self.duree_attente_creneau_ms,
-            "duree_attente_atelier_ms": self.duree_attente_atelier_ms,
-            # Les deux **dérivées** (#989) voyagent comme `tokens_total` : calculées
-            # ici et ignorées au retour. La règle « ce qui est du travail, ce qui
-            # est de l'attente » ne doit exister qu'à un endroit — la réécrire en
-            # TypeScript pour l'écran, c'est se donner deux règles qui divergeront.
-            "duree_attente_ms": self.duree_attente_ms,
-            "duree_execution_ms": self.duree_execution_ms,
-            "tours": self.tours,
-            "outils": list(self.outils),
-            # La part que le coût ne couvre pas (#1280) : c'est par elle que le
-            # grand livre et l'écran savent qu'un montant n'est qu'un plancher.
-            "tokens_non_tarifes": self.tokens_non_tarifes,
-            # Le contexte atteint et les deux parts du cache (#1398) : ce qu'une
-            # tâche a vraiment consommé se lit par eux, pas par `tokens_total`.
-            "tokens_cache_lus": self.tokens_cache_lus,
-            "tokens_cache_ecrits": self.tokens_cache_ecrits,
-            "contexte_max": self.contexte_max,
-            # Dérivée comme `tokens_total` : ce que le plafond en tokens compte,
-            # calculé ici pour que l'écran ne refasse pas la règle.
-            "tokens_hors_cache_lu": self.tokens_hors_cache_lu,
+            "appels": self.calls,
+            "tokens_entree": self.input_tokens,
+            "tokens_sortie": self.output_tokens,
+            "tokens_total": self.total_tokens,
+            "cout_usd": self.cost_usd,
+            "duree_ms": self.duration_ms,
+            "duree_api_ms": self.api_duration_ms,
+            "duree_arbitrage_ms": self.approval_duration_ms,
+            "duree_attente_creneau_ms": self.slot_wait_duration_ms,
+            "duree_attente_atelier_ms": self.workshop_wait_duration_ms,
+            # The two **derived** values (#989) travel like `total_tokens`:
+            # computed here and ignored on the way back. The rule "what is work,
+            # what is waiting" must live in one place only; rewriting it in
+            # TypeScript for the screen would make two rules that drift apart.
+            "duree_attente_ms": self.wait_duration_ms,
+            "duree_execution_ms": self.work_duration_ms,
+            "tours": self.turns,
+            "outils": list(self.tools),
+            # The part the cost does not cover (#1280): this is how the ledger and
+            # the screen know an amount is only a floor.
+            "tokens_non_tarifes": self.unpriced_tokens,
+            # The context reached and the two cache parts (#1398): what a task
+            # really consumed reads through them, not through `total_tokens`.
+            "tokens_cache_lus": self.cache_read_tokens,
+            "tokens_cache_ecrits": self.cache_write_tokens,
+            "contexte_max": self.max_context,
+            # Derived like `total_tokens`: what the token cap counts, computed here
+            # so that the screen does not redo the rule.
+            "tokens_hors_cache_lu": self.tokens_excluding_cache_reads,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> StepUsage:
-        """Reconstruit une mesure depuis sa forme `to_dict` (aller-retour JSON, #41).
+        """Rebuilds a measure from its `to_dict` form (JSON round trip, #41).
 
-        `tokens_total`, `tokens_hors_cache_lu`, `duree_attente_ms` et
-        `duree_execution_ms` (dérivés) sont ignorés ; les clés absentes retombent
-        sur les défauts — la mesure d'un worker qui ne rapporte rien reste valide,
-        et une ligne de journal écrite avant #989 se relit sans attentes mesurées
-        (inconnu, pas zéro). Une ligne d'avant #1280 se relit avec la part non
-        tarifée que son coût dit : tous ses tokens s'il est inconnu, aucun s'il est
-        connu. Une ligne d'avant #1398 se relit sans contexte connu (`None`) et sans
-        part de cache : rien ne se reconstitue d'une somme de tours.
+        The derived keys (`tokens_total`, `tokens_hors_cache_lu`,
+        `duree_attente_ms`, `duree_execution_ms`) are ignored; missing keys fall
+        back to the defaults. The measure of a worker that reports nothing stays
+        valid, and a journal line written before #989 reads back without measured
+        waits (unknown, not zero). A line from before #1280 reads back with the
+        unpriced part its cost says: all its tokens if the cost is unknown, none if
+        it is known. A line from before #1398 reads back without a known context
+        (`None`) and without a cache part: nothing is rebuilt from a sum of turns.
         """
         return cls(
-            appels=data.get("appels", 0),
-            tokens_entree=data.get("tokens_entree", 0),
-            tokens_sortie=data.get("tokens_sortie", 0),
-            cout_usd=data.get("cout_usd"),
-            duree_ms=data.get("duree_ms"),
-            duree_api_ms=data.get("duree_api_ms"),
-            duree_arbitrage_ms=data.get("duree_arbitrage_ms"),
-            duree_attente_creneau_ms=data.get("duree_attente_creneau_ms"),
-            duree_attente_atelier_ms=data.get("duree_attente_atelier_ms"),
-            tours=data.get("tours", 0),
-            outils=tuple(data.get("outils", ())),
-            tokens_non_tarifes=data.get("tokens_non_tarifes", 0),
-            tokens_cache_lus=data.get("tokens_cache_lus", 0),
-            tokens_cache_ecrits=data.get("tokens_cache_ecrits", 0),
-            contexte_max=data.get("contexte_max"),
+            calls=data.get("appels", 0),
+            input_tokens=data.get("tokens_entree", 0),
+            output_tokens=data.get("tokens_sortie", 0),
+            cost_usd=data.get("cout_usd"),
+            duration_ms=data.get("duree_ms"),
+            api_duration_ms=data.get("duree_api_ms"),
+            approval_duration_ms=data.get("duree_arbitrage_ms"),
+            slot_wait_duration_ms=data.get("duree_attente_creneau_ms"),
+            workshop_wait_duration_ms=data.get("duree_attente_atelier_ms"),
+            turns=data.get("tours", 0),
+            tools=tuple(data.get("outils", ())),
+            unpriced_tokens=data.get("tokens_non_tarifes", 0),
+            cache_read_tokens=data.get("tokens_cache_lus", 0),
+            cache_write_tokens=data.get("tokens_cache_ecrits", 0),
+            max_context=data.get("contexte_max"),
         )
 
 
-class ControleDepense(Protocol):
-    """Contrôle de dépense consulté par le collecteur à chaque mesure (#9).
+class SpendingControl(Protocol):
+    """Spending control the collector consults at each measure (#9).
 
-    `verifie` reçoit l'usage cumulé de l'étape en cours et lève
-    (`SpendingCapExceeded`) si la dépense de l'exécution dépasse son plafond (en
-    USD **ou en tokens**, #113). L'implémentation du POC est
-    `maestro.telemetry.costs.SpendingCap`, adossée à la comptabilité par tâche
-    (#56) — le protocole évite au canal de mesure de dépendre de la comptabilité,
-    qui se construit au-dessus de lui.
+    `check` receives the running usage of the current step and raises
+    (`SpendingCapExceeded`) if the spending of the run crosses its cap (in USD
+    **or in tokens**, #113). The implementation is
+    `maestro.telemetry.costs.SpendingCap`, backed by the per-task accounting (#56):
+    the protocol keeps the measuring channel independent of the accounting, which
+    is built on top of it.
     """
 
-    def verifie(self, en_cours: StepUsage) -> None:
-        """Lève si la dépense de l'exécution, `en_cours` compris, crève le plafond."""
+    def check(self, current: StepUsage) -> None:
+        """Raises if the spending of the run, `current` included, crosses the cap."""
         ...
 
 
 class UsageCollector:
-    """Accumule les mesures signalées pendant un bloc `collect_usage()`.
+    """Accumulates the measures reported during a `collect_usage()` block.
 
-    Avec `plafond`, relaie le garde-fou de dépense (#9) : chaque mesure est
-    d'abord comptabilisée (le coût reste visible), puis le contrôle est consulté
-    avec le cumul de l'étape. C'est lui qui confronte la dépense de l'exécution
-    à son plafond (#56) — le collecteur ne tient aucun compte parallèle.
+    With `spending_cap`, it relays the spending guardrail (#9): each measure is
+    counted first (the cost stays visible), then the control is consulted with the
+    running total of the step. The control confronts the spending of the run with
+    its cap (#56); the collector keeps no parallel count.
 
-    Avec `on_mesure` (#835), il **rappelle** son appelant à chaque mesure, avec
-    le cumul de l'étape — **avant** le contrôle de dépense, et c'est l'ordre qui
-    compte : une mesure qui fait crever le plafond est encore une dépense, et le
-    relevé qui la montre doit partir même si le contrôle stoppe l'étape juste
-    après. L'observateur ne casse jamais l'observé (règle du régulateur
-    d'activité, `maestro.providers.activite`) : un rappel qui lève est avalé, la
-    mesure reste comptée et le contrôle reste consulté.
+    With `on_measure` (#835), it **calls back** its caller at each measure, with
+    the running total of the step, **before** the spending control, and the order
+    matters: a measure that crosses the cap is still spending, and the reading that
+    shows it must go out even if the control stops the step right after. The
+    observer never breaks the observed (the rule of the activity regulator,
+    `maestro.providers.activite`): a callback that raises is swallowed, the measure
+    stays counted and the control is still consulted.
     """
 
     def __init__(
         self,
         *,
-        plafond: ControleDepense | None = None,
-        on_mesure: Callable[[StepUsage], None] | None = None,
+        spending_cap: SpendingControl | None = None,
+        on_measure: Callable[[StepUsage], None] | None = None,
     ) -> None:
         self._total = StepUsage()
-        self._plafond = plafond
-        self._on_mesure = on_mesure
+        self._spending_cap = spending_cap
+        self._on_measure = on_measure
 
     @property
     def total(self) -> StepUsage:
-        """Agrégat des mesures récoltées jusqu'ici."""
+        """Merge of the measures collected so far."""
         return self._total
 
     def add(self, usage: StepUsage) -> None:
-        """Ajoute une mesure à l'agrégat, rappelle l'observateur, puis consulte le contrôle."""
-        self._total = self._total.fusion(usage)
-        if self._on_mesure is not None:
+        """Adds a measure to the total, calls the observer back, then consults the control."""
+        self._total = self._total.merge(usage)
+        if self._on_measure is not None:
             try:
-                self._on_mesure(self._total)
-            except Exception:  # noqa: BLE001 — observer ne casse jamais l'observé
+                self._on_measure(self._total)
+            except Exception:  # noqa: BLE001 — the observer never breaks the observed
                 pass
-        if self._plafond is not None:
-            self._plafond.verifie(self._total)
+        if self._spending_cap is not None:
+            self._spending_cap.check(self._total)
 
 
-#: Collecteur actif du contexte courant (None hors de tout `collect_usage()`).
-_COLLECTEUR: ContextVar[UsageCollector | None] = ContextVar(
+#: Active collector of the current context (None outside any `collect_usage()`).
+_COLLECTOR: ContextVar[UsageCollector | None] = ContextVar(
     "maestro_usage_collector", default=None
 )
 
@@ -451,103 +436,99 @@ _COLLECTEUR: ContextVar[UsageCollector | None] = ContextVar(
 @contextmanager
 def collect_usage(
     *,
-    plafond: ControleDepense | None = None,
-    on_mesure: Callable[[StepUsage], None] | None = None,
+    spending_cap: SpendingControl | None = None,
+    on_measure: Callable[[StepUsage], None] | None = None,
 ) -> Iterator[UsageCollector]:
-    """Ouvre un collecteur : les `report_usage` du bloc s'y accumulent.
+    """Opens a collector: the `report_usage` calls of the block accumulate in it.
 
-    Un bloc imbriqué masque le collecteur englobant (pas de double comptage) ;
-    à la sortie, le collecteur précédent est restauré. `plafond` arme le garde-fou
-    de dépense (#9) sur ce bloc : à chaque mesure, le contrôle confronte la dépense
-    de l'exécution à son plafond et le `report_usage` fautif lève
-    `SpendingCapExceeded` chez l'appelant du fournisseur. `on_mesure` (#835)
-    reçoit le cumul du bloc à chaque mesure signalée — c'est le relevé en cours
-    d'une tâche, celui qui se voit pendant qu'il se dépense.
+    A nested block masks the enclosing collector (no double count); on exit, the
+    previous collector is restored. `spending_cap` arms the spending guardrail (#9)
+    on this block: at each measure, the control confronts the spending of the run
+    with its cap, and the offending `report_usage` raises `SpendingCapExceeded` in
+    the provider's caller. `on_measure` (#835) receives the running total of the
+    block at each reported measure: the reading of a task in progress, the one seen
+    while it is spent.
     """
-    collector = UsageCollector(plafond=plafond, on_mesure=on_mesure)
-    token = _COLLECTEUR.set(collector)
+    collector = UsageCollector(spending_cap=spending_cap, on_measure=on_measure)
+    token = _COLLECTOR.set(collector)
     try:
         yield collector
     finally:
-        _COLLECTEUR.reset(token)
+        _COLLECTOR.reset(token)
 
 
-def usage_en_cours() -> StepUsage:
-    """Le cumul du collecteur actif — une mesure vide hors de tout `collect_usage()` (#835).
+def current_usage() -> StepUsage:
+    """The running total of the active collector, empty outside any `collect_usage()` (#835).
 
-    Lecture seule : c'est ce qu'un appelant lit à un instant où aucune mesure
-    n'arrive (l'ouverture d'une tentative, par exemple) pour dire ce que l'étape
-    a déjà consommé. Hors collecteur, une mesure vide plutôt qu'une erreur — la
-    question « qu'a-t-on dépensé jusqu'ici ? » a alors pour réponse « rien de
-    mesuré », ce que `StepUsage()` dit exactement (coût inconnu, zéro appel).
+    Read only: this is what a caller reads at an instant when no measure arrives
+    (when an attempt opens, for instance) to say what the step has already
+    consumed. Outside a collector, an empty measure rather than an error: the
+    question "what has been spent so far?" then has the answer "nothing measured",
+    which `StepUsage()` says exactly (unknown cost, zero calls).
     """
-    collector = _COLLECTEUR.get()
+    collector = _COLLECTOR.get()
     return collector.total if collector is not None else StepUsage()
 
 
 def report_usage(usage: StepUsage) -> None:
-    """Signale l'usage d'un appel modèle au collecteur actif (no-op sans collecteur).
+    """Reports the usage of a model call to the active collector (no-op without one).
 
-    C'est le point d'entrée des fournisseurs : appelé après chaque appel modèle,
-    sans qu'ils aient à savoir si quelqu'un écoute. Si le collecteur actif est
-    plafonné (#9) et que ce signalement fait dépasser le plafond de dépense de
-    l'exécution (#56), l'appel lève `SpendingCapExceeded` — c'est ainsi que le
-    garde-fou stoppe l'étape.
+    This is the entry point of providers: called after each model call, without
+    their having to know whether anyone listens. If the active collector is capped
+    (#9) and this report makes the spending of the run cross its cap (#56), the
+    call raises `SpendingCapExceeded`: this is how the guardrail stops the step.
     """
-    collector = _COLLECTEUR.get()
+    collector = _COLLECTOR.get()
     if collector is not None:
         collector.add(usage)
 
 
-#: Qui consigne une dépense du **run** — celle qu'aucune tâche n'a faite (#1398).
-#: Reçoit l'étape (une étape de run de `maestro.telemetry.costs`), son nom lisible
-#: et la mesure.
-ConsigneDepenseDuRun = Callable[[str, str, StepUsage], None]
+#: Who records a spend of the **run**, one no task made (#1398). Receives the step
+#: (a run step of `maestro.telemetry.costs`), its readable name and the measure.
+RunSpendRecorder = Callable[[str, str, StepUsage], None]
 
-#: Le consignataire actif du contexte courant (None hors de tout `depenses_du_run()`).
-_DEPENSE_DU_RUN: ContextVar[ConsigneDepenseDuRun | None] = ContextVar(
-    "maestro_depense_du_run", default=None
+#: The active recorder of the current context (None outside any `run_spend_channel()`).
+_RUN_SPEND_RECORDER: ContextVar[RunSpendRecorder | None] = ContextVar(
+    "maestro_run_spend_recorder", default=None
 )
 
 
 @contextmanager
-def depenses_du_run(consigner: ConsigneDepenseDuRun) -> Iterator[None]:
-    """Ouvre un canal pour les dépenses du run faites **pendant** une tâche (#1398).
+def run_spend_channel(recorder: RunSpendRecorder) -> Iterator[None]:
+    """Opens a channel for the run's spending made **during** a task (#1398).
 
-    Le collecteur suit le contexte, et c'est sa force : une session de l'agent,
-    ses sous-tâches asyncio, ses relances signalent toutes à la tâche qui les a
-    lancées. C'est aussi ce qui rangeait chez la première tâche d'un run ce
-    qu'elle n'avait pas dépensé : la **sonde de démarrage** (#1304) court dans une
-    tâche asyncio que la session de l'agent crée, donc sous son collecteur — les
-    ≈ 20 k tokens de la sonde tombaient dans `socle-nextjs` sur p5. Ce canal est
-    l'autre adresse : ce qui y est signalé (`report_usage_du_run`) part au
-    consignataire, qui l'écrit sur une ligne du **run**, et n'entre dans aucun
-    collecteur de tâche.
+    The collector follows the context, and that is its strength: an agent session,
+    its asyncio subtasks and its retries all report to the task that launched them.
+    It is also what would charge the first task of a run with what it did not
+    spend: the **startup probe** (#1304) runs in an asyncio task that the agent
+    session creates, so under its collector, and the ≈ 20 k tokens of the probe
+    would fall into `socle-nextjs` on p5. This channel is the other address: what is
+    reported to it (`report_run_usage`) goes to the recorder, which writes it on a
+    line of the **run**, and enters no task collector.
 
-    Ouvert par le moteur autour de chaque tâche (`maestro.engine.executor`), qui
-    tient le journal du run. Comme le collecteur, il se propage à travers `await`
-    et aux tâches asyncio créées dans le bloc.
+    Opened by the engine around each task (`maestro.engine.executor`), which holds
+    the run journal. Like the collector, it propagates through `await` and to the
+    asyncio tasks created in the block.
     """
-    token = _DEPENSE_DU_RUN.set(consigner)
+    token = _RUN_SPEND_RECORDER.set(recorder)
     try:
         yield
     finally:
-        _DEPENSE_DU_RUN.reset(token)
+        _RUN_SPEND_RECORDER.reset(token)
 
 
-def report_usage_du_run(etape: str, nom: str, usage: StepUsage) -> None:
-    """Signale une dépense du run (`etape`, déclarée dans `costs`) au consignataire actif.
+def report_run_usage(step: str, name: str, usage: StepUsage) -> None:
+    """Reports a run spend (`step`, declared in `costs`) to the active recorder.
 
-    **Sans consignataire, la mesure retombe dans le collecteur actif**
-    (`report_usage`) : un appelant qui ne tient pas de journal de run — un
-    fournisseur appelé hors du moteur — la voit ainsi là où il mesure. Un chiffre
-    mal rangé se corrige ; un chiffre perdu ne se retrouve pas. Une mesure vide
-    n'est signalée à personne.
+    **Without a recorder, the measure falls back into the active collector**
+    (`report_usage`): a caller that keeps no run journal (a provider called outside
+    the engine) sees it where it measures. A misfiled figure can be corrected; a
+    lost figure cannot be found again. An empty measure is reported to nobody.
     """
-    if not (usage.appels or usage.tokens_total or usage.tours or usage.cout_usd):
+    if not (usage.calls or usage.total_tokens or usage.turns or usage.cost_usd):
         return
-    consigner = _DEPENSE_DU_RUN.get()
-    if consigner is None:
+    recorder = _RUN_SPEND_RECORDER.get()
+    if recorder is None:
         report_usage(usage)
         return
-    consigner(etape, nom, usage)
+    recorder(step, name, usage)

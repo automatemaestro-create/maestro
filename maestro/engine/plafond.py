@@ -294,7 +294,7 @@ class Plafonds:
         if controle is None:
             return False
         try:
-            controle.verifie(StepUsage())
+            controle.check(StepUsage())
         except SpendingCapExceeded:
             return True
         return False

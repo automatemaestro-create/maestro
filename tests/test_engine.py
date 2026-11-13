@@ -482,8 +482,8 @@ class MeteredProvider(ModelProvider):
     async def generate(self, prompt, *, model, system_prompt=None):
         report_usage(
             StepUsage(
-                appels=1, tokens_entree=100, tokens_sortie=20,
-                cout_usd=0.01, duree_api_ms=50, tours=1,
+                calls=1, input_tokens=100, output_tokens=20,
+                cost_usd=0.01, api_duration_ms=50, turns=1,
             )
         )
         return "LIVRABLE mesuré"
@@ -494,13 +494,13 @@ def test_le_cout_par_tache_est_visible_dans_le_rapport():
 
     assert report.run_id  # l'exécution est traçable dans le journal via ce run_id
     for r in report.resultats:
-        assert r.usage.appels == 1
-        assert r.usage.tokens_total == 120
-        assert r.usage.cout_usd == pytest.approx(0.01)
-        assert r.usage.duree_ms is not None  # durée horloge toujours mesurée
+        assert r.usage.calls == 1
+        assert r.usage.total_tokens == 120
+        assert r.usage.cost_usd == pytest.approx(0.01)
+        assert r.usage.duration_ms is not None  # durée horloge toujours mesurée
 
     # Le total agrège les 3 tâches (le planificateur factice ne rapporte rien).
-    assert report.usage_totale.cout_usd == pytest.approx(0.03)
+    assert report.usage_totale.cost_usd == pytest.approx(0.03)
 
     # Visible dans le rapport structuré…
     data = report.to_dict()
@@ -539,7 +539,7 @@ def test_chaque_etape_est_consignee_dans_le_journal():
     tache = next(r for r in journal.records if r.etape == "schema-bdd")
     assert "Schéma BDD" in tache.entree
     assert tache.sortie == "LIVRABLE mesuré"
-    assert tache.usage.cout_usd == pytest.approx(0.01)
+    assert tache.usage.cost_usd == pytest.approx(0.01)
 
 
 def test_le_debut_de_chaque_tache_est_consigne_avant_son_issue():
@@ -582,7 +582,7 @@ def test_l_echec_de_routage_est_consigne_au_journal_avec_sa_duree():
     assert trace.etape == "strategie"
     assert trace.statut == "echec"
     assert trace.erreur
-    assert trace.usage.duree_ms is not None
+    assert trace.usage.duration_ms is not None
 
 
 # --- Critères ⑦/⑧ (#7) : exécution parallèle des tâches indépendantes ------------------
@@ -784,7 +784,7 @@ def test_les_dependances_restent_respectees_en_parallele():
 def test_pas_de_fuite_d_usage_entre_executions_paralleles():
     # Chaque appel signale son usage *pendant* la simultanéité : si les collecteurs
     # de contexte fuyaient entre tâches asyncio, une tâche compterait l'usage des deux.
-    usage = StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01)
+    usage = StepUsage(calls=1, input_tokens=100, output_tokens=20, cost_usd=0.01)
     provider = RendezvousProvider(attendus=2, usage=usage)
     report = asyncio.run(
         _engine(exec_provider=provider, plan_json=_plan_paralleles_json()).run("Objectif")
@@ -792,10 +792,10 @@ def test_pas_de_fuite_d_usage_entre_executions_paralleles():
 
     assert provider.pic >= 2
     for r in report.resultats:
-        assert r.usage.appels == 1
-        assert r.usage.tokens_total == 120
-        assert r.usage.cout_usd == pytest.approx(0.01)
-    assert report.usage_totale.cout_usd == pytest.approx(0.02)
+        assert r.usage.calls == 1
+        assert r.usage.total_tokens == 120
+        assert r.usage.cost_usd == pytest.approx(0.01)
+    assert report.usage_totale.cost_usd == pytest.approx(0.02)
 
 
 class PicProvider(ModelProvider):
@@ -1000,7 +1000,7 @@ def test_le_blocage_est_consigne_au_journal_et_visible_dans_le_rapport():
     # Aucun agent ni worker n'a été sollicité pour la tâche bloquée.
     bloquee = report.bloquees[0]
     assert bloquee.worker == ""
-    assert bloquee.usage.appels == 0
+    assert bloquee.usage.calls == 0
 
 
 def test_un_plan_cyclique_est_rejete_a_la_validation():

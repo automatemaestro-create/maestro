@@ -240,7 +240,7 @@ def rejouer_p3(*, total: int = ENTREES_P3) -> Rejeu:
         statut=STATUT_TERMINEE,
         sortie="4 tâche(s)",
         usage=StepUsage(
-            appels=1, tokens_entree=11_000, tokens_sortie=1_000, cout_usd=0.05
+            calls=1, input_tokens=11_000, output_tokens=1_000, cost_usd=0.05
         ).to_dict(),
     )
     # Les textes : livrés.
@@ -251,8 +251,8 @@ def rejouer_p3(*, total: int = ENTREES_P3) -> Rejeu:
                 sortie="écrit dans le projet : textes/accueil.md, textes/produit.md")
     rejeu.ligne(TEXTES, nom="Rédiger les textes", agent="redacteur", role="Rédaction",
                 statut=STATUT_TERMINEE, sortie="Trois textes écrits dans textes/.",
-                usage=StepUsage(appels=1, tokens_entree=680_000, tokens_sortie=9_764,
-                                cout_usd=1.12).to_dict())
+                usage=StepUsage(calls=1, input_tokens=680_000, output_tokens=9_764,
+                                cost_usd=1.12).to_dict())
     # La maquette : trois tentatives, la même cause. L'activité de ses trois sessions
     # fait le compte du ticket — tout ce qui n'est pas elle tient en quinze lignes.
     bruit = total - _LIGNES_HORS_BRUIT
@@ -295,7 +295,7 @@ def rejouer_p3(*, total: int = ENTREES_P3) -> Rejeu:
             f"{CAUSE_P3} — échec transitoire persistant après 3 tentatives "
             "(relances épuisées)."
         ),
-        usage=StepUsage(tokens_entree=2_050_000, tokens_sortie=42_911, tours=46).to_dict(),
+        usage=StepUsage(input_tokens=2_050_000, output_tokens=42_911, turns=46).to_dict(),
     )
     for tache, titre in ((INTEGRATION, "Intégrer la page"), (RELECTURE, "Relire le site")):
         rejeu.ligne(tache, nom=titre, agent="—", role="", statut=STATUT_BLOQUEE,
@@ -329,7 +329,7 @@ def _ids(dossier, famille: str, tache: str = "") -> list[str]:
 
 #: Ce qu'un appel de bilan coûte dans ces tests — mesuré, jamais nul, pour que le
 #: compte au run se voie.
-USAGE_BILAN = StepUsage(appels=1, tokens_entree=9_000, tokens_sortie=600, cout_usd=0.03)
+USAGE_BILAN = StepUsage(calls=1, input_tokens=9_000, output_tokens=600, cost_usd=0.03)
 
 
 class JugeScripte:
@@ -855,9 +855,9 @@ def test_le_bilan_publie_porte_son_cout_compte_au_run_hors_du_temps_de_mur() -> 
     execution = rejeu.state.execution(RUN)
     assert execution.bilan is not None
     assert BilanRun.depuis(execution.bilan).de_rubrique(RUBRIQUE_ECHEC)
-    assert execution.cout.assessment.cout_usd == pytest.approx(USAGE_BILAN.cout_usd)
-    assert execution.cout_usd == pytest.approx(cout_avant + USAGE_BILAN.cout_usd)
-    assert execution.cout.total.cout_usd == pytest.approx(execution.cout_usd)
+    assert execution.cout.assessment.cost_usd == pytest.approx(USAGE_BILAN.cost_usd)
+    assert execution.cout_usd == pytest.approx(cout_avant + USAGE_BILAN.cost_usd)
+    assert execution.cout.total.cost_usd == pytest.approx(execution.cout_usd)
     assert execution.cout.wall_clock_ms == duree_avant
 
 
@@ -980,7 +980,7 @@ def test_le_bilan_est_servi_puis_relu_du_journal_durable_apres_un_redemarrage(
     assert servi["entrees_lues"] == 60
     assert all(p["entrees"] for p in servi["pieces"])
     assert detail["bilan"] == servi
-    assert detail["cout"]["bilan"]["cout_usd"] == pytest.approx(USAGE_BILAN.cout_usd)
+    assert detail["cout"]["bilan"]["cout_usd"] == pytest.approx(USAGE_BILAN.cost_usd)
 
     muet = JugeScripte(panne=True)
     with TestClient(
@@ -1175,11 +1175,11 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
     assert _montant(0.0) == "0,00 $US"
     assert _montant(1234.5) == "1 234,50 $US"
     usage = StepUsage(
-        tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000
+        input_tokens=40_000, output_tokens=720, cost_usd=0.2199, turns=2, duration_ms=31_000
     )
     assert _usage_en_mots(usage) =="40 720 tokens, coût 0,22 $US, 2 tours, 31 s"
-    assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
-    assert _usage_en_mots(StepUsage(duree_ms=0)).startswith("0 token, coût inconnu")
+    assert "1 tour," in _usage_en_mots(StepUsage(input_tokens=10, turns=1, duration_ms=1_000))
+    assert _usage_en_mots(StepUsage(duration_ms=0)).startswith("0 token, coût inconnu")
     dossier = _dossier(rejouer_p3(total=60))
     tentatives = next(p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche"))
     assert tentatives.texte.endswith("issue : Échec")
@@ -1334,7 +1334,7 @@ def test_l_api_sert_l_etat_du_bilan_avec_le_bilan(tmp_path: Path) -> None:
     # Les tâches nommées par leur titre, servies avec le bilan.
     assert servi["taches"][MAQUETTE] == "Maquetter les sections"
     # Et ce que le bilan a coûté : la tête du run le compte, la vue le dit.
-    assert servi["cout_bilan"] == pytest.approx(USAGE_BILAN.cout_usd)
+    assert servi["cout_bilan"] == pytest.approx(USAGE_BILAN.cost_usd)
 
 
 def test_une_tache_se_nomme_par_le_titre_que_son_run_lui_a_donne() -> None:

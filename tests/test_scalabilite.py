@@ -212,7 +212,7 @@ def test_un_agent_desactive_reste_a_zero_execution(tmp_path):
 
 # --- ② Comptabilité et temps réel corrects par tâche en multi-instances -------------------
 
-_USAGE_UNITAIRE = StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01)
+_USAGE_UNITAIRE = StepUsage(calls=1, input_tokens=100, output_tokens=20, cost_usd=0.01)
 
 
 def _run_de_charge_multi_instances(tmp_path):
@@ -235,9 +235,9 @@ def test_les_usages_restent_par_tache_en_multi_instances(tmp_path):
 
     # Chaque résultat porte l'usage de SA tâche — pas celui des deux instances.
     for r in report.resultats:
-        assert r.usage.appels == 1
-        assert r.usage.tokens_total == 120
-        assert r.usage.cout_usd == pytest.approx(0.01)
+        assert r.usage.calls == 1
+        assert r.usage.total_tokens == 120
+        assert r.usage.cost_usd == pytest.approx(0.01)
 
     # Le grand livre (#55) attribue chaque dépense à sa tâche, une seule fois.
     livre = RunCost.from_journal(journal)
@@ -245,8 +245,8 @@ def test_les_usages_restent_par_tache_en_multi_instances(tmp_path):
     assert set(entrees) == {"t1", "t2"}
     for entree in entrees.values():
         assert entree.agent == "bdd"
-        assert entree.usage.cout_usd == pytest.approx(0.01)
-    assert livre.total.cout_usd == pytest.approx(0.02)
+        assert entree.usage.cost_usd == pytest.approx(0.01)
+    assert livre.total.cost_usd == pytest.approx(0.02)
 
     # Le journal porte le début (#98) et l'issue de chaque instance, par tâche.
     etapes = {r.etape for r in journal.records}

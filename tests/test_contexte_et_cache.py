@@ -47,7 +47,7 @@ from maestro.telemetry import (
     SpendingCapExceeded,
     StepUsage,
     collect_usage,
-    depenses_du_run,
+    run_spend_channel,
     spending_control_summary,
 )
 
@@ -141,55 +141,55 @@ def test_une_tache_servie_par_le_cache_dit_son_contexte_atteint_et_son_cache_rel
     usage = recolte.total
     # Le plus grand prompt d'un appel — 2 + 4 000 + 60 000 ne l'est pas, 5 + 2 000 +
     # 64 000 l'est —, et non les 190 010 tokens que les trois tours additionnent.
-    assert usage.contexte_max == 66_005
-    assert usage.tokens_cache_lus == 124_000
-    assert usage.tokens_cache_ecrits == 66_000
+    assert usage.max_context == 66_005
+    assert usage.cache_read_tokens == 124_000
+    assert usage.cache_write_tokens == 66_000
     # Ce qui ne bouge pas : l'entrée reste la somme de ce que les tours ont envoyé,
     # cache compris (#8), et le coût celui que le fournisseur a rapporté.
-    assert usage.tokens_entree == 190_010
-    assert usage.tokens_sortie == 2_900
-    assert usage.cout_usd == pytest.approx(1.87)
+    assert usage.input_tokens == 190_010
+    assert usage.output_tokens == 2_900
+    assert usage.cost_usd == pytest.approx(1.87)
     # Le cache relu est majoritaire : c'est ce qui rend le chiffre total trompeur.
-    assert usage.tokens_cache_lus > usage.tokens_total / 2
-    assert usage.tokens_hors_cache_lu == usage.tokens_total - 124_000
+    assert usage.cache_read_tokens > usage.total_tokens / 2
+    assert usage.tokens_excluding_cache_reads == usage.total_tokens - 124_000
 
 
 def test_le_contexte_se_lit_des_le_premier_tour_pendant_que_la_tache_tourne(sdk):
     vus: list[StepUsage] = []
     absorbe = _absorbeur()
-    with collect_usage(on_mesure=vus.append):
+    with collect_usage(on_measure=vus.append):
         absorbe(_Assistant([_Texte("…")], usage=_TOURS[0], message_id="m1"))
         # Le CLI répète l'usage d'un même appel sur chacun de ses blocs.
         absorbe(_Assistant([_Texte("…")], usage=_TOURS[0], message_id="m1"))
         absorbe(_Assistant([_Texte("…")], usage=_TOURS[1], message_id="m2"))
 
-    assert [v.contexte_max for v in vus] == [60_003, 64_002]
-    assert [v.tokens_cache_lus for v in vus] == [0, 60_000]
-    assert [v.tokens_cache_ecrits for v in vus] == [60_000, 64_000]
+    assert [v.max_context for v in vus] == [60_003, 64_002]
+    assert [v.cache_read_tokens for v in vus] == [0, 60_000]
+    assert [v.cache_write_tokens for v in vus] == [60_000, 64_000]
 
 
 def test_le_contexte_se_fusionne_par_maximum_et_le_cache_par_somme():
-    a = StepUsage(tokens_entree=100, tokens_cache_lus=60, tokens_cache_ecrits=30, contexte_max=70)
-    b = StepUsage(tokens_entree=50, tokens_cache_lus=10, tokens_cache_ecrits=5, contexte_max=40)
+    a = StepUsage(input_tokens=100, cache_read_tokens=60, cache_write_tokens=30, max_context=70)
+    b = StepUsage(input_tokens=50, cache_read_tokens=10, cache_write_tokens=5, max_context=40)
 
-    fondu = a.fusion(b)
+    fondu = a.merge(b)
 
-    assert fondu.contexte_max == 70
-    assert (fondu.tokens_cache_lus, fondu.tokens_cache_ecrits) == (70, 35)
+    assert fondu.max_context == 70
+    assert (fondu.cache_read_tokens, fondu.cache_write_tokens) == (70, 35)
     # Inconnu n'est pas zéro : une mesure sans contexte garde celui de l'autre.
-    assert StepUsage().fusion(b).contexte_max == 40
-    assert StepUsage().fusion(StepUsage()).contexte_max is None
+    assert StepUsage().merge(b).max_context == 40
+    assert StepUsage().merge(StepUsage()).max_context is None
 
 
 def test_l_usage_voyage_avec_son_contexte_et_son_cache():
     usage = StepUsage(
-        appels=1,
-        tokens_entree=190_010,
-        tokens_sortie=2_900,
-        cout_usd=1.87,
-        tokens_cache_lus=124_000,
-        tokens_cache_ecrits=66_000,
-        contexte_max=66_005,
+        calls=1,
+        input_tokens=190_010,
+        output_tokens=2_900,
+        cost_usd=1.87,
+        cache_read_tokens=124_000,
+        cache_write_tokens=66_000,
+        max_context=66_005,
     )
 
     brut = usage.to_dict()
@@ -209,21 +209,21 @@ def test_une_ligne_d_avant_ce_ticket_se_relit_sans_contexte_connu():
 
     # Personne n'a mesuré : le contexte est inconnu, pas nul — et rien ne se
     # fabrique à partir d'une somme de tours.
-    assert usage.contexte_max is None
-    assert (usage.tokens_cache_lus, usage.tokens_cache_ecrits) == (0, 0)
+    assert usage.max_context is None
+    assert (usage.cache_read_tokens, usage.cache_write_tokens) == (0, 0)
 
 
 def test_le_resume_d_une_etape_dit_le_contexte_et_le_cache_relu():
     usage = StepUsage(
-        appels=1,
-        tokens_entree=190_010,
-        tokens_sortie=2_900,
-        cout_usd=1.87,
-        tokens_cache_lus=124_000,
-        contexte_max=66_005,
+        calls=1,
+        input_tokens=190_010,
+        output_tokens=2_900,
+        cost_usd=1.87,
+        cache_read_tokens=124_000,
+        max_context=66_005,
     )
 
-    resume = usage.resume_court()
+    resume = usage.short_summary()
 
     assert "contexte max 66005" in resume
     assert "124000 relus en cache" in resume
@@ -234,13 +234,13 @@ def test_le_bilan_ne_dit_plus_le_total_seul():
     from maestro.controltower.bilan import _usage_en_mots, _usage_en_phrase
 
     usage = StepUsage(
-        appels=1,
-        tokens_entree=1_845_438,
-        tokens_sortie=30_000,
-        cout_usd=1.87,
-        tours=65,
-        tokens_cache_lus=1_700_000,
-        contexte_max=66_000,
+        calls=1,
+        input_tokens=1_845_438,
+        output_tokens=30_000,
+        cost_usd=1.87,
+        turns=65,
+        cache_read_tokens=1_700_000,
+        max_context=66_000,
     )
 
     # Le format de l'écran : espaces fines insécables entre milliers, insécable avant l'unité.
@@ -253,7 +253,7 @@ def test_le_bilan_ne_dit_plus_le_total_seul():
         "1 875 438 tokens (dont 1 700 000 relus en cache, contexte max 66 000) pour 1,87 $US"
     )
     # Sans cache rapporté ni contexte mesuré, la phrase est celle d'avant.
-    assert _usage_en_mots(StepUsage(tokens_entree=10, tours=1, cout_usd=0.0)).startswith(
+    assert _usage_en_mots(StepUsage(input_tokens=10, turns=1, cost_usd=0.0)).startswith(
         "10 tokens, coût "
     )
 
@@ -261,13 +261,13 @@ def test_le_bilan_ne_dit_plus_le_total_seul():
 def test_le_releve_en_vol_dit_le_contexte_avant_le_total():
     from maestro.engine.executor import _resume_releve
 
-    usage = StepUsage(tokens_entree=190_010, tours=3, tokens_cache_lus=124_000, contexte_max=66_005)
+    usage = StepUsage(input_tokens=190_010, turns=3, cache_read_tokens=124_000, max_context=66_005)
 
     assert _resume_releve(usage).startswith(
         "contexte 66005 tokens · 190010 tokens traités dont 124000 relus en cache · 3 tour(s)"
     )
     # Un fournisseur qui ne dit ni l'un ni l'autre se lit comme avant.
-    assert _resume_releve(StepUsage(tokens_entree=10, tours=1)).startswith("10 tokens · 1 tour(s)")
+    assert _resume_releve(StepUsage(input_tokens=10, turns=1)).startswith("10 tokens · 1 tour(s)")
 
 
 def test_un_endpoint_openai_dit_son_cache_relu_et_son_contexte():
@@ -283,12 +283,12 @@ def test_un_endpoint_openai_dit_son_cache_relu_et_son_contexte():
 
     usage = _usage_depuis(payload, 12)
 
-    assert usage.tokens_entree == 1_200
-    assert usage.tokens_cache_lus == 1_024
+    assert usage.input_tokens == 1_200
+    assert usage.cache_read_tokens == 1_024
     # Un appel est un tour : son prompt est son contexte.
-    assert usage.contexte_max == 1_200
+    assert usage.max_context == 1_200
     # Sans le détail (Ollama, vLLM…), rien de relu n'est inventé.
-    assert _usage_depuis({"usage": {"prompt_tokens": 9}}, 1).tokens_cache_lus == 0
+    assert _usage_depuis({"usage": {"prompt_tokens": 9}}, 1).cache_read_tokens == 0
 
 
 # ------------------------------------------------- ② La sonde se compte au run, pas à une tâche
@@ -326,17 +326,17 @@ def test_la_sonde_ne_tombe_pas_dans_la_tache_qui_l_arme(
     cli = DoubleCli(monkeypatch, session=_livre, usage_sonde=_USAGE_SONDE, cout_sonde=0.075)
     du_run: list[tuple[str, str, StepUsage]] = []
 
-    with depenses_du_run(lambda etape, nom, usage: du_run.append((etape, nom, usage))):
+    with run_spend_channel(lambda etape, nom, usage: du_run.append((etape, nom, usage))):
         with collect_usage() as tache:
             assert _lance(ClaudeProvider(Credentials()), tmp_path) == "Livré."
 
     assert len(cli.sondes) == 1
     # La tâche n'a rien consommé de mesuré : les 19 863 tokens de la sonde ne sont pas à elle.
-    assert tache.total.tokens_total == 0
+    assert tache.total.total_tokens == 0
     ((etape, nom, usage),) = du_run
     assert etape == STEP_PROBE and nom
-    assert usage.tokens_total == 19_863
-    assert usage.cout_usd == pytest.approx(0.075)
+    assert usage.total_tokens == 19_863
+    assert usage.cost_usd == pytest.approx(0.075)
 
 
 def test_sans_consignataire_la_sonde_reste_comptee_plutot_que_perdue(
@@ -349,7 +349,7 @@ def test_sans_consignataire_la_sonde_reste_comptee_plutot_que_perdue(
     with collect_usage() as recolte:
         _lance(ClaudeProvider(Credentials()), tmp_path)
 
-    assert recolte.total.tokens_total == 19_863
+    assert recolte.total.total_tokens == 19_863
 
 
 class _Planificateur(ModelProvider):
@@ -395,14 +395,14 @@ def test_dans_un_run_la_sonde_a_sa_ligne_et_la_premiere_tache_la_perd(
     asyncio.run(moteur.run("Objectif", journal=journal))
 
     (ligne,) = [r for r in journal.records if r.etape == STEP_PROBE]
-    assert ligne.usage.tokens_total == 19_863
+    assert ligne.usage.total_tokens == 19_863
     cout = RunCost.from_journal(journal)
-    assert cout.probe.tokens_total == 19_863
+    assert cout.probe.total_tokens == 19_863
     (tache,) = cout.tasks
     assert tache.task_id == "socle-nextjs"
-    assert tache.usage.tokens_total == 0
+    assert tache.usage.total_tokens == 0
     # Le run, lui, la compte toujours : rien ne se perd en changeant de ligne.
-    assert cout.total.tokens_total >= 19_863
+    assert cout.total.total_tokens >= 19_863
     assert cout.to_dict()["sonde"]["tokens_total"] == 19_863
 
 
@@ -416,7 +416,7 @@ def test_la_ligne_de_la_sonde_est_une_etape_du_run_cote_control_tower():
         statut="terminee",
         entree="",
         sortie="",
-        usage=StepUsage(appels=1, tokens_entree=19_803, tokens_sortie=60, cout_usd=0.075),
+        usage=StepUsage(calls=1, input_tokens=19_803, output_tokens=60, cost_usd=0.075),
     )
     (record,) = journal.records
 
@@ -431,8 +431,8 @@ def test_la_ligne_de_la_sonde_est_une_etape_du_run_cote_control_tower():
     run = etat.execution("run-1398")
     assert run is not None
     cout = run.cout
-    assert cout.probe.tokens_total == 19_863
-    assert cout.planning.tokens_total == 0
+    assert cout.probe.total_tokens == 19_863
+    assert cout.planning.total_tokens == 0
     assert cout.tasks == ()
 
 
@@ -451,13 +451,13 @@ def _journal_d_une_tache_servie_par_le_cache() -> RunJournal:
         sortie="",
         # p5 : 1 845 438 tokens d'entrée, dont l'essentiel relu en cache.
         usage=StepUsage(
-            appels=1,
-            tokens_entree=1_845_438,
-            tokens_sortie=30_000,
-            cout_usd=1.87,
-            tokens_cache_lus=1_700_000,
-            tokens_cache_ecrits=140_000,
-            contexte_max=66_000,
+            calls=1,
+            input_tokens=1_845_438,
+            output_tokens=30_000,
+            cost_usd=1.87,
+            cache_read_tokens=1_700_000,
+            cache_write_tokens=140_000,
+            max_context=66_000,
         ),
     )
     return journal
@@ -468,10 +468,10 @@ def test_le_plafond_en_tokens_ne_compte_pas_le_cache_relu():
     # 1 875 438 tokens au total, dont 175 438 hors cache relu.
     plafond = SpendingCap(journal, max_tokens=500_000)
 
-    plafond.verifie(StepUsage())  # ne lève pas : la tâche n'a pas consommé 500 k
+    plafond.check(StepUsage())  # ne lève pas : la tâche n'a pas consommé 500 k
 
     with pytest.raises(SpendingCapExceeded, match="hors cache relu"):
-        SpendingCap(journal, max_tokens=150_000).verifie(StepUsage())
+        SpendingCap(journal, max_tokens=150_000).check(StepUsage())
 
 
 def test_le_controle_de_depense_dit_ce_que_le_plafond_en_tokens_compte():

@@ -616,7 +616,7 @@ class _Redacteur(ModelProvider):
 
     async def generate(self, prompt, *, model, system_prompt=None):
         self.prompts.append(prompt)
-        report_usage(StepUsage(appels=1, cout_usd=0.002))
+        report_usage(StepUsage(calls=1, cost_usd=0.002))
         return self.sujet
 
 
@@ -665,7 +665,7 @@ def test_la_fusion_suit_la_convention_de_commit_choisie(tmp_path: Path):
     (prompt,) = modele.prompts
     assert "<convention>Conventional Commits</convention>" in prompt
     assert "« Tâche t1 »" in prompt
-    assert _etape(journal, "t1", ":fusion").usage.cout_usd == pytest.approx(0.002)
+    assert _etape(journal, "t1", ":fusion").usage.cost_usd == pytest.approx(0.002)
 
 
 def test_sans_convention_choisie_la_fusion_ne_coute_aucun_appel(tmp_path: Path):
@@ -715,7 +715,7 @@ def test_le_commit_de_la_recette_suit_la_convention_de_commit_choisie(tmp_path: 
     (prompt,) = modele.prompts
     assert "<convention>Conventional Commits</convention>" in prompt
     assert ".maestro/recette/run-1507.md" in prompt
-    assert cout.cout_usd == pytest.approx(0.002)
+    assert cout.cost_usd == pytest.approx(0.002)
 
 
 def test_sans_convention_choisie_la_recette_garde_le_message_de_maestro(tmp_path: Path):

@@ -401,7 +401,7 @@ def test_le_signal_est_consigne_au_nom_de_l_orchestrateur_et_ne_coute_rien(
     manque = next(r for r in journal.records if r.etape.endswith(SUFFIXE_ETAPE_MANQUE))
     assert manque.agent == "orchestrateur"
     assert manque.statut == STATUT_ROLE_MANQUANT
-    assert (manque.usage.appels, manque.usage.tokens_entree, manque.usage.tokens_sortie) == (
+    assert (manque.usage.calls, manque.usage.input_tokens, manque.usage.output_tokens) == (
         0,
         0,
         0,

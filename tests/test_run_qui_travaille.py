@@ -174,7 +174,7 @@ def releve(tache_id: str, usage: StepUsage, *, horodatage: str = T1) -> Event:
         agent="developpeur",
         role="Développeur",
         usage=usage,
-        cout_usd=usage.cout_usd,
+        cout_usd=usage.cost_usd,
         projet_id=PROJET,
         horodatage=horodatage,
     )
@@ -849,10 +849,10 @@ def test_les_trois_lectures_de_la_carte_se_distinguent_deux_a_deux():
     state = projection(lancement(), tache("t1", STATUT_EN_COURS))
     inconnu = state.tache("t1").to_dict()  # type: ignore[union-attr]
 
-    state.appliquer(releve("t1", StepUsage(cout_usd=0.0)))
+    state.appliquer(releve("t1", StepUsage(cost_usd=0.0)))
     rien_encore = state.tache("t1").to_dict()  # type: ignore[union-attr]
 
-    state.appliquer(releve("t1", StepUsage(tokens_entree=5000, tours=2), horodatage=T2))
+    state.appliquer(releve("t1", StepUsage(input_tokens=5000, turns=2), horodatage=T2))
     pas_tarife = state.tache("t1").to_dict()  # type: ignore[union-attr]
 
     lectures = [(d["cout_usd"], d["cout_partiel"]) for d in (inconnu, rien_encore, pas_tarife)]
@@ -865,11 +865,11 @@ def test_le_cumul_du_run_bouge_entre_deux_lectures_pendant_qu_une_tache_travaill
     """Le second critère de #835, lu sur le résumé que la liste des runs sert."""
     state = projection(
         lancement(),
-        tache("t0", STATUT_TERMINEE, usage=StepUsage(appels=1, cout_usd=0.2), cout_usd=0.2),
+        tache("t0", STATUT_TERMINEE, usage=StepUsage(calls=1, cost_usd=0.2), cout_usd=0.2),
         tache("t1", STATUT_EN_COURS),
     )
     premiere = state.execution(RUN).resume()  # type: ignore[union-attr]
-    state.appliquer(releve("t1", StepUsage(tokens_entree=9000, cout_usd=0.3)))
+    state.appliquer(releve("t1", StepUsage(input_tokens=9000, cost_usd=0.3)))
     seconde = state.execution(RUN).resume()  # type: ignore[union-attr]
 
     assert (premiere["cout_usd"], premiere["cout_partiel"]) == (pytest.approx(0.2), False)
@@ -885,18 +885,18 @@ def test_echantillon_fautif_une_tache_en_vol_n_a_aucune_duree_a_montrer():
     """La forme d'**avant** #894, et le motif de tout le volet : la ligne chrono
     d'une boîte en cours n'a **rien** à dire.
 
-    Elle est alimentée par `usage.duree_ms`, que le moteur ne pose qu'à l'issue
-    (`StepUsage.avec_duree`) — un relevé en cours (#835) porte des tokens et un
+    Elle est alimentée par `usage.duration_ms`, que le moteur ne pose qu'à l'issue
+    (`StepUsage.with_duration`) — un relevé en cours (#835) porte des tokens et un
     coût, jamais une durée. Le contrôle suivant rougit donc ici, et c'est ce qui
     a tranché la question ouverte du ticket : la valeur n'était pas déjà servie,
     il fallait la dériver du **début** de la tâche côté projection.
     """
     state = projection(lancement(), tache("t1", STATUT_EN_COURS))
-    state.appliquer(releve("t1", StepUsage(tokens_entree=5000, tours=2, cout_usd=0.3)))
+    state.appliquer(releve("t1", StepUsage(input_tokens=5000, turns=2, cost_usd=0.3)))
     t1 = state.tache("t1")
 
     assert t1 is not None and t1.statut == STATUT_EN_COURS
-    assert t1.usage is not None and t1.usage.duree_ms is None
+    assert t1.usage is not None and t1.usage.duration_ms is None
     assert t1.to_dict()["usage"]["duree_ms"] is None
     # Le nœud du graphe lit la même durée, et n'a donc rien de plus à montrer.
     assert state.graphe(RUN).to_dict()["noeuds"][0]["duree_ms"] is None

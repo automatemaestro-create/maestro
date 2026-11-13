@@ -9,7 +9,7 @@ affiche alors 1,17 $, qui ne compte que ce qui a été tarifé, et le run se dé
 
 Ce qui est gardé ici, couche par couche :
 
-① le **contrat** de mesure (`StepUsage.tokens_non_tarifes`) : une mesure sans coût
+① le **contrat** de mesure (`StepUsage.unpriced_tokens`) : une mesure sans coût
    a tous ses tokens non tarifés, et la fusion n'en perd aucun — ni dans un cumul,
    ni dans l'agrégat de tâches dont l'une est tarifée et l'autre non ;
 ② l'**adaptateur** Claude : le résultat d'une session tarifie les tours de **cette**
@@ -56,29 +56,29 @@ RUN = "run-1280"
 
 
 def test_une_mesure_sans_cout_a_tous_ses_tokens_non_tarifes():
-    assert StepUsage(tokens_entree=900, tokens_sortie=100).tokens_non_tarifes == 1000
-    assert StepUsage(tokens_entree=900, cout_usd=0.3).tokens_non_tarifes == 0
+    assert StepUsage(input_tokens=900, output_tokens=100).unpriced_tokens == 1000
+    assert StepUsage(input_tokens=900, cost_usd=0.3).unpriced_tokens == 0
     # Rien consommé, rien à tarifer : le coût inconnu d'une mesure vide ne laisse
     # aucun token en souffrance.
-    assert StepUsage().tokens_non_tarifes == 0
+    assert StepUsage().unpriced_tokens == 0
 
 
 def test_la_fusion_de_taches_tarifee_et_non_tarifee_garde_les_tokens_sans_cout():
     """Le cas du ticket, réduit à l'agrégat : 1,17 $ connus, 2 M de tokens sans prix."""
-    tarifee = StepUsage(appels=1, tokens_entree=700_000, cout_usd=1.17)
-    morte = StepUsage(tokens_entree=2_000_000, tokens_sortie=92_911, tours=46)
+    tarifee = StepUsage(calls=1, input_tokens=700_000, cost_usd=1.17)
+    morte = StepUsage(input_tokens=2_000_000, output_tokens=92_911, turns=46)
 
-    total = tarifee.fusion(morte)
+    total = tarifee.merge(morte)
 
     # Le montant connu reste ce qui a été tarifé — Maestro n'invente aucun prix…
-    assert total.cout_usd == pytest.approx(1.17)
+    assert total.cost_usd == pytest.approx(1.17)
     # …mais les tokens de la tâche morte ne sont plus couverts par ce montant.
-    assert total.tokens_non_tarifes == 2_092_911
+    assert total.unpriced_tokens == 2_092_911
 
 
 def test_la_part_non_tarifee_fait_l_aller_retour_json_et_se_deduit_d_une_ligne_ancienne():
-    usage = StepUsage(appels=1, tokens_entree=10, cout_usd=0.1).fusion(
-        StepUsage(tokens_entree=40)
+    usage = StepUsage(calls=1, input_tokens=10, cost_usd=0.1).merge(
+        StepUsage(input_tokens=40)
     )
     forme = usage.to_dict()
 
@@ -88,8 +88,8 @@ def test_la_part_non_tarifee_fait_l_aller_retour_json_et_se_deduit_d_une_ligne_a
     # sans coût s'y relit avec tous ses tokens non tarifés, une mesure tarifée
     # avec aucun — c'est tout ce qu'on peut en savoir, et c'est vrai.
     ancienne = {"appels": 0, "tokens_entree": 30, "tokens_sortie": 5, "cout_usd": None}
-    assert StepUsage.from_dict(ancienne).tokens_non_tarifes == 35
-    assert StepUsage.from_dict({**ancienne, "cout_usd": 0.02}).tokens_non_tarifes == 0
+    assert StepUsage.from_dict(ancienne).unpriced_tokens == 35
+    assert StepUsage.from_dict({**ancienne, "cout_usd": 0.02}).unpriced_tokens == 0
 
 
 # ---------------------------------------------- ② L'adaptateur Claude : une session
@@ -139,12 +139,12 @@ def test_le_resultat_d_une_session_tarifie_tous_ses_tours(sdk):
     with collect_usage() as recolte:
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_1, message_id="m1"))
         # En vol, les tours sont en attente de leur prix.
-        assert recolte.total.tokens_non_tarifes == 160
+        assert recolte.total.unpriced_tokens == 160
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_2, message_id="m2"))
         absorbe(_Resultat(usage=_RESULTAT, total_cost_usd=0.042, num_turns=2))
 
-    assert recolte.total.cout_usd == pytest.approx(0.042)
-    assert recolte.total.tokens_non_tarifes == 0
+    assert recolte.total.cost_usd == pytest.approx(0.042)
+    assert recolte.total.unpriced_tokens == 0
 
 
 def test_une_session_tuee_avant_son_resultat_laisse_ses_tokens_non_tarifes(sdk):
@@ -153,8 +153,8 @@ def test_une_session_tuee_avant_son_resultat_laisse_ses_tokens_non_tarifes(sdk):
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_1, message_id="m1"))
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_2, message_id="m2"))
 
-    assert recolte.total.cout_usd is None
-    assert recolte.total.tokens_non_tarifes == recolte.total.tokens_total == 380
+    assert recolte.total.cost_usd is None
+    assert recolte.total.unpriced_tokens == recolte.total.total_tokens == 380
 
 
 def test_une_relance_qui_aboutit_ne_tarifie_pas_la_session_tuee_avant_elle(sdk):
@@ -170,9 +170,9 @@ def test_une_relance_qui_aboutit_ne_tarifie_pas_la_session_tuee_avant_elle(sdk):
         seconde(_Assistant([_Texte("…")], usage=_TOUR_2, message_id="b1"))
         seconde(_Resultat(usage=_TOUR_2, total_cost_usd=0.01, num_turns=1))
 
-    assert recolte.total.cout_usd == pytest.approx(0.01)
-    assert recolte.total.tokens_total == 160 + 220
-    assert recolte.total.tokens_non_tarifes == 160
+    assert recolte.total.cost_usd == pytest.approx(0.01)
+    assert recolte.total.total_tokens == 160 + 220
+    assert recolte.total.unpriced_tokens == 160
 
 
 # ------------------------------------------------ ③ Le run, du moteur à l'API
@@ -202,8 +202,8 @@ class _SessionTuee(ModelProvider):
         return True
 
     async def generate(self, prompt, *, model, system_prompt=None):
-        report_usage(StepUsage(tokens_entree=600_000, tokens_sortie=4_000, tours=1))
-        report_usage(StepUsage(tokens_entree=90_000, tokens_sortie=3_637, tours=1))
+        report_usage(StepUsage(input_tokens=600_000, output_tokens=4_000, turns=1))
+        report_usage(StepUsage(input_tokens=90_000, output_tokens=3_637, turns=1))
         raise RuntimeError("Command failed with exit code 1 (session tuée)")
 
 
@@ -231,7 +231,7 @@ def _run_avec_une_tache_morte() -> ControlTowerState:
     journal.consigne(
         etape="brief-produit", nom="Brief produit", agent="developpeur",
         role="Développeur", statut=STATUT_TERMINEE, entree="", sortie="fait",
-        usage=StepUsage(appels=1, tokens_entree=700_000, cout_usd=1.17),
+        usage=StepUsage(calls=1, input_tokens=700_000, cost_usd=1.17),
     )
     executeur = LocalExecutor(
         _SessionTuee(),
@@ -285,7 +285,7 @@ def test_un_run_dont_tout_est_tarife_reste_complet():
     journal.consigne(
         etape="t1", nom="Tarifée", agent="developpeur", role="Développeur",
         statut=STATUT_TERMINEE, entree="", sortie="fait",
-        usage=StepUsage(appels=1, tokens_entree=700_000, cout_usd=1.17),
+        usage=StepUsage(calls=1, input_tokens=700_000, cost_usd=1.17),
     )
     state = ControlTowerState()
     for ligne in lignes.lignes:
@@ -295,7 +295,7 @@ def test_un_run_dont_tout_est_tarife_reste_complet():
     run = state.execution(RUN)
     assert run is not None
     assert run.cout_partiel is False
-    assert run.cout.total.tokens_non_tarifes == 0
+    assert run.cout.total.unpriced_tokens == 0
     assert state.tache("t1").cout_partiel is False
 
 
@@ -317,13 +317,13 @@ def test_le_releve_en_vol_puis_l_echec_sans_cout_ne_rend_pas_le_run_complet():
     state = ControlTowerState()
     applique = _applicateur(state)
 
-    applique("t0", STATUT_TERMINEE, StepUsage(appels=1, cout_usd=1.17))
+    applique("t0", STATUT_TERMINEE, StepUsage(calls=1, cost_usd=1.17))
     applique("t1:debut", STATUT_EN_COURS, StepUsage())
-    applique(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=5000, tours=2))
+    applique(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(input_tokens=5000, turns=2))
     run = state.execution(RUN)
     assert run is not None and run.cout_partiel is True
 
-    applique("t1", "echec", StepUsage(tokens_entree=9000, tours=3))
+    applique("t1", "echec", StepUsage(input_tokens=9000, turns=3))
 
     assert run.cout_usd == pytest.approx(1.17)
     assert run.cout_partiel is True
@@ -344,10 +344,10 @@ def test_une_tache_morte_ne_garde_pas_le_zero_de_son_releve_d_ouverture():
     applique = _applicateur(state)
 
     applique("t1:debut", STATUT_EN_COURS, StepUsage())
-    applique(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(cout_usd=0.0))
+    applique(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(cost_usd=0.0))
     assert state.tache("t1").cout_usd == 0.0
 
-    applique("t1", "echec", StepUsage(tokens_entree=9000, tours=3))
+    applique("t1", "echec", StepUsage(input_tokens=9000, turns=3))
 
     t1 = state.tache("t1")
     assert t1 is not None and t1.cout_usd is None and t1.cout_partiel is True
