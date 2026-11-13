@@ -2,7 +2,7 @@
 
 Le défaut que ce module referme, relevé le 2026-09-21 par le balayage « rien de
 figé » : quand un run atteignait son plafond de dépense, la tâche en vol était
-**stoppée et son travail jeté** (`PlafondDepenseDepasse … tâche stoppée`), l'erreur
+**stoppée et son travail jeté** (`SpendingCapExceeded … tâche stoppée`), l'erreur
 n'était pas rejouable, et chaque tâche restante était refusée à l'entrée de
 l'exécuteur. À 101 % du budget, la personne perdait la tâche presque finie et tout
 ce qui restait, sans qu'on lui ait rien demandé.
@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from maestro.engine.guardrails import Guardrails
-from maestro.telemetry import PlafondDepense, PlafondDepenseDepasse, RunJournal, StepUsage
+from maestro.telemetry import RunJournal, SpendingCap, SpendingCapExceeded, StepUsage
 
 #: Les trois réponses au plafond, dans l'ordre où elles se lisent.
 GESTE_RELEVER = "relever"
@@ -72,7 +72,7 @@ SUFFIXE_ETAPE_PLAFOND = ":plafond"
 #: Statut de cette ligne : la tâche est suspendue sur le plafond du run.
 STATUT_TACHE_SUSPENDUE = "suspendue_plafond"
 
-#: Statuts des lignes de run (`ETAPE_PLAFOND`) : la question posée, puis ce qui en
+#: Statuts des lignes de run (`STEP_SPENDING_CAP`) : la question posée, puis ce qui en
 #: est sorti. Un mot par issue, et `sans_decision` à part — personne n'a décidé
 #: (le canal s'est refermé), ce qui ne se lit pas comme un arrêt voulu.
 STATUT_PLAFOND_ATTEINT = "plafond_atteint"
@@ -281,12 +281,12 @@ class Plafonds:
             tokens if tokens is not None else jetons,
         )
 
-    def controle(self, journal: RunJournal) -> PlafondDepense | None:
+    def controle(self, journal: RunJournal) -> SpendingCap | None:
         """Le contrôle de dépense du run de `journal` — None quand rien ne le plafonne."""
         cout, jetons = self.en_vigueur(journal.run_id)
         if cout is None and jetons is None:
             return None
-        return PlafondDepense(journal, cout, plafond_tokens=jetons)
+        return SpendingCap(journal, cout, max_tokens=jetons)
 
     def epuise(self, journal: RunJournal) -> bool:
         """Le budget du run est-il dépensé ? — rien de plus ne s'y engage alors."""
@@ -295,7 +295,7 @@ class Plafonds:
             return False
         try:
             controle.verifie(StepUsage())
-        except PlafondDepenseDepasse:
+        except SpendingCapExceeded:
             return True
         return False
 

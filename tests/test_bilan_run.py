@@ -114,7 +114,7 @@ from maestro.engine.executor import (
 from maestro.engine.rattrapage import statut_du_geste
 from maestro.engine.verification import STATUT_VERIFICATION_NON_TENUE
 from maestro.plan_run import NoeudPlan
-from maestro.telemetry import ETAPE_BILAN, StepUsage
+from maestro.telemetry import STEP_ASSESSMENT, StepUsage
 
 RUN = "3fe501fc0878"
 PROJET = "p3"
@@ -841,7 +841,7 @@ def test_le_bilan_publie_porte_son_cout_compte_au_run_hors_du_temps_de_mur() -> 
     """Une activité de run porte le bilan **et** son coût ; le grand livre le compte à part."""
     rejeu = rejouer_p3(total=60)
     avant = rejeu.state.execution(RUN)
-    duree_avant, cout_avant = avant.cout.duree_mur_ms, avant.cout_usd
+    duree_avant, cout_avant = avant.cout.wall_clock_ms, avant.cout_usd
     juge = JugeScripte(_verdict_p3(_dossier(rejeu)))
     service, bus = _service(rejeu, juge)
 
@@ -849,16 +849,16 @@ def test_le_bilan_publie_porte_son_cout_compte_au_run_hors_du_temps_de_mur() -> 
 
     (event,) = bus.publies
     assert (event.type, event.agent, event.etape_run, event.statut) == (
-        EVENEMENT_AGENT_ACTIVITE, ACTEUR_RUN, ETAPE_BILAN, STATUT_BILAN_RENDU
+        EVENEMENT_AGENT_ACTIVITE, ACTEUR_RUN, STEP_ASSESSMENT, STATUT_BILAN_RENDU
     )
     rejeu.evenement(event)  # ce que la pompe fera
     execution = rejeu.state.execution(RUN)
     assert execution.bilan is not None
     assert BilanRun.depuis(execution.bilan).de_rubrique(RUBRIQUE_ECHEC)
-    assert execution.cout.bilan.cout_usd == pytest.approx(USAGE_BILAN.cout_usd)
+    assert execution.cout.assessment.cout_usd == pytest.approx(USAGE_BILAN.cout_usd)
     assert execution.cout_usd == pytest.approx(cout_avant + USAGE_BILAN.cout_usd)
     assert execution.cout.total.cout_usd == pytest.approx(execution.cout_usd)
-    assert execution.cout.duree_mur_ms == duree_avant
+    assert execution.cout.wall_clock_ms == duree_avant
 
 
 def test_un_bilan_par_issue_et_un_seul_appel_meme_demande_deux_fois() -> None:
@@ -899,7 +899,7 @@ def test_un_modele_muet_ne_fabrique_aucun_bilan() -> None:
         None,
         None,
     )
-    assert trace.etape_run == ETAPE_BILAN
+    assert trace.etape_run == STEP_ASSESSMENT
     assert "n'a pas répondu" in trace.detail
 
 

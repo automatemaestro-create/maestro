@@ -84,7 +84,7 @@ from maestro.providers.base import (
     McpServerUnavailable,
     ServeurInjoignable,
 )
-from maestro.telemetry.redact import enregistre_secret
+from maestro.telemetry.redact import register_secret
 
 #: Types de serveurs déclarables : une commande locale (stdio) ou un endpoint
 #: distant (sse/http). Le type « sdk » (instance en process) est hors périmètre :
@@ -811,7 +811,7 @@ def _resout(valeur: str, environ: Mapping[str, str], serveur: ServeurMcp) -> str
             (ServeurInjoignable(serveur.nom, MCP_NON_MONTABLE, cause, tuple(manquantes)),),
         )
     for nom in references:
-        enregistre_secret(environ[nom])
+        register_secret(environ[nom])
     return _REFERENCE_ENV.sub(lambda m: environ[m.group(1)], valeur)
 
 

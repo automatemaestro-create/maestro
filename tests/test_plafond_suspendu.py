@@ -58,7 +58,7 @@ from maestro.orchestrator import Orchestrator
 from maestro.projets import Projet, ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
-from maestro.telemetry import ETAPE_PLAFOND, RunCost, RunJournal, StepUsage, report_usage
+from maestro.telemetry import STEP_SPENDING_CAP, RunCost, RunJournal, StepUsage, report_usage
 
 GIT = shutil.which("git")
 
@@ -207,15 +207,15 @@ def test_au_plafond_le_run_attend_une_decision_puis_reprend_la_tache():
     # La dépense des deux tentatives voyage avec l'issue…
     assert tache.usage.cout_usd == pytest.approx(0.024)
     # …et le grand livre dit la même chose, sans tâche fantôme « plafond ».
-    livre = RunCost.depuis_journal(journal)
-    assert [t.tache_id for t in livre.taches] == ["t1"]
-    assert livre.taches[0].usage.cout_usd == pytest.approx(0.024)
+    livre = RunCost.from_journal(journal)
+    assert [t.task_id for t in livre.tasks] == ["t1"]
+    assert livre.tasks[0].usage.cout_usd == pytest.approx(0.024)
     # La tentative interrompue a laissé sa ligne, sa dépense comprise.
     (mise_de_cote,) = _lignes(journal, f"t1{SUFFIXE_ETAPE_PLAFOND}")
     assert mise_de_cote.statut == STATUT_TACHE_SUSPENDUE
     assert mise_de_cote.usage.cout_usd == pytest.approx(0.012)
     # Le run dit qu'il a attendu, puis ce qui a été décidé.
-    assert [r.statut for r in _lignes(journal, ETAPE_PLAFOND)] == [
+    assert [r.statut for r in _lignes(journal, STEP_SPENDING_CAP)] == [
         STATUT_PLAFOND_ATTEINT,
         STATUT_PLAFOND_RELEVE,
     ]
@@ -479,7 +479,7 @@ def test_arreter_solde_le_run_sur_ce_qui_est_fait():
     assert seconde.agent == "—"
     assert journal.usage_totale.cout_usd == pytest.approx(0.012)
     assert len(arbitre.demandes) == 1
-    (_, decision) = _lignes(journal, ETAPE_PLAFOND)
+    (_, decision) = _lignes(journal, STEP_SPENDING_CAP)
     assert decision.statut == STATUT_PLAFOND_ARRETE
     assert "arrêté depuis le fil" in decision.sortie
 
@@ -510,7 +510,7 @@ def test_reduire_ecarte_les_taches_designees_et_reprend_le_reste():
     assert t2.statut == STATUT_ECHEC and "écartée" in (t2.erreur or "")
     assert t3.statut == STATUT_BLOQUEE
     assert len(provider.prompts) == 2  # t1 coupée, t1 reprise — rien pour t2
-    (_, decision) = _lignes(journal, ETAPE_PLAFOND)
+    (_, decision) = _lignes(journal, STEP_SPENDING_CAP)
     assert decision.statut == STATUT_PLAFOND_REDUIT
     assert "« Tests de charge »" in decision.sortie
 
@@ -560,7 +560,7 @@ def test_un_canal_muet_n_invente_pas_de_reponse():
     assert all(r.statut == STATUT_ECHEC for r in rapport.resultats)
     assert "n'a pas pu être demandée" in (rapport.resultats[0].erreur or "")
     assert len(provider.prompts) == 1
-    (_, issue) = _lignes(journal, ETAPE_PLAFOND)
+    (_, issue) = _lignes(journal, STEP_SPENDING_CAP)
     assert issue.statut == STATUT_PLAFOND_SANS_DECISION
 
 

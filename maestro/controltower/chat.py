@@ -294,14 +294,14 @@ from maestro.outillage.questionnaire import (
 from maestro.outillage.verification import Verification
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
-    DepotTeleversements,
-    RapportLecture,
+    ReadingReport,
     Source,
-    composer_sources,
-    contexte_markdown,
-    lecteur_par_defaut,
-    sources_depuis,
-    sources_en_liste,
+    UploadStore,
+    compose_sources,
+    default_reader,
+    markdown_context,
+    sources_as_list,
+    sources_from,
 )
 
 if TYPE_CHECKING:  # le conducteur importe ce module : cycle à l'exécution seulement
@@ -309,13 +309,13 @@ if TYPE_CHECKING:  # le conducteur importe ce module : cycle à l'exécution seu
 
 #: Relecture d'un rapport de lecture persisté — l'aller-retour JSON de #316,
 #: aliasé ici pour que `MessageChat.from_dict` se lise comme `Source.from_dict`.
-rapport_depuis = RapportLecture.from_dict
+rapport_depuis = ReadingReport.from_dict
 
 #: Lecture de la matière d'un message : des sources **résolues** au rapport de
 #: lecture (#316). Même alias et même raison d'être que côté lancement
 #: (`maestro.controltower.executions.LecteurSources`) — une source `url` part sur
 #: le réseau, et `tests/conftest.py` (#195) exige qu'aucun test n'en ait besoin.
-LecteurSources = Callable[[Sequence[Source]], RapportLecture]
+LecteurSources = Callable[[Sequence[Source]], ReadingReport]
 
 #: L'acteur humain du chat : l'expéditeur des requêtes, le destinataire des
 #: réponses — le pendant « utilisateur » d'un nom d'agent, côté messagerie (#44)
@@ -2020,7 +2020,7 @@ class MessageChat:
       été lu, tronqué ou ignoré, et ce que ça coûte. C'est lui que le critère 3
       demande de pouvoir consulter depuis le message qui a porté les sources ;
     - `contexte` — le Markdown extrait, **encadré comme donnée** par
-      `contexte_markdown` (ENF-13) et par lui seul. Il est persisté et non
+      `markdown_context` (ENF-13) et par lui seul. Il est persisté et non
       recalculé, pour la raison qui rend le champ nécessaire : `Lecture.to_dict`
       **n'emporte pas** le `markdown` (à dessein — un rapport dit ce qu'une source
       coûte, pas ce qu'elle raconte), donc un fil relu du disque aurait un rapport
@@ -2156,7 +2156,7 @@ class MessageChat:
     equipe: EquipeRecrutee | None = None
     choix: Choix | None = None
     sources: tuple[Source, ...] = ()
-    rapport: RapportLecture | None = None
+    rapport: ReadingReport | None = None
     contexte: str = ""
     conversation: str = CONVERSATION_ORIGINE
     etapes: tuple[EtapeFil, ...] = ()
@@ -2201,7 +2201,7 @@ class MessageChat:
             ),
             "equipe": self.equipe.to_dict() if self.equipe is not None else None,
             "choix": self.choix.to_dict() if self.choix is not None else None,
-            "sources": sources_en_liste(self.sources),
+            "sources": sources_as_list(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
             "etapes": [etape.to_dict() for etape in self.etapes],
             "comprehension": [c.to_dict() for c in self.comprehension],
@@ -2242,7 +2242,7 @@ class MessageChat:
             return self.contenu
         if not self.sources:
             return ""
-        noms = ", ".join(source.nom for source in self.sources if source.nom)
+        noms = ", ".join(source.name for source in self.sources if source.name)
         return f"{len(self.sources)} source(s) jointe(s){f' : {noms}' if noms else ''}"
 
     def to_ligne(self) -> dict[str, Any]:
@@ -2305,7 +2305,7 @@ class MessageChat:
             ),
             equipe=EquipeRecrutee.from_dict(equipe) if isinstance(equipe, Mapping) else None,
             choix=Choix.from_dict(choix) if isinstance(choix, Mapping) else None,
-            sources=tuple(sources_depuis(data.get("sources"))),
+            sources=tuple(sources_from(data.get("sources"))),
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
             etapes=etapes_depuis(data.get("etapes")),
@@ -3414,7 +3414,7 @@ class ServiceChat:
         repondeur: RepondeurChat,
         mailbox: Mailbox,
         bus: EventBus,
-        televersements: DepotTeleversements | None = None,
+        televersements: UploadStore | None = None,
         garde_fous_ingestion: GardeFousIngestion | None = None,
         lecteur_sources: LecteurSources | None = None,
     ) -> None:
@@ -3432,7 +3432,7 @@ class ServiceChat:
         # part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun test
         # n'en ait besoin. Le défaut montre les images au modèle du poste
         # (#1163) — c'est par le fil qu'une maquette rejoint un brief.
-        self._lecteur = lecteur_sources if lecteur_sources is not None else lecteur_par_defaut()
+        self._lecteur = lecteur_sources if lecteur_sources is not None else default_reader()
         # Les générations en vol, par identifiant d'échange (#695) : c'est le seul
         # état que le service garde entre deux requêtes, et il ne dure que le temps
         # d'un flux — `diffuser` l'inscrit à l'ouverture et le retire dans son
@@ -3507,7 +3507,7 @@ class ServiceChat:
 
         Trois façons d'échouer, et elles ne se confondent pas :
 
-        - `SourceRefusee` (donc `ValueError`) — une saisie que l'utilisateur peut
+        - `SourceRejected` (donc `ValueError`) — une saisie que l'utilisateur peut
           corriger : plafond dépassé, racine interdite, type inconnu. Elle est
           levée **avant toute écriture**, comme au lancement : un refus ne doit
           laisser ni message au fil, ni événement sur le bus ;
@@ -4173,7 +4173,7 @@ class ServiceChat:
 
         Deux refus restent levés **avant** la première trame, là où l'appelant
         peut encore répondre 422 plutôt que d'ouvrir un flux sur une erreur :
-        `ValueError` nu sur un message vide, et `SourceRefusee` sur une source
+        `ValueError` nu sur un message vide, et `SourceRejected` sur une source
         hors bornes — cette dernière portant son motif et son index, sans quoi
         « une source a été refusée » n'apprendrait pas laquelle.
 
@@ -4454,7 +4454,7 @@ class ServiceChat:
             choix=choix,
             sources=matiere,
             rapport=rapport,
-            contexte=contexte_markdown(rapport) if rapport is not None else "",
+            contexte=markdown_context(rapport) if rapport is not None else "",
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REQUEST)
         return message
@@ -4572,11 +4572,11 @@ class ServiceChat:
 
     async def _lire(
         self, declarees: Sequence[Mapping[str, Any] | Source]
-    ) -> tuple[tuple[Source, ...], RapportLecture | None]:
+    ) -> tuple[tuple[Source, ...], ReadingReport | None]:
         """Résout puis lit la matière d'un message — `((), None)` s'il n'y en a pas.
 
         Le pendant, pour un message, de ce que `ServiceExecutions` fait pour un
-        run : la **même** chaîne (`composer_sources`, #482) et le **même** lecteur
+        run : la **même** chaîne (`compose_sources`, #482) et le **même** lecteur
         (#316). Aucune source, aucun fil et aucun dossier : un message de texte
         garde exactement son coût d'avant ce lot, et c'est ce qui rend le
         changement invisible pour qui ne joint rien.
@@ -4589,14 +4589,14 @@ class ServiceChat:
         if not declarees:
             return (), None
         if self._televersements is None:
-            self._televersements = DepotTeleversements.default()
+            self._televersements = UploadStore.default()
         # Le refus a lieu ici, **avant** toute écriture au fil : une source hors
         # bornes ne doit laisser ni message persisté, ni événement sur le bus.
-        matiere = composer_sources(
+        matiere = compose_sources(
             declarees,
-            cle=f"chat-{uuid.uuid4().hex[:12]}",
-            depot=self._televersements,
-            garde_fous=self._ingestion,
+            key=f"chat-{uuid.uuid4().hex[:12]}",
+            store=self._televersements,
+            guardrails=self._ingestion,
         )
         # Dans un fil : la lecture ouvre des fichiers et peut récupérer une page
         # (#316), ce que la boucle de l'API ne doit pas porter.
@@ -4619,7 +4619,7 @@ class ServiceChat:
                 subject=message.resume[:_LONGUEUR_OBJET],
                 # Les sources voyagent **déclarées** et non lues : la lettre dit ce
                 # que le message embarque, le contenu extrait a son seul chemin
-                # (`contexte_markdown`, ENF-13) et n'a rien à faire dans une
+                # (`markdown_context`, ENF-13) et n'a rien à faire dans une
                 # boîte aux lettres. La clé est **absente** quand il n'y en a pas,
                 # et non posée à `[]` : un message de texte doit produire la lettre
                 # exacte d'avant #482, sans quoi un abonné de #44 verrait passer un
@@ -4627,7 +4627,7 @@ class ServiceChat:
                 payload={
                     "contenu": message.contenu,
                     **(
-                        {"sources": sources_en_liste(message.sources)}
+                        {"sources": sources_as_list(message.sources)}
                         if message.sources
                         else {}
                     ),
@@ -4669,7 +4669,7 @@ def transcription(fil: Sequence[MessageChat]) -> str:  # noqa: C901
         # Le contenu des sources **sous le message qui les a portées**, et jamais
         # rassemblé en fin de fil : c'est ce qui dit de quel tour de conversation
         # un document relève. Il entre déjà encadré comme donnée — `contexte` est
-        # la sortie de `contexte_markdown` (ENF-13) et de rien d'autre, si bien
+        # la sortie de `markdown_context` (ENF-13) et de rien d'autre, si bien
         # qu'il n'y a pas ici de second endroit où l'encadrement pourrait être
         # oublié.
         if message.contexte:

@@ -27,7 +27,7 @@ from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.secrets import SecretStore
 from maestro.config import Settings
 from maestro.providers.base import McpServerUnavailable
-from maestro.telemetry import MARQUEUR_SECRET, redact_secrets
+from maestro.telemetry import SECRET_MARKER, redact_secrets
 from maestro.telemetry import redact as redact_mod
 
 SECRET = "glpat-tok-chiffre-1234567890"
@@ -36,7 +36,7 @@ SECRET = "glpat-tok-chiffre-1234567890"
 @pytest.fixture(autouse=True)
 def registre_vierge(monkeypatch):
     """Isole le registre des secrets servis : il vit sinon pour tout le process."""
-    monkeypatch.setattr(redact_mod, "_SECRETS_SERVIS", set())
+    monkeypatch.setattr(redact_mod, "_SERVED_SECRETS", set())
 
 
 @pytest.fixture()
@@ -119,7 +119,7 @@ def test_token_statique_masque_en_sortie(store):
     store.enregistrer("qa", "GITLAB_TOKEN", SECRET, mode_auth="token_statique")
     store.lire("qa")  # sert la valeur → registre de rédaction
 
-    assert redact_secrets(f"fuite {SECRET}") == f"fuite {MARQUEUR_SECRET}"
+    assert redact_secrets(f"fuite {SECRET}") == f"fuite {SECRET_MARKER}"
 
 
 def test_appairage_non_secret_ni_chiffre_ni_masque(store):
@@ -233,7 +233,7 @@ def test_coffre_herite_en_clair_reste_lu_et_masque(store):
     )
 
     assert store.lire("qa") == {"GITLAB_TOKEN": SECRET}
-    assert redact_secrets(f"fuite {SECRET}") == f"fuite {MARQUEUR_SECRET}"
+    assert redact_secrets(f"fuite {SECRET}") == f"fuite {SECRET_MARKER}"
 
 
 def test_herite_et_structure_cohabitent(store):

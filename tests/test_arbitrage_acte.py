@@ -107,7 +107,7 @@ from maestro.providers.arbitrage import (
 )
 from maestro.providers.base import ModelProvider
 from maestro.sandbox.en_place import portee_de
-from maestro.telemetry import MARQUEUR_SECRET, RunJournal, enregistre_secret
+from maestro.telemetry import SECRET_MARKER, RunJournal, register_secret
 from maestro.telemetry import redact as redact_mod
 
 # --- Harnais ----------------------------------------------------------------------------
@@ -1041,9 +1041,9 @@ def secret_servi(monkeypatch):
     retrouve la valeur qu'**entière** — celui qu'une coupe mal placée ferait fuir.
     Aléatoire d'un bout à l'autre, pour que chacun de ses fragments soit du secret.
     """
-    monkeypatch.setattr(redact_mod, "_SECRETS_SERVIS", set())
+    monkeypatch.setattr(redact_mod, "_SERVED_SECRETS", set())
     secret = "c0e91b7d5f3a1c97f3a9c1e5b2d4f6a8"
-    enregistre_secret(secret)
+    register_secret(secret)
     return secret
 
 
@@ -1114,7 +1114,7 @@ def test_un_secret_dans_une_commande_reste_masque(secret_servi):
 
     assert secret_servi not in acte
     assert cle not in acte
-    assert acte.count(MARQUEUR_SECRET) == 2
+    assert acte.count(SECRET_MARKER) == 2
     assert acte.endswith('&& npm publish"')
 
 
@@ -1300,4 +1300,4 @@ def test_un_secret_dans_une_commande_reste_masque_jusqu_a_l_activite(store, secr
         assert secret_servi[:12] not in texte
     # Le secret entier est masqué **en le disant**, et la commande reste lisible
     # autour de lui : c'est l'acte qu'on garde, pas un trou.
-    assert f"export JETON={MARQUEUR_SECRET} && npm run build" in evenements[0].detail
+    assert f"export JETON={SECRET_MARKER} && npm run build" in evenements[0].detail

@@ -201,11 +201,11 @@ from maestro.sandbox.verification import (
     miroir_de_verification,
 )
 from maestro.telemetry import (
-    ETAPE_RECETTE,
+    STEP_ACCEPTANCE,
     ConsigneDepenseDuRun,
-    PlafondDepense,
-    PlafondDepenseDepasse,
     RunJournal,
+    SpendingCap,
+    SpendingCapExceeded,
     StepUsage,
     collect_usage,
     depenses_du_run,
@@ -1689,7 +1689,7 @@ class LocalExecutor(TaskExecutor):
         recette, redaction = await self._ecrit_la_recette(recette, projet, run_id, brief)
         usage = usage.fusion(redaction)
         journal.consigne(
-            etape=ETAPE_RECETTE,
+            etape=STEP_ACCEPTANCE,
             nom="Recette du run — les critères du brief",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -3526,9 +3526,9 @@ class LocalExecutor(TaskExecutor):
                         # qu'aucune attente n'a pu tenir (#1543) non plus : une
                         # tentative différente retomberait sur la même limite.
                         rattrapable=not isinstance(
-                            exc, PlafondDepenseDepasse | LimiteUsageAtteinte
+                            exc, SpendingCapExceeded | LimiteUsageAtteinte
                         ),
-                        au_plafond=isinstance(exc, PlafondDepenseDepasse),
+                        au_plafond=isinstance(exc, SpendingCapExceeded),
                         # Un serveur MCP injoignable (#1181) : ce qui manque est
                         # constaté, en données — la procédure d'accès que la
                         # bibliothèque connaît voyage avec l'échec, pour que la
@@ -4966,7 +4966,7 @@ def _absorbe_issue_tardive(realisation: asyncio.Task[TaskResult]) -> None:
         realisation.exception()
 
 
-def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResult | None:
+def _refus_plafond_creve(task: Task, plafond: SpendingCap | None) -> TaskResult | None:
     """Le refus de `task` si le budget de l'exécution est déjà épuisé (#56), sinon None.
 
     Consulté à l'entrée de l'exécution : une exécution déjà au-delà de son plafond
@@ -4978,7 +4978,7 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
         return None
     try:
         plafond.verifie(StepUsage())
-    except PlafondDepenseDepasse as exc:
+    except SpendingCapExceeded as exc:
         return _echec(
             task,
             agent="—",

@@ -166,6 +166,7 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | espace de travail | `workspace` | le dossier jetable d'une tâche |
 | secret, coffre | `secret`, `vault` | une valeur sensible et son stockage chiffré |
 | rédaction (masquer) | `redaction` | les secrets masqués avant journalisation |
+| garde-fou (d'un run) | `guardrails` | les plafonds posés sur ce qu'un run ingère, lit ou dépense |
 | chiffrement | `encryption` | le chiffrement au repos |
 
 ### Exécution d'un run
@@ -237,6 +238,10 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | ingestion, extraction | `ingestion`, `extraction` | des sources au Markdown que l'agent lit |
 | aperçu | `preview` | ce que des sources donneraient, sans rien engager |
 | téléversement | `upload` | des octets reçus, puis rattachés à un run |
+| lecture (d'une source) | `reading` | ce que l'extraction a tiré d'une source : son état, son Markdown, son coût en tokens |
+| refus (d'une saisie) | `rejected` | une saisie refusée avec son motif, que la personne peut corriger |
+| motif (d'un refus) | `reason` | le code court et stable qui dit pourquoi une saisie est refusée ou une source ignorée |
+| motif (de chemin) | `pattern` | une forme de chemin qu'un périmètre inclut ou exclut |
 | fournisseur | `provider` | l'adaptateur d'un modèle |
 | fournisseur par défaut | `default_provider` | celui du poste, choisi dans les Paramètres |
 | famille (de modèles) | `model_family` | Opus, Sonnet, Haiku… et la dernière version de chacune |

@@ -31,12 +31,12 @@ Le contrôle est **actif**, pas seulement un défaut bien choisi : un
   d'un voisin. Deux gestes en produisent aujourd'hui — un **lancement**, sous son
   `<run_id>/`, et un **message du fil** qui porte des sources (#482), sous
   `chat-<identifiant>/`. Les deux passent par la même chaîne
-  (`maestro.sources.composer_sources`) et donc par les mêmes garde-fous : le
+  (`maestro.sources.compose_sources`) et donc par les mêmes garde-fous : le
   préfixe distingue la provenance, il ne change aucune règle.
 - **Rien n'est créé tant que rien n'est téléversé** : la résolution d'une source
   (#315) ne fait que *calculer* la destination. La création revient au
   téléversement (#317), qui écrit les octets.
-- Le `run_id` sert de **segment de chemin** : il est validé (`ID_RUN`) et la
+- Le `run_id` sert de **segment de chemin** : il est validé (`RUN_ID_PATTERN`) et la
   destination passe par `chemin_dans_racine()` — un nom de fichier venu du
   navigateur ne remonte pas d'un cran (`../`, `C:\`, flux NTFS `note.md:cache`).
 - **Plafonds d'ingestion** (`GardeFousIngestion`, ENF-07) : taille par source
@@ -55,9 +55,9 @@ Le contrôle est **actif**, pas seulement un défaut bien choisi : un
 
 ## Où c'est écrit dans le code
 
-- `maestro.sources.modele` — la forme (`Source`, `SourceRefusee`), module feuille ;
+- `maestro.sources.model` — la forme (`Source`, `SourceRejected`), module feuille ;
 - `maestro.sources.resolution` — la résolution par type et les refus motivés
-  (`racine_ingestion`, `emplacement_ingestion`, `resoudre_sources`) ;
+  (`ingestion_root`, `ingestion_location`, `resolve_sources`) ;
 - `maestro.engine.guardrails` — `GardeFousIngestion`, avec les autres limites du
   run ;
 - `maestro.sources.composition` — l'**enchaînement** déclarer → résoudre →

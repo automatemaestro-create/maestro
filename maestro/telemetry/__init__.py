@@ -1,55 +1,55 @@
-"""Télémétrie de Maestro : journalisation des étapes et des coûts (ticket #8).
+"""Maestro telemetry: logging of steps and costs (ticket #8).
 
-Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
+Six building blocks, assembled by the orchestration loop (`maestro.engine`):
 
-- `StepUsage` + `collect_usage`/`report_usage` : la mesure d'usage d'un appel
-  modèle (tokens, coût, durée, outils) et son canal de remontée par contexte —
-  les fournisseurs signalent, l'appelant récolte, sans changer la signature de
-  `ModelProvider` ;
-- `redact_secrets` : rédaction des secrets avant toute journalisation —
-  `enregistre_secret` (#109) y ajoute à chaud les secrets réellement servis
-  (coffre par agent, références `${VAR}` résolues) ;
-- `RunJournal`/`StepRecord` : le journal structuré d'une exécution — une ligne
-  JSON par étape sur le logger `maestro.trace` — base préparant l'intégration
-  future de Langfuse ;
-- `RunCost`/`TaskCost` : la comptabilité par tâche d'une exécution (#55) — le
-  journal réorganisé en grand livre : une entrée par tâche (tokens, coût,
-  durée), l'agrégat du run, aucun prix évalué ici (tarification côté
-  `ModelProvider`, #32) ;
-- `PlafondDepense` : le plafond de dépense (#9) adossé à ce grand livre (#56) —
-  consulté par le collecteur à chaque mesure, il relit la comptabilité de
-  l'exécution (source unique du coût, aucun compteur parallèle) et lève
-  `PlafondDepenseDepasse` au dépassement d'un plafond en USD **ou en tokens**
-  (#113, opérant même sur un fournisseur sans coût rapporté) ;
-  `resume_controle_depense` dit à l'opérateur lequel des deux contrôles tient ;
-- `activer_export_langfuse` : l'exporteur Langfuse du journal (#81) — posé en
-  handler sur le logger `maestro.trace`, il mue chaque exécution en trace
-  Langfuse (une observation par étape, tokens et coûts #55 au format natif) ;
-  purement configuratif, no-op sans clés Langfuse dans l'environnement, et
-  **idempotent** — le logger est global et les points d'entrée l'activent à
-  chaque invocation sans jamais le retirer (#195).
-  `evaluer_run_langfuse` (#80) complète l'export en fin de run : les scores
-  d'évaluation dérivés du journal (réussite globale, taux de tâches réussies)
-  partent sur la trace de l'exécution — même bascule, même résilience.
+- `StepUsage` + `collect_usage`/`report_usage`: the usage measurement of a model
+  call (tokens, cost, duration, tools) and its per-context reporting channel —
+  providers signal, the caller collects, without changing the signature of
+  `ModelProvider`;
+- `redact_secrets`: secret redaction before any logging — `register_secret`
+  (#109) adds to it, on the fly, the secrets actually served (per-agent vault,
+  resolved `${VAR}` references);
+- `RunJournal`/`StepRecord`: the structured journal of a run — one JSON line per
+  step on the `maestro.trace` logger — a base preparing the future Langfuse
+  integration;
+- `RunCost`/`TaskCost`: the per-task accounting of a run (#55) — the journal
+  reorganized into a ledger: one entry per task (tokens, cost, duration), the
+  run aggregate, no price evaluated here (pricing on the `ModelProvider` side,
+  #32);
+- `SpendingCap`: the spending cap (#9) backed by this ledger (#56) — consulted
+  by the collector at each measurement, it rereads the accounting of the run
+  (single source of the cost, no parallel counter) and raises
+  `SpendingCapExceeded` when a cap in USD **or in tokens** is exceeded (#113,
+  working even on a provider with no reported cost);
+  `spending_control_summary` tells the operator which of the two controls holds;
+- `enable_langfuse_export`: the Langfuse exporter of the journal (#81) —
+  installed as a handler on the `maestro.trace` logger, it turns each run into a
+  Langfuse trace (one observation per step, tokens and costs #55 in native
+  format); purely configurative, no-op without Langfuse keys in the environment,
+  and **idempotent** — the logger is global and the entry points enable it on
+  every invocation without ever removing it (#195).
+  `score_run_langfuse` (#80) completes the export at the end of a run: the
+  scores derived from the journal (overall success, rate of successful tasks) go
+  to the trace of the run — same switch, same resilience.
 """
 
 from __future__ import annotations
 
 from maestro.telemetry.costs import (
-    ETAPE_BILAN,
-    ETAPE_BRIEF,
-    ETAPE_CADENCE,
-    ETAPE_EQUIPE,
-    ETAPE_PLAFOND,
-    ETAPE_PLANIFICATION,
-    ETAPE_RECETTE,
-    ETAPE_SONDE,
-    PlafondDepense,
-    PlafondDepenseDepasse,
+    STEP_ACCEPTANCE,
+    STEP_ASSESSMENT,
+    STEP_BRIEF,
+    STEP_CADENCE,
+    STEP_PLANNING,
+    STEP_PROBE,
+    STEP_SPENDING_CAP,
+    STEP_TEAM,
     RunCost,
+    SpendingCap,
+    SpendingCapExceeded,
     TaskCost,
-    intervalle_depuis,
-    resume_controle_depense,
+    interval_from,
+    spending_control_summary,
     union_ms,
 )
 from maestro.telemetry.journal import (
@@ -60,11 +60,11 @@ from maestro.telemetry.journal import (
     est_releve_usage,
 )
 from maestro.telemetry.langfuse import (
-    activer_export_langfuse,
-    evaluer_run_langfuse,
-    scores_depuis_journal,
+    enable_langfuse_export,
+    score_run_langfuse,
+    scores_from_journal,
 )
-from maestro.telemetry.redact import MARQUEUR_SECRET, enregistre_secret, redact_secrets
+from maestro.telemetry.redact import SECRET_MARKER, redact_secrets, register_secret
 from maestro.telemetry.usage import (
     ConsigneDepenseDuRun,
     StepUsage,
@@ -77,38 +77,38 @@ from maestro.telemetry.usage import (
 )
 
 __all__ = [
-    "ETAPE_BILAN",
-    "ETAPE_BRIEF",
-    "ETAPE_CADENCE",
-    "ETAPE_EQUIPE",
-    "ETAPE_PLAFOND",
-    "ETAPE_PLANIFICATION",
-    "ETAPE_RECETTE",
-    "ETAPE_SONDE",
     "LOGGER_NAME",
-    "MARQUEUR_SECRET",
+    "SECRET_MARKER",
+    "STEP_ACCEPTANCE",
+    "STEP_ASSESSMENT",
+    "STEP_BRIEF",
+    "STEP_CADENCE",
+    "STEP_PLANNING",
+    "STEP_PROBE",
+    "STEP_SPENDING_CAP",
+    "STEP_TEAM",
     "ConsigneDepenseDuRun",
     "SUFFIXE_ETAPE_USAGE",
-    "PlafondDepense",
-    "PlafondDepenseDepasse",
     "RunCost",
     "RunJournal",
+    "SpendingCap",
+    "SpendingCapExceeded",
     "StepRecord",
     "StepUsage",
     "TaskCost",
     "UsageCollector",
-    "activer_export_langfuse",
     "collect_usage",
     "depenses_du_run",
-    "enregistre_secret",
+    "enable_langfuse_export",
     "est_releve_usage",
-    "evaluer_run_langfuse",
-    "intervalle_depuis",
+    "interval_from",
     "redact_secrets",
+    "register_secret",
     "report_usage",
     "report_usage_du_run",
-    "resume_controle_depense",
-    "scores_depuis_journal",
+    "score_run_langfuse",
+    "scores_from_journal",
+    "spending_control_summary",
     "union_ms",
     "usage_en_cours",
 ]

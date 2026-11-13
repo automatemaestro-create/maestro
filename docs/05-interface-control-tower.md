@@ -2236,7 +2236,7 @@ liste.
 tâches menées de front ne l'occupent qu'une fois. La revue mesurait 47 min annoncées pour 43,5 min
 de mur — exactement l'erreur que l'outillage avait corrigée sur ses propres runs (#497, *« l'occupation
 est l'union des intervalles et jamais leur somme »*) et que le produit répétait. L'intervalle d'une
-étape se déduit de son horodatage de consignation et de sa durée horloge (`intervalle_depuis`), et
+étape se déduit de son horodatage de consignation et de sa durée horloge (`interval_from`), et
 le calcul vit **en un seul endroit** (`union_ms`), les deux chemins du grand livre — le journal du
 moteur et le flux d'événements de la Control Tower — devant lire le temps pareil. Le total d'un run
 ne porte **aucune** attente : une somme d'attentes de tâches parallèles n'est pas une attente du
@@ -2809,7 +2809,7 @@ fichier voyage donc deux fois par deux chemins, parce que ce sont deux questions
 « qu'est-ce que ça donnerait ? » et « garde ça pour le run ».
 
 Implémentation : `apps/web/app/composer/page.tsx` et `apps/web/components/composer/`, contre les
-trois routes des §6.1, §6.8 et §6.9 ; `maestro/sources/apercu.py` côté backend. Couverture :
+trois routes des §6.1, §6.8 et §6.9 ; `maestro/sources/preview.py` côté backend. Couverture :
 `apps/web/tests/composer.test.tsx` côté UI, [`tests/test_apercu_sources.py`](../tests/test_apercu_sources.py)
 côté API — le reste de la Phase 8 est différé au lot final #323.
 
@@ -4864,7 +4864,7 @@ fait ; `relancer` **recommence** un run depuis son brief et repaie une planifica
   ],
   "debut": "2026-07-30T09:00:00+00:00",
   "fin": null,                             // null tant que le run est en cours
-  "rapport": { … }                         // RapportLecture (§6.8) — **seulement** au lancement
+  "rapport": { … }                         // ReadingReport (§6.8) — **seulement** au lancement
 }
 ```
 
@@ -6302,7 +6302,7 @@ La brique sans laquelle l'écran *composer un objectif* (§2.7) ne peut pas exis
 accepte un fichier**. Un navigateur ne livre jamais de chemin absolu — il livre des octets ; le
 `chemin` d'une source `fichier` est donc quelque chose que le backend **calcule**, jamais quelque
 chose qu'un client déclare. Implémenté, pas en fixture
-(`maestro/sources/televersement.py`) — comme §6.1 et §6.7, le contrat ci-dessous décrit le
+(`maestro/sources/upload.py`) — comme §6.1 et §6.7, le contrat ci-dessous décrit le
 comportement réel.
 
 - `POST /api/sources` → `201` + `TeleversementSources`. Corps **`multipart/form-data`**, champ
@@ -6352,7 +6352,7 @@ seconde fois **au lancement**, sur l'ensemble des sources déclarées — trois 
 passent chacun le plafond de nombre, leur somme non. Un refus est l'objet `{motif, message}` du
 §6.7, augmenté de l'`index` du fichier fautif dans l'appel.
 
-#### Le rapport de lecture (`RapportLecture`)
+#### Le rapport de lecture (`ReadingReport`)
 
 Ce que les sources **disent**, et ce qu'elles **coûtent** — produit par l'extraction (#316) et rendu
 dans la réponse de `POST /api/executions` (§6.1). Une ligne par source déclarée, y compris celles
@@ -6360,7 +6360,7 @@ qui n'ont pas été lues : une extraction silencieuse produirait un brief qui pa
 personne n'a lu.
 
 ```jsonc
-// RapportLecture
+// ReadingReport
 {
   "tokens": 4830,                    // le coût estimé de l'ensemble, jamais optimiste
   "lectures": [
@@ -6382,7 +6382,7 @@ Trois états et pas un de plus : **`lu`**, **`tronque`** (avec la limite atteint
 (avec son motif). « Échoué » n'en est pas un — une source qu'on n'a pas su lire est une source
 ignorée qui se montre, là où un échec se lirait dans une trace que personne n'ouvre. Le contenu
 extrait, lui, **ne voyage pas** dans le rapport : il a son propre chemin, encadré comme donnée et
-jamais comme consigne (`contexte_markdown`, ENF-13), et c'est le brief (#318) qui l'empruntera.
+jamais comme consigne (`markdown_context`, ENF-13), et c'est le brief (#318) qui l'empruntera.
 
 Le régime des deux étapes est **opposé, à dessein** : la résolution **refuse** (une saisie se
 corrige avant de dépenser), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
@@ -6426,7 +6426,7 @@ La brique du critère 2 de l'écran *composer un objectif* (§2.7.3) : voir **av
 rapport de lecture existe déjà (§6.8), mais il est rendu par le **lancement**, c'est-à-dire par le
 geste payant. Il manquait la même lecture, jouée à vide.
 
-- `POST /api/sources/apercu` → `200` + `RapportLecture` (la forme du §6.8, à l'identique). Corps
+- `POST /api/sources/apercu` → `200` + `ReadingReport` (la forme du §6.8, à l'identique). Corps
   **`multipart/form-data`** : un champ `sources` portant le **JSON** des sources déclarées, et un
   champ `fichier` **répétable** portant les octets. `422` motivé sur une source refusée.
 
@@ -6466,7 +6466,7 @@ interdite, plafond dépassé). Un contenu illisible, un format non géré, une p
 **lignes** du rapport, en `200`. L'aperçu ne peut donc pas échouer parce qu'un `.png` traînait dans
 un dossier de maquettes.
 
-Implémentation : [`maestro/sources/apercu.py`](../maestro/sources/apercu.py). Couverture :
+Implémentation : [`maestro/sources/preview.py`](../maestro/sources/preview.py). Couverture :
 [`tests/test_apercu_sources.py`](../tests/test_apercu_sources.py).
 
 ### 6.10 Brief — questions de clarification et décision (#320, #321) — **livré**
@@ -6775,7 +6775,7 @@ Le premier lot du déménagement de `/composer` dans la conversation (#481) : un
   §6.1 et dans le **même ordre** — celui de l'écran, qui décide de ce qui entre quand le budget de
   tokens s'épuise (§6.8). Absent ou vide, l'appel est exactement celui d'avant ce lot.
 - La réponse et `GET /api/chat/{agent}` rendent, sur chaque `MessageChat`, deux champs de plus :
-  `sources` (la matière **résolue**, forme du §6.1) et `rapport` (le `RapportLecture` du §6.8,
+  `sources` (la matière **résolue**, forme du §6.1) et `rapport` (le `ReadingReport` du §6.8,
   `null` quand il n'y en a pas). Un troisième les a rejoints depuis : `conversation` (§6.14).
 
 ```jsonc
@@ -6797,7 +6797,7 @@ jamais du navigateur, sans quoi le plafond par source se contournerait en décla
 L'aperçu (§6.9) reste l'exception qui porte des octets, parce que lui ne dépose rien.
 
 **Une seule chaîne d'ingestion, et c'est le critère du ticket.** Le fil ne résout rien lui-même : il
-appelle `maestro.sources.composer_sources` — déclarer, résoudre, rattacher —, la fonction que le
+appelle `maestro.sources.compose_sources` — déclarer, résoudre, rattacher —, la fonction que le
 lancement appelle aussi depuis ce lot. Mêmes plafonds (ENF-07), mêmes racines interdites (EF-38),
 mêmes motifs, même `index`. Une seconde chaîne aurait fini par ne plus appliquer les mêmes plafonds,
 et c'est celle des deux qui en oublie un qui aurait fait la faille.
@@ -6820,7 +6820,7 @@ message. Sans texte **ni** sources, c'est toujours un `422` (« message vide »)
 
 **Le contenu extrait ne revient pas au navigateur.** Le `rapport` dit ce qui a été lu et ce que ça
 coûte ; le Markdown, lui, est fait pour un prompt — il est persisté à côté du message et entre dans
-la transcription **encadré comme donnée** (`contexte_markdown`, ENF-13), par ce seul chemin. Même
+la transcription **encadré comme donnée** (`markdown_context`, ENF-13), par ce seul chemin. Même
 règle que `Lecture.to_dict` au §6.8, et pour la même raison : un fil rechargé n'a pas à rapatrier le
 contenu intégral des documents.
 
@@ -6840,7 +6840,7 @@ route accepte ce qu'elle devrait refuser.
 | ce qui est gardé | côté API | côté `apps/web` |
 | --- | --- | --- |
 | le **dépôt** — un fichier voyage par son identifiant, ses octets atterrissent dans l'emplacement d'ingestion **du message** | [`tests/test_chat.py`](../tests/test_chat.py) ④, [`tests/test_controltower.py`](../tests/test_controltower.py) ⑧ | [`apps/web/tests/fil-sources.test.tsx`](../apps/web/tests/fil-sources.test.tsx) |
-| les **plafonds refusés** — `SourceRefusee` avant toute écriture, `422 {motif, message, index}` | idem | le refus sur la source visée, et celui qui n'en vise aucune |
+| les **plafonds refusés** — `SourceRejected` avant toute écriture, `422 {motif, message, index}` | idem | le refus sur la source visée, et celui qui n'en vise aucune |
 | le **rapport de lecture** — ce qui a été lu, ce qui a été ignoré, ce que le REST ne rapatrie pas | idem | replié sous le message, dépliable sur place |
 
 Trois d'entre eux ne se voient d'aucun écran et sont ceux qui comptent le plus : un refus laisse le

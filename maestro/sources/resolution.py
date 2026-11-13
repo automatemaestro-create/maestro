@@ -1,40 +1,36 @@
-"""Résolution des sources d'un objectif et garde-fous d'ingestion (ticket #315, EF-39).
+"""Resolution of an objective's sources and ingestion guardrails (ticket #315, EF-39).
 
-Le pendant actif de `maestro.sources.modele` : ce qu'une source **déclarée**
-devient une fois confrontée au disque, au réseau et aux plafonds du run. Trois
-résolutions, une par type, et un principe commun — **un refus porte son motif**,
-jamais un silence ni un `False` (même contrat que `RacineRefusee`, #221) :
+The active counterpart of `maestro.sources.model`: what a **declared** source
+becomes once confronted with the disk, the network and the run's caps. Three
+resolutions, one per type, and a shared principle: **a refusal carries its
+reason**, never a silence nor a `False` (same contract as `RacineRefusee`, #221):
 
-- **dossier** — il passe par `valider_racine` (#221), la validation de racine
-  déjà écrite : canonicalisation (`..` écrasés, liens suivis) puis confrontation
-  à la liste des **racines interdites** — racine de disque, dossier utilisateur
-  nu, `.ssh`/`AppData`, dossiers système, dépôt de Maestro. Un dossier de
-  références est un chemin du disque de l'utilisateur : il n'y a aucune raison
-  qu'il soit moins contrôlé qu'une racine de projet (EF-38), et deux garde-fous
-  écrits séparément divergeraient. Il ressort **en lecture seule**, forcé : une
-  référence n'est pas un projet ;
-- **url** — `http(s)` et rien d'autre, en réutilisant `SCHEMAS_URL`
-  (`maestro.references`, #187) plutôt qu'une seconde liste : un `file://` lirait
-  le disque par une porte que personne n'a contrôlée, un `javascript:` n'est pas
-  une adresse ;
-- **fichier** — il n'atterrit **jamais** dans le projet de l'utilisateur, mais
-  dans un **emplacement d'ingestion propre au run** (`core/ingestion/<run_id>/`,
-  ou `MAESTRO_INGESTION_DIR`). La raison est la même que celle qui interdit aux
-  agents d'écrire dans la racine (EF-36) : une matière téléversée est une
-  **entrée non fiable** ([docs/19 §2](../../docs/19-securite-modele-de-menace.md)),
-  et la mêler aux fichiers du projet la rendrait indiscernable de ce que
-  l'utilisateur a écrit lui-même.
+- **dossier**: goes through `valider_racine` (#221), the existing root
+  validation: canonicalisation (`..` flattened, links followed) then
+  confrontation with the list of **forbidden roots** (disk root, bare user
+  directory, `.ssh`/`AppData`, system directories, Maestro's repository). A
+  references directory is a path on the user's disk: there is no reason for it to
+  be less controlled than a project root (EF-38), and two guardrails written
+  separately would diverge. It comes out **read-only**, forced: a reference is
+  not a project;
+- **url**: `http(s)` and nothing else, reusing `SCHEMAS_URL`
+  (`maestro.references`, #187) rather than a second list: a `file://` would read
+  the disk through a door nobody controlled, a `javascript:` is not an address;
+- **fichier**: it **never** lands in the user's project but in an **ingestion
+  location of the run's own** (`core/ingestion/<run_id>/`, or
+  `MAESTRO_INGESTION_DIR`). The reason is the one that forbids agents to write
+  into the root (EF-36): uploaded material is an **untrusted input**
+  ([docs/19 §2](../../docs/19-securite-modele-de-menace.md)), and mixing it with
+  the project's files would make it indistinguishable from what the user wrote.
 
-Par-dessus, les **plafonds d'ingestion** (`GardeFousIngestion`, ENF-07) : taille
-par source, taille totale, nombre de sources. Ils vivent avec les autres limites
-du run, dans `maestro.engine.guardrails`, et pas ici — un troisième endroit où
-lire « ce que ce run s'autorise » serait un endroit de plus à oublier.
+On top of that, the **ingestion caps** (`GardeFousIngestion`, ENF-07): size per
+source, total size, number of sources. They live with the run's other limits, in
+`maestro.engine.guardrails`, not here: a third place to read "what this run
+allows itself" would be one more place to forget.
 
-**Rien n'est lu, rien n'est écrit.** Ce lot déclare, résout et refuse ; il ne
-copie aucun octet et ne crée aucun dossier tant qu'on ne le lui demande pas
-(`emplacement_ingestion(..., creer=True)`, que le téléversement de #317
-appellera). C'est ce qui le rend mergeable seul : un lancement sans `sources` se
-comporte exactement comme avant.
+**Nothing is read, nothing is written.** This module declares, resolves and
+refuses; it copies no byte and creates no directory unless asked
+(`ingestion_location(..., create=True)`, which the upload calls).
 """
 
 from __future__ import annotations
@@ -49,45 +45,45 @@ from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.projets.racine import RacineRefusee, chemin_dans_racine, valider_racine
 from maestro.references import SCHEMAS_URL
-from maestro.sources.modele import (
-    LONGUEUR_MAX_NOM,
-    TYPE_DOSSIER,
-    TYPE_FICHIER,
+from maestro.sources.model import (
+    MAX_NAME_LENGTH,
+    SOURCE_TYPES,
+    TYPE_DIRECTORY,
+    TYPE_FILE,
     TYPE_URL,
-    TYPES_SOURCE,
     Source,
-    SourceRefusee,
+    SourceRejected,
 )
 
-#: Identifiant de run admissible comme **nom de dossier** d'ingestion. Même
-#: raison d'être que `ID_PROJET` (#222) : le `run_id` vient d'ailleurs
-#: (`uuid4().hex[:12]` aujourd'hui, une reprise de journal demain) et il sert de
-#: segment de chemin — rien de non conforme ne doit pouvoir remonter d'un cran.
-ID_RUN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+#: Run identifier admissible as an ingestion **directory name**. Same purpose as
+#: `ID_PROJET` (#222): the `run_id` comes from elsewhere (`uuid4().hex[:12]`
+#: today, a journal resumption tomorrow) and serves as a path segment: nothing
+#: non-conforming must be able to climb a level.
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
-#: Longueur au-delà de laquelle un `run_id` n'en est plus un (même borne que les
-#: autres identifiants du projet : `maestro.appartenance.LONGUEUR_MAX_ID`).
-LONGUEUR_MAX_ID_RUN = 64
+#: Length beyond which a `run_id` is no longer one (same bound as the project's
+#: other identifiers: `maestro.appartenance.LONGUEUR_MAX_ID`).
+MAX_RUN_ID_LENGTH = 64
 
-#: Longueur maximale d'une URL de source. La borne pratique des navigateurs et
-#: des serveurs ; au-delà, ce n'est plus une adresse qu'on a collée.
-LONGUEUR_MAX_URL = 2048
+#: Maximum length of a source URL. The practical bound of browsers and servers;
+#: beyond it, it is no longer an address that was pasted.
+MAX_URL_LENGTH = 2048
 
-#: Caractères qu'un nom de fichier téléversé ne peut pas porter. Les séparateurs
-#: y sont (un nom n'est pas un chemin), et avec eux les interdits de Windows —
-#: dont `:`, qui ouvrirait un **flux de données alterné** NTFS
-#: (`note.md:cache`), c'est-à-dire un contenu invisible d'un listing.
-_CARACTERES_INTERDITS_NOM = frozenset('/\\<>:"|?*')
+#: Characters an uploaded file name cannot carry. Separators are in (a name is
+#: not a path), and with them the Windows forbidden ones, including `:`, which
+#: would open an NTFS **alternate data stream** (`note.md:cache`), that is, a
+#: content invisible in a listing.
+_FORBIDDEN_NAME_CHARACTERS = frozenset('/\\<>:"|?*')
 
 
-def racine_ingestion(settings: Settings | None = None) -> Path:
-    """La racine de l'ingestion : `MAESTRO_INGESTION_DIR`, sinon `ingestion/` de la configuration.
+def ingestion_root(settings: Settings | None = None) -> Path:
+    """The ingestion root: `MAESTRO_INGESTION_DIR`, otherwise the configuration's `ingestion/`.
 
-    Même patron que les autres dépôts (`maestro.projets.store`,
-    `maestro.agents.store`) : le `core/` d'un clone, l'état du poste d'une
-    installation (`maestro.emplacements.racine_configuration`, #1620), déplaçable par
-    l'environnement pour qui range ses données ailleurs. Rien n'est créé ici —
-    la racine peut ne pas exister tant qu'aucun fichier n'a été téléversé.
+    Same pattern as the other stores (`maestro.projets.store`,
+    `maestro.agents.store`): the `core/` of a clone, the workstation state of an
+    installation (`maestro.emplacements.racine_configuration`, #1620), movable by
+    the environment for whoever keeps their data elsewhere. Nothing is created
+    here: the root may not exist as long as no file was uploaded.
     """
     settings = settings or load_settings()
     if settings.ingestion_dir:
@@ -95,312 +91,313 @@ def racine_ingestion(settings: Settings | None = None) -> Path:
     return depot_configuration("ingestion")
 
 
-def emplacement_ingestion(
+def ingestion_location(
     run_id: str,
     *,
     settings: Settings | None = None,
-    racine_projet: Path | str | None = None,
-    creer: bool = False,
+    project_root: Path | str | None = None,
+    create: bool = False,
 ) -> Path:
-    """L'emplacement d'ingestion **propre au run** `run_id` — un dossier par run.
+    """The ingestion location **of the run's own** `run_id`: one directory per run.
 
-    Un dossier par run et non un dossier commun : c'est ce qui permet de dire
-    « cette matière appartient à cette exécution », de la retrouver dans une
-    trace et de la ramasser sans toucher à celle d'un run voisin.
+    One directory per run rather than a shared one: it is what allows saying
+    "this material belongs to this execution", finding it in a trace and
+    collecting it without touching a neighbouring run's.
 
-    `racine_projet` fait tenir la promesse du critère — un fichier téléversé est
-    stocké **hors de la racine du projet**. Le contrôle est actif : il ne suffit
-    pas que le défaut soit hors projet, encore faut-il qu'un `MAESTRO_INGESTION_DIR`
-    posé à l'intérieur d'un projet soit refusé plutôt qu'obéi.
+    `project_root` makes the criterion's promise hold: an uploaded file is stored
+    **outside the project root**. The check is active: it is not enough for the
+    default to be outside the project, a `MAESTRO_INGESTION_DIR` set inside a
+    project must be refused rather than obeyed.
 
-    `creer=True` crée le dossier (ce que fera le téléversement, #317) ; par
-    défaut la fonction ne fait que **calculer**, ce lot n'écrivant rien.
+    `create=True` creates the directory (what the upload does, #317); by default
+    the function only **computes**.
     """
-    identifiant = str(run_id or "").strip()
-    if not identifiant or len(identifiant) > LONGUEUR_MAX_ID_RUN or not ID_RUN.match(identifiant):
-        raise SourceRefusee(
+    identifier = str(run_id or "").strip()
+    if (
+        not identifier
+        or len(identifier) > MAX_RUN_ID_LENGTH
+        or not RUN_ID_PATTERN.match(identifier)
+    ):
+        raise SourceRejected(
             "run-invalide",
             f"Identifiant de run inutilisable comme dossier d'ingestion : {run_id!r}.",
         )
-    racine = racine_ingestion(settings)
-    # `chemin_dans_racine` (#221) plutôt qu'un `racine / identifiant` : le motif
-    # ci-dessus borne déjà l'identifiant, mais la seconde moitié d'EF-38 est
-    # écrite une fois pour toutes et se relit — un jour où le motif changerait,
-    # c'est elle qui tiendrait encore.
-    emplacement = chemin_dans_racine(racine, identifiant)
-    if racine_projet is not None:
-        _refuser_dans_le_projet(emplacement, racine_projet)
-    if creer:
-        emplacement.mkdir(parents=True, exist_ok=True)
-    return emplacement
+    root = ingestion_root(settings)
+    # `chemin_dans_racine` (#221) rather than a `root / identifier`: the pattern
+    # above already bounds the identifier, but the second half of EF-38 is
+    # written once and for all and can be re-read: the day the pattern changes,
+    # it is the one still holding.
+    location = chemin_dans_racine(root, identifier)
+    if project_root is not None:
+        _refuse_inside_project(location, project_root)
+    if create:
+        location.mkdir(parents=True, exist_ok=True)
+    return location
 
 
-def resoudre_sources(
-    bruts: Any,
+def resolve_sources(
+    raw_sources: Any,
     *,
     run_id: str,
-    garde_fous: GardeFousIngestion | None = None,
-    racine_projet: Path | str | None = None,
+    guardrails: GardeFousIngestion | None = None,
+    project_root: Path | str | None = None,
     settings: Settings | None = None,
 ) -> tuple[Source, ...]:
-    """Les sources de `bruts`, **résolues et bornées** — `()` s'il n'y en a aucune.
+    """The sources of `raw_sources`, **resolved and bounded**: `()` when there are none.
 
-    L'ordre est celui de la saisie : une liste de pièces jointes se relit dans
-    l'ordre où elle a été composée. Lève `SourceRefusee` — donc `ValueError`, ce
-    dont la route de lancement fait déjà un 422 — à la **première** source
-    fautive, en la situant par son index : refuser en bloc à la fin obligerait à
-    tout relire pour savoir quoi retirer.
+    The order is the input's: a list of attachments is read back in the order it
+    was composed. Raises `SourceRejected` (hence `ValueError`, which the launch
+    route already turns into a 422) at the **first** faulty source, locating it by
+    its index: refusing in bulk at the end would force re-reading everything to
+    know what to remove.
 
-    Les plafonds sont ceux de `garde_fous` (`GardeFousIngestion()` par défaut,
-    donc actifs). Le nombre est vérifié **avant** toute résolution : cinq cents
-    sources se refusent sans toucher au disque cinq cents fois.
+    The caps are those of `guardrails` (`GardeFousIngestion()` by default, hence
+    active). The count is checked **before** any resolution: five hundred sources
+    are refused without touching the disk five hundred times.
     """
-    if bruts is None:
+    if raw_sources is None:
         return ()
-    if not isinstance(bruts, Sequence) or isinstance(bruts, str | bytes):
-        raise SourceRefusee(
+    if not isinstance(raw_sources, Sequence) or isinstance(raw_sources, str | bytes):
+        raise SourceRejected(
             "sources-illisibles",
-            f"Sources illisibles : une liste était attendue, reçu {type(bruts).__name__}.",
+            f"Sources illisibles : une liste était attendue, reçu {type(raw_sources).__name__}.",
         )
-    entrees = tuple(bruts)
-    if not entrees:
+    entries = tuple(raw_sources)
+    if not entries:
         return ()
 
-    garde_fous = garde_fous if garde_fous is not None else GardeFousIngestion()
-    plafond_nombre = garde_fous.nb_max_sources
-    if plafond_nombre is not None and len(entrees) > plafond_nombre:
-        raise SourceRefusee(
+    guardrails = guardrails if guardrails is not None else GardeFousIngestion()
+    count_cap = guardrails.nb_max_sources
+    if count_cap is not None and len(entries) > count_cap:
+        raise SourceRejected(
             "trop-de-sources",
-            f"Trop de sources : {len(entrees)} déclarées, {plafond_nombre} au maximum.",
+            f"Trop de sources : {len(entries)} déclarées, {count_cap} au maximum.",
         )
 
-    resolues: list[Source] = []
+    resolved: list[Source] = []
     total = 0
-    for index, brut in enumerate(entrees):
-        source = _resoudre_une(
-            brut,
+    for index, raw in enumerate(entries):
+        source = _resolve_one(
+            raw,
             index=index,
             run_id=run_id,
-            garde_fous=garde_fous,
-            racine_projet=racine_projet,
+            guardrails=guardrails,
+            project_root=project_root,
             settings=settings,
         )
-        if source.taille is not None:
-            total += source.taille
-            plafond_total = garde_fous.taille_max_totale_octets
-            if plafond_total is not None and total > plafond_total:
-                raise SourceRefusee(
+        if source.size is not None:
+            total += source.size
+            total_cap = guardrails.taille_max_totale_octets
+            if total_cap is not None and total > total_cap:
+                raise SourceRejected(
                     "ingestion-trop-volumineuse",
                     f"Sources trop volumineuses au total : {total} octets cumulés "
-                    f"à la source {index + 1}, {plafond_total} au maximum.",
+                    f"à la source {index + 1}, {total_cap} au maximum.",
                     index=index,
                 )
-        resolues.append(source)
-    return tuple(resolues)
+        resolved.append(source)
+    return tuple(resolved)
 
 
-def _resoudre_une(
-    brut: Any,
+def _resolve_one(
+    raw: Any,
     *,
     index: int,
     run_id: str,
-    garde_fous: GardeFousIngestion,
-    racine_projet: Path | str | None,
+    guardrails: GardeFousIngestion,
+    project_root: Path | str | None,
     settings: Settings | None,
 ) -> Source:
-    """Une source résolue selon son type, ou `SourceRefusee` motivée."""
-    data = brut.to_dict() if isinstance(brut, Source) else brut
+    """A source resolved according to its type, or a reasoned `SourceRejected`."""
+    data = raw.to_dict() if isinstance(raw, Source) else raw
     if not isinstance(data, Mapping):
-        raise SourceRefusee(
+        raise SourceRejected(
             "source-illisible",
             f"Source {index + 1} illisible : un objet était attendu, "
-            f"reçu {type(brut).__name__}.",
+            f"reçu {type(raw).__name__}.",
             index=index,
         )
-    type_source = str(data.get("type") or "").strip().lower()
-    if type_source not in TYPES_SOURCE:
-        raise SourceRefusee(
+    source_type = str(data.get("type") or "").strip().lower()
+    if source_type not in SOURCE_TYPES:
+        raise SourceRejected(
             "type-inconnu",
-            f"Source {index + 1} de type inconnu : {type_source or '(vide)'!r} — "
-            f"attendu {', '.join(TYPES_SOURCE)}.",
+            f"Source {index + 1} de type inconnu : {source_type or '(vide)'!r} — "
+            f"attendu {', '.join(SOURCE_TYPES)}.",
             index=index,
         )
-    nom = " ".join(str(data.get("nom") or "").split())
-    if type_source == TYPE_URL:
-        return _resoudre_url(data, index=index, nom=nom)
-    if type_source == TYPE_DOSSIER:
-        return _resoudre_dossier(data, index=index, nom=nom)
-    return _resoudre_fichier(
+    name = " ".join(str(data.get("nom") or "").split())
+    if source_type == TYPE_URL:
+        return _resolve_url(data, index=index, name=name)
+    if source_type == TYPE_DIRECTORY:
+        return _resolve_directory(data, index=index, name=name)
+    return _resolve_file(
         data,
         index=index,
-        nom=nom,
+        name=name,
         run_id=run_id,
-        garde_fous=garde_fous,
-        racine_projet=racine_projet,
+        guardrails=guardrails,
+        project_root=project_root,
         settings=settings,
     )
 
 
-def _resoudre_url(data: Mapping[str, Any], *, index: int, nom: str) -> Source:
-    """Une source `url` : `http(s)` et rien d'autre, sans espace, bornée."""
-    valeur = str(data.get("valeur") or data.get("chemin") or "").strip()
-    if not valeur:
-        raise SourceRefusee(
+def _resolve_url(data: Mapping[str, Any], *, index: int, name: str) -> Source:
+    """A `url` source: `http(s)` and nothing else, no whitespace, bounded."""
+    value = str(data.get("valeur") or data.get("chemin") or "").strip()
+    if not value:
+        raise SourceRejected(
             "url-absente", f"Source {index + 1} : URL manquante.", index=index
         )
-    if len(valeur) > LONGUEUR_MAX_URL:
-        raise SourceRefusee(
+    if len(value) > MAX_URL_LENGTH:
+        raise SourceRejected(
             "url-trop-longue",
-            f"Source {index + 1} : URL de {len(valeur)} caractères, "
-            f"{LONGUEUR_MAX_URL} au maximum.",
+            f"Source {index + 1} : URL de {len(value)} caractères, "
+            f"{MAX_URL_LENGTH} au maximum.",
             index=index,
         )
-    # Même filtre que les liens du contrat #183 (`maestro.references`) : un
-    # schéma hors `http(s)` n'est pas une adresse à aller lire — `file://`
-    # ouvrirait le disque, `javascript:` n'ouvre rien du tout.
-    if not valeur.lower().startswith(SCHEMAS_URL) or any(c.isspace() for c in valeur):
-        raise SourceRefusee(
+    # Same filter as the links of contract #183 (`maestro.references`): a scheme
+    # other than `http(s)` is not an address to go and read: `file://` would
+    # open the disk, `javascript:` opens nothing at all.
+    if not value.lower().startswith(SCHEMAS_URL) or any(c.isspace() for c in value):
+        raise SourceRejected(
             "url-non-suivable",
-            f"Source {index + 1} refusée : {valeur!r} n'est pas une URL "
+            f"Source {index + 1} refusée : {value!r} n'est pas une URL "
             f"{' ou '.join(s.rstrip(':/') for s in SCHEMAS_URL)}.",
             index=index,
         )
-    return Source(type=TYPE_URL, nom=nom, valeur=valeur, lecture_seule=True)
+    return Source(type=TYPE_URL, name=name, value=value, read_only=True)
 
 
-def _resoudre_dossier(data: Mapping[str, Any], *, index: int, nom: str) -> Source:
-    """Une source `dossier` : validée comme une racine de projet, en lecture seule."""
-    brut = str(data.get("chemin") or data.get("valeur") or "").strip()
-    if not brut:
-        raise SourceRefusee(
+def _resolve_directory(data: Mapping[str, Any], *, index: int, name: str) -> Source:
+    """A `dossier` source: validated like a project root, read-only."""
+    raw = str(data.get("chemin") or data.get("valeur") or "").strip()
+    if not raw:
+        raise SourceRejected(
             "chemin-absent", f"Source {index + 1} : chemin de dossier manquant.", index=index
         )
     try:
-        resolu = valider_racine(brut)
+        resolved = valider_racine(raw)
     except RacineRefusee as exc:
-        # Le motif de la validation de racine est **conservé** tel quel
-        # (`chemin-sensible`, `racine-de-disque`, `dossier-absent`…) : c'est un
-        # code stable que l'UI sait déjà traduire (docs/05 §2.7), et le
-        # renommer ferait diverger deux vocabulaires pour un même refus.
-        raise SourceRefusee(exc.motif, f"Source {index + 1} : {exc}", index=index) from exc
+        # The root validation's reason is **kept** as is (`chemin-sensible`,
+        # `racine-de-disque`, `dossier-absent`…): it is a stable code the UI
+        # already translates (docs/05 §2.7), and renaming it would make two
+        # vocabularies diverge for one refusal.
+        raise SourceRejected(exc.motif, f"Source {index + 1} : {exc}", index=index) from exc
     return Source(
-        type=TYPE_DOSSIER,
-        nom=nom or resolu.name,
-        chemin=str(resolu),
-        # Forcée, jamais lue depuis la déclaration : un dossier de références en
-        # écriture serait un projet déguisé, qui n'aurait passé aucun des
-        # contrôles de la Phase 7 (docs/03, entité SOURCE).
-        lecture_seule=True,
+        type=TYPE_DIRECTORY,
+        name=name or resolved.name,
+        path=str(resolved),
+        # Forced, never read from the declaration: a writable references
+        # directory would be a disguised project that passed none of the
+        # Phase 7 checks (docs/03, SOURCE entity).
+        read_only=True,
     )
 
 
-def _resoudre_fichier(
+def _resolve_file(
     data: Mapping[str, Any],
     *,
     index: int,
-    nom: str,
+    name: str,
     run_id: str,
-    garde_fous: GardeFousIngestion,
-    racine_projet: Path | str | None,
+    guardrails: GardeFousIngestion,
+    project_root: Path | str | None,
     settings: Settings | None,
 ) -> Source:
-    """Une source `fichier` : nom sûr, taille connue et bornée, destination hors projet."""
-    nom_fichier = nom_de_fichier(nom or str(data.get("chemin") or ""), index=index)
-    taille = _taille(data.get("taille"), index=index, garde_fous=garde_fous)
-    emplacement = emplacement_ingestion(
-        run_id, settings=settings, racine_projet=racine_projet
-    )
-    # Second filet : le nom vient d'être assaini, mais c'est `chemin_dans_racine`
-    # (#221) qui **prouve** que la destination reste sous l'emplacement du run.
-    destination = chemin_dans_racine(emplacement, nom_fichier)
+    """A `fichier` source: safe name, known and bounded size, destination outside the project."""
+    clean_name = file_name(name or str(data.get("chemin") or ""), index=index)
+    size = _size(data.get("taille"), index=index, guardrails=guardrails)
+    location = ingestion_location(run_id, settings=settings, project_root=project_root)
+    # Second net: the name has just been sanitised, but it is `chemin_dans_racine`
+    # (#221) that **proves** the destination stays under the run's location.
+    destination = chemin_dans_racine(location, clean_name)
     return Source(
-        type=TYPE_FICHIER,
-        nom=nom_fichier,
-        chemin=str(destination),
-        taille=taille,
-        lecture_seule=True,
+        type=TYPE_FILE,
+        name=clean_name,
+        path=str(destination),
+        size=size,
+        read_only=True,
     )
 
 
-def nom_de_fichier(brut: str, *, index: int = 0) -> str:
-    """Le nom de fichier assaini d'une source téléversée, ou `SourceRefusee`.
+def file_name(raw: str, *, index: int = 0) -> str:
+    """The sanitised file name of an uploaded source, or `SourceRejected`.
 
-    Un nom, pas un chemin : ni séparateur, ni `..`, ni caractère interdit. Le
-    nom d'un fichier téléversé vient du navigateur de l'utilisateur, c'est-à-dire
-    de l'extérieur — c'est le vecteur classique de la traversée de répertoire.
+    A name, not a path: no separator, no `..`, no forbidden character. An
+    uploaded file's name comes from the user's browser, that is, from outside:
+    it is the classic vector of directory traversal.
 
-    Public depuis #317 : le téléversement (`maestro.sources.televersement`)
-    assainit le nom **à la réception**, là où la résolution l'assainit à la
-    déclaration. Deux assainisseurs écrits séparément divergeraient, et c'est
-    celui des deux qui oublie une classe de caractères qui ferait la faille.
+    Public so that the upload (`maestro.sources.upload`) sanitises the name **on
+    reception**, where resolution sanitises it at declaration. Two sanitisers
+    written separately would diverge, and the one forgetting a class of
+    characters would be the hole.
     """
-    nom = " ".join(str(brut or "").split())
-    if not nom:
-        raise SourceRefusee(
+    name = " ".join(str(raw or "").split())
+    if not name:
+        raise SourceRejected(
             "nom-absent", f"Source {index + 1} : nom de fichier manquant.", index=index
         )
-    if len(nom) > LONGUEUR_MAX_NOM:
-        raise SourceRefusee(
+    if len(name) > MAX_NAME_LENGTH:
+        raise SourceRejected(
             "nom-trop-long",
-            f"Source {index + 1} : nom de {len(nom)} caractères, "
-            f"{LONGUEUR_MAX_NOM} au maximum.",
+            f"Source {index + 1} : nom de {len(name)} caractères, "
+            f"{MAX_NAME_LENGTH} au maximum.",
             index=index,
         )
-    if nom in {".", ".."} or set(nom) & _CARACTERES_INTERDITS_NOM:
-        raise SourceRefusee(
+    if name in {".", ".."} or set(name) & _FORBIDDEN_NAME_CHARACTERS:
+        raise SourceRejected(
             "nom-invalide",
-            f"Source {index + 1} refusée : {nom!r} est un chemin, pas un nom de fichier.",
+            f"Source {index + 1} refusée : {name!r} est un chemin, pas un nom de fichier.",
             index=index,
         )
-    return nom
+    return name
 
 
-def _taille(brut: Any, *, index: int, garde_fous: GardeFousIngestion) -> int:
-    """La taille en octets d'un fichier téléversé, plafond appliqué.
+def _size(raw: Any, *, index: int, guardrails: GardeFousIngestion) -> int:
+    """The size in bytes of an uploaded file, cap applied.
 
-    **Exigée**, et c'est le point : une taille inconnue est une taille non
-    plafonnable, donc un plafond contournable en omettant le champ. Qui téléverse
-    a les octets sous la main — il sait les compter.
+    **Required**, and that is the point: an unknown size is a size that cannot be
+    capped, hence a cap that could be bypassed by omitting the field. Whoever
+    uploads has the bytes at hand and can count them.
     """
-    if brut is None:
-        raise SourceRefusee(
+    if raw is None:
+        raise SourceRejected(
             "taille-absente",
             f"Source {index + 1} : taille manquante — une source non mesurée "
             "ne peut pas être plafonnée.",
             index=index,
         )
-    if isinstance(brut, bool) or not isinstance(brut, int) or brut < 0:
-        raise SourceRefusee(
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise SourceRejected(
             "taille-invalide",
-            f"Source {index + 1} : taille {brut!r} — un nombre d'octets positif était attendu.",
+            f"Source {index + 1} : taille {raw!r} — un nombre d'octets positif était attendu.",
             index=index,
         )
-    plafond = garde_fous.taille_max_source_octets
-    if plafond is not None and brut > plafond:
-        raise SourceRefusee(
+    cap = guardrails.taille_max_source_octets
+    if cap is not None and raw > cap:
+        raise SourceRejected(
             "source-trop-volumineuse",
-            f"Source {index + 1} trop volumineuse : {brut} octets, {plafond} au maximum.",
+            f"Source {index + 1} trop volumineuse : {raw} octets, {cap} au maximum.",
             index=index,
         )
-    return brut
+    return raw
 
 
-def _refuser_dans_le_projet(emplacement: Path, racine_projet: Path | str) -> None:
-    """Refuse un emplacement d'ingestion situé **dans** la racine du projet.
+def _refuse_inside_project(location: Path, project_root: Path | str) -> None:
+    """Refuses an ingestion location situated **inside** the project root.
 
-    Le contrôle est écrit à l'envers de son habitude : `chemin_dans_racine`
-    (#221) sert d'ordinaire à vérifier qu'un chemin **reste** sous une racine, et
-    c'est ici son succès qui vaut refus — un emplacement d'ingestion valide au
-    sens du projet est un emplacement d'ingestion **dans** le projet. L'écrire
-    ainsi évite de recopier la comparaison de chemins canonicalisés, et donc de
-    la voir diverger.
+    The check is written upside down: `chemin_dans_racine` (#221) usually
+    verifies that a path **stays** under a root, and here its success means
+    refusal: an ingestion location valid in the project's sense is an ingestion
+    location **inside** the project. Writing it so avoids copying the
+    canonicalised path comparison, and so seeing it diverge.
     """
     try:
-        chemin_dans_racine(racine_projet, emplacement)
+        chemin_dans_racine(project_root, location)
     except RacineRefusee:
-        return  # hors du projet : c'est exactement ce qu'on veut.
-    raise SourceRefusee(
+        return  # outside the project: exactly what we want.
+    raise SourceRejected(
         "ingestion-dans-le-projet",
-        f"Emplacement d'ingestion refusé : {emplacement} est dans le projet "
-        f"({racine_projet}) — une matière téléversée ne se mêle pas à ses fichiers.",
+        f"Emplacement d'ingestion refusé : {location} est dans le projet "
+        f"({project_root}) — une matière téléversée ne se mêle pas à ses fichiers.",
     )

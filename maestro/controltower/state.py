@@ -89,16 +89,16 @@ from maestro.engine.plafond import STATUT_TACHE_SUSPENDUE
 from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
-from maestro.sources.modele import Source, sources_en_liste
+from maestro.sources.model import Source, sources_as_list
 from maestro.telemetry.costs import (
-    ETAPE_BILAN,
-    ETAPE_BRIEF,
-    ETAPE_CADENCE,
-    ETAPE_RECETTE,
-    ETAPE_SONDE,
+    STEP_ACCEPTANCE,
+    STEP_ASSESSMENT,
+    STEP_BRIEF,
+    STEP_CADENCE,
+    STEP_PROBE,
     RunCost,
     TaskCost,
-    intervalle_depuis,
+    interval_from,
     union_ms,
 )
 from maestro.telemetry.usage import StepUsage
@@ -1134,7 +1134,7 @@ class EtatExecution:
             "cout_partiel": self.cout_partiel,
             "ticket": ticket_en_dict(self.ticket),
             "projet_id": self.projet_id,
-            "sources": sources_en_liste(self.sources),
+            "sources": sources_as_list(self.sources),
             "mode_brief": self.mode_brief,
             # L'attente rendue **visible** (#321) : depuis quand, quel tour, sur
             # combien. Dans le **résumé** et non dans le seul détail, contrairement au
@@ -1265,7 +1265,7 @@ class EtatExecution:
     def cout(self) -> RunCost:  # noqa: C901
         """Le grand livre du run (#57) : coût par tâche et agrégat, depuis les événements.
 
-        Même convention d'attribution que `RunCost.depuis_journal` (#55),
+        Même convention d'attribution que `RunCost.from_journal` (#55),
         transposée au flux d'événements — le bus ne transporte pas le journal :
         l'activité sans tâche est une étape du run, un `tache.statut` fait foi
         pour l'identité de sa tâche, activités et messages rattachés à une tâche
@@ -1294,7 +1294,7 @@ class EtatExecution:
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
-        # côté journal (`intervalle_depuis`) — deux chemins construisent ce grand
+        # côté journal (`interval_from`) — deux chemins construisent ce grand
         # livre, ils ne doivent pas lire le temps de deux façons.
         intervalles: list[tuple[datetime, datetime]] = []
         for event in self.evenements:
@@ -1303,12 +1303,12 @@ class EtatExecution:
                 # ils se posent même sur un événement sans usage — dont le
                 # `tache.reference`, qui n'en porte jamais — donc avant le filtre
                 # ci-dessous. Un champ absent n'efface pas celui déjà en place.
-                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entree = entrees.get(event.tache_id) or TaskCost(task_id=event.tache_id)
                 entrees[event.tache_id] = replace(
                     entree,
                     ticket=event.ticket if event.ticket is not None else entree.ticket,
-                    projet_id=(
-                        event.projet_id if event.projet_id is not None else entree.projet_id
+                    project_id=(
+                        event.projet_id if event.projet_id is not None else entree.project_id
                     ),
                 )
             usage = event.usage
@@ -1316,7 +1316,7 @@ class EtatExecution:
                 usage = StepUsage(cout_usd=event.cout_usd)
             if usage is None:
                 continue
-            if event.etape_run == ETAPE_BILAN:
+            if event.etape_run == STEP_ASSESSMENT:
                 # Le bilan (#1284) : une dépense du run, rendue après sa fin —
                 # comptée à part, et hors du temps de mur, que le run avait fini
                 # d'occuper.
@@ -1327,17 +1327,17 @@ class EtatExecution:
             # branche qui l'écarterait ici est celle du `elif` plus bas — on
             # relève l'intervalle **avec** l'usage qu'on va compter.
             if event.type in _TYPES_COMPTABLES:
-                intervalle = intervalle_depuis(event.horodatage, usage.duree_ms)
+                intervalle = interval_from(event.horodatage, usage.duree_ms)
                 if intervalle is not None:
                     intervalles.append(intervalle)
             if event.type == EVENEMENT_TACHE_STATUT and event.tache_id:
-                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entree = entrees.get(event.tache_id) or TaskCost(task_id=event.tache_id)
                 entrees[event.tache_id] = replace(
                     entree,
-                    nom=event.titre,
+                    name=event.titre,
                     agent=event.agent,
                     role=event.role,
-                    statut=event.statut,
+                    status=event.statut,
                     usage=entree.usage.fusion(usage),
                 )
             elif event.type == EVENEMENT_AGENT_ACTIVITE and not event.tache_id:
@@ -1349,13 +1349,13 @@ class EtatExecution:
                 # L'étape est **portée par l'événement** (`etape_run`), jamais
                 # devinée de son titre ; un événement d'avant ce ticket n'en
                 # porte pas, et son cadrage reste donc compté en planification.
-                if event.etape_run == ETAPE_BRIEF:
+                if event.etape_run == STEP_BRIEF:
                     brief = brief.fusion(usage)
-                elif event.etape_run == ETAPE_SONDE:
+                elif event.etape_run == STEP_PROBE:
                     # La sonde du point de contrôle (#1398) : sa propre ligne,
                     # ni la tâche qui l'a armée, ni le cadrage.
                     sonde = sonde.fusion(usage)
-                elif event.etape_run == ETAPE_RECETTE:
+                elif event.etape_run == STEP_ACCEPTANCE:
                     # La recette du run (#1530) : sa propre ligne, dans le temps
                     # de mur — elle est sur le chemin du run.
                     recette = recette.fusion(usage)
@@ -1365,19 +1365,19 @@ class EtatExecution:
                 event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}
                 and event.tache_id
             ):
-                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entree = entrees.get(event.tache_id) or TaskCost(task_id=event.tache_id)
                 entrees[event.tache_id] = replace(
                     entree, usage=entree.usage.fusion(usage)
                 )
         return RunCost(
             run_id=self.run_id,
-            planification=planification,
+            planning=planification,
             brief=brief,
-            taches=tuple(entrees.values()),
-            duree_mur_ms=union_ms(intervalles),
-            bilan=bilan,
-            sonde=sonde,
-            recette=recette,
+            tasks=tuple(entrees.values()),
+            wall_clock_ms=union_ms(intervalles),
+            assessment=bilan,
+            probe=sonde,
+            acceptance=recette,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -2199,11 +2199,11 @@ class ControlTowerState:
         L'étape `brief` y apporte aussi le **brief rédigé** (#1174) : voir
         `_retient_brief_auto`.
         """
-        if event.etape_run == ETAPE_BRIEF and event.brief is not None:
+        if event.etape_run == STEP_BRIEF and event.brief is not None:
             self._retient_brief_auto(event)
-        if event.etape_run == ETAPE_CADENCE and event.cadence is not None and event.run_id:
+        if event.etape_run == STEP_CADENCE and event.cadence is not None and event.run_id:
             self._retient_cadence(event)
-        if event.etape_run == ETAPE_RECETTE and event.verification is not None:
+        if event.etape_run == STEP_ACCEPTANCE and event.verification is not None:
             # La recette du run (#1530) : au run qu'elle juge, jamais à une tâche.
             execution = self._executions.get(event.run_id)
             if execution is not None:

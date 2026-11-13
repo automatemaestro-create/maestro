@@ -51,7 +51,7 @@ from maestro.orchestrator import Orchestrator, TaskValidationError
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import (
     LOGGER_NAME,
-    MARQUEUR_SECRET,
+    SECRET_MARKER,
     RunJournal,
     StepUsage,
     report_usage,
@@ -847,7 +847,7 @@ def test_le_journal_n_expose_aucun_secret(monkeypatch, caplog):
     assert caplog.messages  # le journal a bien émis des lignes
     assert "cle-api-ultra-secrete" not in caplog.text
     assert "sk-ant-api03-abcdef12345" not in caplog.text
-    assert MARQUEUR_SECRET in caplog.text
+    assert SECRET_MARKER in caplog.text
 
 
 # --- Critères ⑨/⑩/⑪ (#43) : DAG — transmission conditionnée, blocage aval, cycles -----

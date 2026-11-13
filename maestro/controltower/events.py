@@ -43,8 +43,8 @@ from maestro.plan_run import NoeudPlan as NoeudPlan  # ré-export explicite
 from maestro.plan_run import noeuds_depuis
 from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
-from maestro.sources.modele import Source as Source  # ré-export explicite
-from maestro.sources.modele import sources_depuis
+from maestro.sources.model import Source as Source  # ré-export explicite
+from maestro.sources.model import sources_from
 from maestro.telemetry.usage import StepUsage
 
 # `ReferenceTicket` (#187, contrat #183) est **défini** dans `maestro.references`,
@@ -54,7 +54,7 @@ from maestro.telemetry.usage import StepUsage
 # maestro.controltower.events import ReferenceTicket` — restent servis tels quels.
 # `EtapeTache` et `LienUtile` (#246) vivent dans `maestro.detail_tache` pour la
 # même raison, et sont ré-exportés de la même façon. `Source` (#315) suit les
-# trois : définie dans `maestro.sources.modele`, feuille, elle voyage du
+# trois : définie dans `maestro.sources.model`, feuille, elle voyage du
 # lancement à la projection en traversant les mêmes couches. `Brief` (#318) est le
 # cinquième, à ceci près qu'il vient de `maestro.orchestrator.schema` : c'est
 # l'orchestrateur qui le produit, et il n'y a aucune raison d'en tenir un second
@@ -753,7 +753,7 @@ class Event:
             # résolues et plafonnées au lancement ; les rejuger ici rendrait
             # illisible un run passé dès qu'un plafond serait resserré.
             sources=(
-                sources_depuis(data["sources"]) if data.get("sources") is not None else None
+                sources_from(data["sources"]) if data.get("sources") is not None else None
             ),
             # Même régime que les sources (#320) : relecture tolérante, jamais
             # revalidation — cf. `brief_depuis`.

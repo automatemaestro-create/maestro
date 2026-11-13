@@ -299,7 +299,7 @@ encore comptés, donc le plafond en tokens gardait prise. Ici, `report_usage` es
 **volontaire du fournisseur** — « hors collecteur, le signalement est sans effet »
 ([`telemetry/usage.py:6-7`](../maestro/telemetry/usage.py), `:245`). Un agent qui n'expose ni coût ni
 tokens fait tomber **les deux** plafonds : `UsageCollector.add` n'est jamais appelé,
-`PlafondDepense.verifie` jamais consulté, et le run dépense sans borne.
+`SpendingCap.verifie` jamais consulté, et le run dépense sans borne.
 
 Ce qui survit dans tous les cas : la **durée horloge**, posée par le moteur lui-même
 (`engine/executor.py:446-451`). C'est la seule mesure qui ne dépend d'aucun fournisseur — et c'est

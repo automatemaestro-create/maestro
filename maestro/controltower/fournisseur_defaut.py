@@ -37,7 +37,7 @@ from maestro.fournisseur_par_defaut import (
     environnement_du_poste,
     imposees,
 )
-from maestro.telemetry.redact import enregistre_secret
+from maestro.telemetry.redact import register_secret
 
 if TYPE_CHECKING:  # typage seul — la couche fournisseur tire le SDK, payé au premier appel
     from maestro.agents.secrets import SecretStore
@@ -208,7 +208,7 @@ class ServiceFournisseurParDefaut:
         if modele is None and not classe.MODELES:
             raise ChoixRefuse("Ce fournisseur demande le nom d'un modèle servi à son adresse.")
         if demande.cle:
-            enregistre_secret(demande.cle)
+            register_secret(demande.cle)
         environ = dict(self._environ())
         for autre in classe.ACCES:
             if autre.secret and autre.secret != acces.secret:

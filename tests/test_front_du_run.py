@@ -51,7 +51,7 @@ from maestro.plan_run import NoeudPlan, largeur_du_plan
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import ETAPE_CADENCE, ETAPE_EQUIPE, RunJournal
+from maestro.telemetry import STEP_CADENCE, STEP_TEAM, RunJournal
 
 GIT = shutil.which("git")
 
@@ -238,7 +238,7 @@ def _annonces(journal: RunJournal) -> list[Any]:
     return [
         r
         for r in journal.records
-        if r.etape == ETAPE_EQUIPE and r.statut == STATUT_INSTANCES_DERIVEES
+        if r.etape == STEP_TEAM and r.statut == STATUT_INSTANCES_DERIVEES
     ]
 
 
@@ -323,7 +323,7 @@ def test_un_plan_lineaire_ne_change_rien(tmp_path: Path) -> None:
     # la cadence du run (#1298) qui dit pourquoi les tâches passent une à une, et le
     # plafond dérivé n'y ajoute pas un écho.
     assert _annonces(journal) == []
-    causes = [r.cadence for r in journal.records if r.etape == ETAPE_CADENCE]
+    causes = [r.cadence for r in journal.records if r.etape == STEP_CADENCE]
     assert [cause["cause"] for cause in causes if cause] == [CAUSE_CHAINE]
 
 
@@ -413,7 +413,7 @@ def test_le_plafond_derive_et_son_origine_s_annoncent_avant_la_premiere_tache(
     assert "largeur" in annonce.entree
     etapes = [r.etape for r in journal.records]
     premiere_tache = next(i for i, e in enumerate(etapes) if e.endswith(":debut"))
-    assert etapes.index(ETAPE_EQUIPE) < premiere_tache
+    assert etapes.index(STEP_TEAM) < premiere_tache
 
 
 def test_le_run_borne_se_dit_dans_l_annonce() -> None:

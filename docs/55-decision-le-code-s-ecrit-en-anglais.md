@@ -150,14 +150,16 @@ d'autres paquets importent. Un lot se joue quand aucune branche ouverte ne touch
 |---|---|---|---|
 | 1 | #1659 — ce document, le glossaire et la règle | — | — |
 | 2 | #1650 — **pilote** : `messaging`, `queue`, `router`, `durable` | 3 037 | |
-| 3 | #1651 — `telemetry`, `sources` | 5 035 | |
-| 4 | #1652 — `projets`, `equipe`, `orchestrator` | 8 979 | |
-| 5 | #1653 — `scenarios` | 8 338 | |
-| 6 | #1654 — `outillage` | 10 294 | |
-| 7 | #1655 — `providers` | 6 864 | aucun lot de #1307 en vol |
-| 8 | #1656 — `sandbox` | 7 605 | après #1515 |
-| 9 | #1657 — `agents` | 12 382 | |
-| 10 | #1658 — la racine de `maestro/` et `lanceur` | 11 669 | après #1647 |
+| 3 | #1651 — `sources`, et `telemetry` hors `usage.py` et `journal.py` | 4 145 | |
+| 4 | #1664 — `telemetry/usage.py` | 553 | ses champs sont lus ≈ 1 000 fois |
+| 5 | #1652 — `projets`, `equipe`, `orchestrator` | 8 979 | |
+| 6 | #1653 — `scenarios` | 8 338 | |
+| 7 | #1654 — `outillage` | 10 294 | |
+| 8 | #1655 — `providers` | 6 864 | aucun lot de #1307 en vol |
+| 9 | #1656 — `sandbox` | 7 605 | après #1515 |
+| 10 | #1657 — `agents` | 12 382 | |
+| 11 | #1658 — la racine de `maestro/` et `lanceur` | 11 669 | après #1647 |
+| 12 | #1665 — `telemetry/journal.py` | 337 | avec le premier lot d'`engine`, ou juste avant |
 
 Quatre zones **restent à découper après le pilote**, sur la taille de lot qu'il recommande :
 - `engine` (15 463 lignes), après le découpage #1469 ;
@@ -280,6 +282,10 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
 - **mypy ne voit pas les lectures d'attribut sur un double non typé.** Huit tests hors des quatre
   suites lisaient des attributs renommés : `decision.raison`, `message.objet`, `boite.file`,
   `mailbox._abonnes`. Seul le passage de toutes les suites qui nomment le paquet les a trouvés.
+  Deux gestes réduisent ce passage (#1651) : jouer mypy sur les suites en échec, en
+  `--check-untyped-defs`, qui désigne les lignes là où les types sont connus ; et chercher les
+  `getattr(objet, "<champ>")` avant de renommer un champ. Un tel `getattr` lisait le `motif` de
+  refus de plusieurs paquets à la fois, et seuls six tests de route l'ont trouvé.
 - **Les numéros de ligne cités dans `docs/` bougent avec la réécriture.** Ils se suivent comme les
   noms.
 - **Le sha d'un lot n'existe qu'après son merge**, puisque le merge se fait en squash. Le pilote a
@@ -302,6 +308,15 @@ deux fois le pilote. Il faut pour cela que la réécriture des modules soit conf
 (geste 3). Ce chiffre est un jugement, posé sur une seule mesure : le lot suivant le confirme ou le
 corrige. Au-delà, le lot se découpe par sous-paquet au démarrage, comme `/ticket-start` le fait de
 tout ticket trop gros.
+
+**Les lignes ne suffisent pas : un lot se mesure aussi aux lectures des champs de ses types.** Un
+champ renommé se suit partout où il est lu, et un nom court (`nom`, `statut`, `sortie`) se lit aussi
+sur d'autres classes : il ne se remplace pas par le texte, il se suit par mypy. C'est ce qu'a montré
+le démarrage de #1651 : ses 5 035 lignes tenaient sous le seuil, mais `StepUsage` était lu
+≈ 1 000 fois dans 108 fichiers, et `StepRecord` ≈ 2 600 fois dans 249 fichiers. Ces deux modules
+sont devenus deux lots, #1664 et #1665. Au démarrage, la mesure compte donc aussi les lectures
+`.<champ>` hors du paquet. C'est une borne haute, puisqu'un nom partagé compte pour toutes ses
+classes, et c'est elle qui décide du découpage.
 
 Pour les zones qui restent à découper :
 

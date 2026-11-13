@@ -83,7 +83,7 @@ from maestro.projets.application import ApplicationRefusee, deposer_sur_la_base
 from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee, valider_racine
 from maestro.sandbox.en_place import DOSSIER_ATELIER, FrontiereEcriture
-from maestro.telemetry import PlafondDepenseDepasse
+from maestro.telemetry import SpendingCapExceeded
 
 if TYPE_CHECKING:
     from maestro.engine.retry import PolitiqueRelance
@@ -324,7 +324,7 @@ async def recetter(
                 tache, livraison, modele=modele, brief=brief
             )
             break
-        except PlafondDepenseDepasse as exc:
+        except SpendingCapExceeded as exc:
             return recette_non_jouee(criteres, f"le plafond de dépense du run est atteint ({exc})")
         except VerificateurEnPanne as panne:
             if relance is None or essai >= essais:

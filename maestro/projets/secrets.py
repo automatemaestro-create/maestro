@@ -34,7 +34,7 @@ from pathlib import Path
 
 from maestro.projets.modele import Projet
 from maestro.projets.perimetre import fichiers_exclus
-from maestro.telemetry.redact import enregistre_secret
+from maestro.telemetry.redact import register_secret
 
 #: Noms et suffixes des fichiers dont on lit les valeurs. Volontairement étroit :
 #: hors de cette liste, un fichier exclu est un fichier qu'on ne lit pas — un
@@ -82,7 +82,7 @@ def enregistre_secrets_du_projet(projet: Projet) -> int:
             continue
         lus += 1
         for valeur in _valeurs(fichier):
-            enregistre_secret(valeur)
+            register_secret(valeur)
             enregistrees += 1
             if enregistrees >= _VALEURS_MAX:
                 break

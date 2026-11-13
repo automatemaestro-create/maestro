@@ -46,7 +46,7 @@ docs/40 §2.2 avait nommé la cause : chaque incident produit une règle, un tes
 paragraphe de doc. Le gel de septembre l'a suspendue, il ne l'a pas changée. À sa levée, la part est
 revenue d'elle-même. Et le budget de 25 000 tokens posé par #965 laissait 9 000 tokens de marge à
 `CLAUDE.md`, ramené ce jour-là à 15 830 tokens. Il en pèse 20 169 aujourd'hui, au compteur du dépôt
-(`estimer_tokens`) : la marge se remplit.
+(`estimate_tokens`) : la marge se remplit.
 
 ## 2. Ce qui est renversé
 

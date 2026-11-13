@@ -178,7 +178,7 @@ from maestro.projets import (
     Projet,
 )
 from maestro.providers.base import ModelProvider
-from maestro.sources import DepotTeleversements
+from maestro.sources import UploadStore
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
@@ -344,7 +344,7 @@ def create_app(
     journal: ServiceJournal | None = None,
     battements: RegistreBattements | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
-    televersements: DepotTeleversements | None = None,
+    televersements: UploadStore | None = None,
     lecteur_sources: LecteurSources | None = None,
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
@@ -543,7 +543,7 @@ def create_app(
     écrire dix mégaoctets sur le disque de qui joue la suite.
 
     `lecteur_sources` (#316) lit la matière d'un objectif et rend son rapport de
-    lecture — par défaut `lecteur_par_defaut()`, qui montre en plus les images au
+    lecture — par défaut `default_reader()`, qui montre en plus les images au
     modèle du poste (#1163). Injectable parce qu'une source `url` part sur le
     réseau et qu'une image part au modèle : `tests/conftest.py` (#195, #782) exige
     qu'aucun test n'ait besoin ni de l'un ni de l'autre.
@@ -763,7 +763,7 @@ def create_app(
     # peut porter des sources, et il les résout par la même chaîne qu'un
     # lancement.
     televersements = (
-        televersements if televersements is not None else DepotTeleversements.default()
+        televersements if televersements is not None else UploadStore.default()
     )
     ctx.televersements = televersements
     chat = ServiceChat(

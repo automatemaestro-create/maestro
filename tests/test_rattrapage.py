@@ -429,8 +429,8 @@ def test_le_cout_des_diagnostics_et_des_tentatives_entre_au_rapport_comme_au_jou
     # boucle, qui réemploie le premier) : un seul appel, un seul coût.
     assert len(chef.demandes) == 1
     assert rapport.usage_totale.cout_usd == pytest.approx(_USAGE_DIAGNOSTIC.cout_usd)
-    grand_livre = RunCost.depuis_journal(journal)
-    (t1,) = [t for t in grand_livre.taches if t.tache_id == "t1"]
+    grand_livre = RunCost.from_journal(journal)
+    (t1,) = [t for t in grand_livre.tasks if t.task_id == "t1"]
     assert t1.usage.cout_usd == pytest.approx(_USAGE_DIAGNOSTIC.cout_usd)
 
 

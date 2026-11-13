@@ -96,7 +96,7 @@ from maestro.engine import (
 from maestro.orchestrator import Brief
 from maestro.sources import Source
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_BRIEF
+from maestro.telemetry.costs import STEP_BRIEF
 
 #: Le run **mort** de tous les scénarios — celui dont l'hôte est tombé.
 MORT = "3ff0bcb065f9"
@@ -399,9 +399,9 @@ def test_les_sources_ne_repartent_pas_avec_le_cadrage():
     """
     source = Source(
         type="fichier",
-        nom="CDC-v2.docx",
-        chemin=f"core/ingestion/{MORT}/CDC-v2.docx",
-        taille=184320,
+        name="CDC-v2.docx",
+        path=f"core/ingestion/{MORT}/CDC-v2.docx",
+        size=184320,
     )
     journal = _journal(
         _lancement(sources=[source]),
@@ -743,7 +743,7 @@ def _etape_de_brief(brief: Brief = BRIEF) -> tuple[Event, ...]:
     seulement que la projection sait lire ce qu'on lui tend.
     """
     record = RunJournal(run_id=MORT).consigne(
-        etape=ETAPE_BRIEF,
+        etape=STEP_BRIEF,
         nom="Brief de l'objectif",
         agent="orchestrateur",
         role="Orchestrateur",

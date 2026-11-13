@@ -89,7 +89,7 @@ from maestro.controltower.state import (
 from maestro.messaging import InMemoryMailbox
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.store import ProjetStore
-from maestro.sources.extraction import ETAT_LU, ETAT_TRONQUE, RapportLecture
+from maestro.sources.extraction import STATE_READ, STATE_TRUNCATED, ReadingReport
 from maestro.telemetry import StepUsage
 
 RUN = "run-1224"
@@ -199,7 +199,7 @@ def test_le_livrable_est_lu_par_la_chaine_d_ingestion_perimetre_compris(tmp_path
     """Le contenu entre, les chemins sortent en absolu, et le `.env` reste dehors.
 
     Le périmètre par défaut d'un projet exclut `.git`, `node_modules`, `.env` et
-    `**/secrets/**` (docs/24 §2.5) : passer par `extraire_sources` est ce qui
+    `**/secrets/**` (docs/24 §2.5) : passer par `extract_sources` est ce qui
     donne cette garantie sans l'écrire une seconde fois ici. Le test la **prouve
     sur un échantillon fautif** — le secret est écrit, lisible, et n'apparaît
     nulle part.
@@ -254,8 +254,8 @@ def test_un_livrable_sans_readme_se_lit_par_ce_qu_il_contient(
 
     livrable = lire_le_livrable(racine, Perimetre())
 
-    etats = {e.nom: e.etat for lecture in livrable.rapport.lectures for e in lecture.entrees}
-    assert etats == {nom: ETAT_LU}
+    etats = {e.name: e.state for lecture in livrable.rapport.readings for e in lecture.entries}
+    assert etats == {nom: STATE_READ}
     assert attendu in livrable.contexte
     assert livrable.chemins == (str(racine / nom),)
 
@@ -289,9 +289,9 @@ def test_le_manifeste_se_lit_meme_derriere_un_fichier_genere(tmp_path: Path) -> 
 
     livrable = lire_le_livrable(racine, Perimetre())
 
-    etats = {e.nom: e.etat for lecture in livrable.rapport.lectures for e in lecture.entrees}
-    assert etats["package.json"] == ETAT_LU
-    assert etats["package-lock.json"] == ETAT_TRONQUE
+    etats = {e.name: e.state for lecture in livrable.rapport.readings for e in lecture.entries}
+    assert etats["package.json"] == STATE_READ
+    assert etats["package-lock.json"] == STATE_TRUNCATED
     assert '"start": "node index.js"' in livrable.contexte
 
 
@@ -601,7 +601,7 @@ def test_le_contexte_nomme_le_run_et_son_livrable() -> None:
             racine="/tmp/p",
             chemins=("/tmp/p/app.py",),
             contexte="## bloc",
-            rapport=RapportLecture(),
+            rapport=ReadingReport(),
         ),
     )
 

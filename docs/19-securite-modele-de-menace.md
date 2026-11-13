@@ -151,7 +151,7 @@ web ; et la **rédaction des secrets** (#109) passe sur le contenu **comme** sur
 masquage suit le Markdown, format unique voulu par [docs/24 §3.2](./24-projets-locaux-et-poste-de-travail.md)
 précisément pour n'avoir qu'un endroit où le faire.
 
-Où ça vit dans le code : `maestro.sources.extraction.contexte_markdown` est le **seul chemin** par
+Où ça vit dans le code : `maestro.sources.extraction.markdown_context` est le **seul chemin** par
 lequel un contenu extrait rejoint un contexte. Le critère est testé et non seulement énoncé
 ([`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py)) — un préambule se
 relit, une clôture calculée se **teste** : aucun contenu, si hostile soit-il, ne doit pouvoir

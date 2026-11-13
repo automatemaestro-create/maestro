@@ -56,7 +56,7 @@ from maestro.lanceur.emplacement import Emplacement
 from maestro.lanceur.reprise import ENTETE_ENV, TEMOIN, Bilan, reprendre
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.projets.store import ProjetStore
-from maestro.sources.resolution import racine_ingestion
+from maestro.sources.resolution import ingestion_root
 
 RACINE_DEPOT = Path(__file__).resolve().parents[1]
 
@@ -169,7 +169,7 @@ def _racines_des_depots() -> dict[str, Path]:
     racines = {nom: Path(getattr(d, "racine", None) or d._racine) for nom, d in depots.items()}
     racines["accueil"] = DepotAccueil.default().chemin.parent
     racines["fournisseur"] = DepotFournisseurParDefaut.default().chemin.parent
-    racines["ingestion"] = racine_ingestion()
+    racines["ingestion"] = ingestion_root()
     return racines
 
 

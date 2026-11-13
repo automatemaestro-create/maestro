@@ -6,12 +6,12 @@ secrets (valeurs d'environnement comme motifs de clés).
 
 Couvre aussi le suivi de coût par tâche (#49, tests différés → #59) :
 
-- **comptabilité par tâche** (#55) : `RunCost.depuis_journal` attribue chaque
+- **comptabilité par tâche** (#55) : `RunCost.from_journal` attribue chaque
   ligne du journal à sa tâche (annexes comprises), une seule fois — le total
   retombe sur `RunJournal.usage_totale` — et s'exporte en JSON (la forme de
   l'API, #57) ;
-- **plafond de dépense** (#56) : `PlafondDepense` relit ce grand livre à chaque
-  vérification (aucun compteur parallèle) et lève `PlafondDepenseDepasse` au
+- **plafond de dépense** (#56) : `SpendingCap` relit ce grand livre à chaque
+  vérification (aucun compteur parallèle) et lève `SpendingCapExceeded` au
   dépassement — relayé par `report_usage` chez l'appelant du fournisseur, la
   mesure fautive restant comptée (le coût reste visible).
 
@@ -31,19 +31,19 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from maestro.telemetry import (
-    ETAPE_PLANIFICATION,
     LOGGER_NAME,
-    MARQUEUR_SECRET,
-    PlafondDepense,
-    PlafondDepenseDepasse,
+    SECRET_MARKER,
+    STEP_PLANNING,
     RunCost,
     RunJournal,
+    SpendingCap,
+    SpendingCapExceeded,
     StepUsage,
     collect_usage,
-    intervalle_depuis,
+    interval_from,
     redact_secrets,
     report_usage,
-    resume_controle_depense,
+    spending_control_summary,
     union_ms,
 )
 
@@ -134,14 +134,14 @@ def test_redact_masque_les_valeurs_d_environnement(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "cle-tres-secrete-123")
     texte = redact_secrets("la clé est cle-tres-secrete-123, la voilà")
     assert "cle-tres-secrete-123" not in texte
-    assert MARQUEUR_SECRET in texte
+    assert SECRET_MARKER in texte
 
 
 def test_redact_masque_les_motifs_de_cles_hors_environnement(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     texte = redact_secrets("export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghij")
     assert "sk-ant-api03-abcdefghij" not in texte
-    assert MARQUEUR_SECRET in texte
+    assert SECRET_MARKER in texte
 
 
 def test_redact_masque_un_bloc_de_cle_privee_entier():
@@ -156,7 +156,7 @@ def test_redact_masque_un_bloc_de_cle_privee_entier():
     texte = redact_secrets(f"avant\n{cle}\naprès")
     assert "secret1264" not in texte
     assert "ligne2secrete" not in texte
-    assert texte == f"avant\n{MARQUEUR_SECRET}\naprès"
+    assert texte == f"avant\n{SECRET_MARKER}\naprès"
 
 
 def test_redact_masque_une_cle_privee_coupee_avant_sa_fin():
@@ -164,7 +164,7 @@ def test_redact_masque_une_cle_privee_coupee_avant_sa_fin():
     # l'en-tête est masqué jusqu'au bout plutôt que laissé en clair.
     texte = redact_secrets("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE-coupee")
     assert "b3BlbnNzaC1rZXktdjE" not in texte
-    assert MARQUEUR_SECRET in texte
+    assert SECRET_MARKER in texte
 
 
 def test_redact_laisse_un_certificat_et_une_cle_publique_intacts():
@@ -232,7 +232,7 @@ def test_journal_expurge_les_secrets(monkeypatch, caplog):
     assert "cle-super-secrete-42" not in (record.erreur or "")
     assert "cle-super-secrete-42" not in caplog.text
     assert "sk-ant-api03-abcdef123456" not in caplog.text
-    assert MARQUEUR_SECRET in caplog.text
+    assert SECRET_MARKER in caplog.text
 
 
 def test_usage_totale_agrege_les_etapes():
@@ -254,7 +254,7 @@ def test_chaque_journal_recoit_un_run_id_distinct():
 
 def test_depuis_journal_attribue_chaque_ligne_a_sa_tache():
     journal = RunJournal(run_id="run-compta")
-    _consigne(journal, etape=ETAPE_PLANIFICATION, nom="Planification",
+    _consigne(journal, etape=STEP_PLANNING, nom="Planification",
               agent="orchestrateur", role="Orchestrateur",
               usage=StepUsage(appels=1, cout_usd=0.01))
     _consigne(journal, etape="t1", usage=StepUsage(
@@ -265,14 +265,14 @@ def test_depuis_journal_attribue_chaque_ligne_a_sa_tache():
     _consigne(journal, etape="t1:validation", statut="approuve",
               usage=StepUsage(cout_usd=0.005))
 
-    cout = RunCost.depuis_journal(journal)
+    cout = RunCost.from_journal(journal)
 
     assert cout.run_id == "run-compta"
-    assert cout.planification.cout_usd == pytest.approx(0.01)
+    assert cout.planning.cout_usd == pytest.approx(0.01)
     # Une entrée par tâche, dans l'ordre de première apparition au journal.
-    assert [t.tache_id for t in cout.taches] == ["t1", "t2"]
-    t1, t2 = cout.taches
-    assert t1.nom == "Tâche 1" and t1.agent == "dev"  # l'identité vient de l'étape de la tâche
+    assert [t.task_id for t in cout.tasks] == ["t1", "t2"]
+    t1, t2 = cout.tasks
+    assert t1.name == "Tâche 1" and t1.agent == "dev"  # l'identité vient de l'étape de la tâche
     assert t1.usage.cout_usd == pytest.approx(0.025)  # étape + annexe fusionnées
     assert t2.usage.cout_usd == pytest.approx(0.04)
     # Chaque ligne comptée exactement une fois : le total retombe sur le journal.
@@ -286,10 +286,10 @@ def test_une_tache_connue_par_sa_seule_annexe_reste_sans_identite():
     _consigne(journal, etape="t1:message", statut="envoye",
               usage=StepUsage(appels=1, cout_usd=0.01))
 
-    (tache,) = RunCost.depuis_journal(journal).taches
+    (tache,) = RunCost.from_journal(journal).tasks
 
-    assert tache.tache_id == "t1"
-    assert tache.nom == "" and tache.agent == "" and tache.statut == ""
+    assert tache.task_id == "t1"
+    assert tache.name == "" and tache.agent == "" and tache.status == ""
     assert tache.usage.cout_usd == pytest.approx(0.01)  # l'usage est déjà compté
 
 
@@ -298,20 +298,20 @@ def test_le_cout_inconnu_reste_inconnu_dans_la_comptabilite():
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(appels=1))
 
-    cout = RunCost.depuis_journal(journal)
+    cout = RunCost.from_journal(journal)
 
-    assert cout.taches[0].usage.cout_usd is None
+    assert cout.tasks[0].usage.cout_usd is None
     assert cout.total.cout_usd is None
 
 
 def test_la_comptabilite_s_exporte_en_json():
     journal = RunJournal(run_id="run-json")
-    _consigne(journal, etape=ETAPE_PLANIFICATION, nom="Planification",
+    _consigne(journal, etape=STEP_PLANNING, nom="Planification",
               agent="orchestrateur", role="Orchestrateur",
               usage=StepUsage(appels=1, cout_usd=0.01))
     _consigne(journal, etape="t1", usage=StepUsage(appels=1, tokens_entree=7, cout_usd=0.02))
 
-    forme = RunCost.depuis_journal(journal).to_dict()
+    forme = RunCost.from_journal(journal).to_dict()
 
     assert forme["run_id"] == "run-json"
     assert forme["planification"]["cout_usd"] == pytest.approx(0.01)
@@ -326,14 +326,14 @@ def test_la_comptabilite_s_exporte_en_json():
 
 def test_le_plafond_relit_la_comptabilite_a_chaque_verification():
     journal = RunJournal()
-    plafond = PlafondDepense(journal, plafond_cout_usd=0.03)
+    plafond = SpendingCap(journal, max_cost_usd=0.03)
     plafond.verifie(StepUsage(cout_usd=0.02))  # 0.02 ≤ 0.03 : rien à signaler
 
     _consigne(journal, usage=StepUsage(cout_usd=0.02))
 
     # Même mesure en cours, mais le grand livre a bougé : le contrôle le voit
     # (aucun compteur interne — la télémétrie est la source unique du coût).
-    with pytest.raises(PlafondDepenseDepasse) as exc:
+    with pytest.raises(SpendingCapExceeded) as exc:
         plafond.verifie(StepUsage(cout_usd=0.02))
     assert "plafond de dépense dépassé" in str(exc.value)
 
@@ -341,7 +341,7 @@ def test_le_plafond_relit_la_comptabilite_a_chaque_verification():
 def test_atteindre_le_plafond_sans_le_depasser_ne_stoppe_rien():
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(cout_usd=0.01))
-    PlafondDepense(journal, plafond_cout_usd=0.01).verifie(StepUsage())  # ne lève pas
+    SpendingCap(journal, max_cost_usd=0.01).verifie(StepUsage())  # ne lève pas
 
 
 def test_un_cout_inconnu_n_est_pas_plafonnable():
@@ -349,13 +349,13 @@ def test_un_cout_inconnu_n_est_pas_plafonnable():
     # prise (mais le plafond en tokens, lui, plafonne — cf. tests #113 plus bas).
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(appels=3))
-    PlafondDepense(journal, plafond_cout_usd=0.0001).verifie(StepUsage(appels=1))
+    SpendingCap(journal, max_cost_usd=0.0001).verifie(StepUsage(appels=1))
 
 
 def test_un_plafond_invalide_est_refuse():
     for invalide in (0, -1.5):
         with pytest.raises(ValueError):
-            PlafondDepense(RunJournal(), invalide)
+            SpendingCap(RunJournal(), invalide)
 
 
 # --- Plafond en tokens : opérant sans coût rapporté (#113) ----------------------------
@@ -366,13 +366,13 @@ def test_le_plafond_en_tokens_stoppe_un_fournisseur_sans_cout_rapporte():
     # le plafond en tokens plafonne là où le plafond en USD serait sans prise.
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=800, cout_usd=None))
-    plafond = PlafondDepense(journal, plafond_tokens=1000)
+    plafond = SpendingCap(journal, max_tokens=1000)
 
     # 800 (déjà consigné) + 150 en cours ≤ 1000 : rien à signaler.
     plafond.verifie(StepUsage(tokens_entree=150))
 
     # 800 + 300 > 1000 : le garde-fou stoppe, alors même que le coût reste inconnu.
-    with pytest.raises(PlafondDepenseDepasse) as exc:
+    with pytest.raises(SpendingCapExceeded) as exc:
         plafond.verifie(StepUsage(tokens_entree=300))
     assert "plafond de tokens dépassé" in str(exc.value)
 
@@ -381,8 +381,8 @@ def test_les_deux_plafonds_cohabitent_le_premier_creve_stoppe():
     # Coût et tokens armés ensemble : le coût connu tranche d'abord, sinon les tokens.
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=10, cout_usd=0.05))
-    plafond = PlafondDepense(journal, plafond_cout_usd=0.04, plafond_tokens=10_000)
-    with pytest.raises(PlafondDepenseDepasse) as exc:
+    plafond = SpendingCap(journal, max_cost_usd=0.04, max_tokens=10_000)
+    with pytest.raises(SpendingCapExceeded) as exc:
         plafond.verifie(StepUsage())
     assert "plafond de dépense dépassé" in str(exc.value)  # le coût, pas les tokens
 
@@ -390,51 +390,51 @@ def test_les_deux_plafonds_cohabitent_le_premier_creve_stoppe():
 def test_un_plafond_en_tokens_invalide_est_refuse():
     for invalide in (0, -3):
         with pytest.raises(ValueError):
-            PlafondDepense(RunJournal(), plafond_tokens=invalide)
+            SpendingCap(RunJournal(), max_tokens=invalide)
 
 
 def test_un_controle_sans_aucun_plafond_est_refuse():
     with pytest.raises(ValueError):
-        PlafondDepense(RunJournal())
+        SpendingCap(RunJournal())
 
 
-# --- resume_controle_depense : quel contrôle a réellement tenu (#113) -----------------
+# --- spending_control_summary : quel contrôle a réellement tenu (#113) -----------------
 
 
 def test_resume_dit_cout_reel_quand_le_fournisseur_rapporte_un_cout():
-    resume = resume_controle_depense(1.0, None, StepUsage(cout_usd=0.5, tokens_sortie=42))
+    resume = spending_control_summary(1.0, None, StepUsage(cout_usd=0.5, tokens_sortie=42))
     assert "coût réel" in resume and "0.5000/1.0000 $" in resume
 
 
 def test_resume_signale_un_plafond_de_cout_sans_prise():
     # Le cas visé par #113 : plafond en USD armé, fournisseur muet sur le coût.
-    resume = resume_controle_depense(1.0, None, StepUsage(appels=1, tokens_sortie=42))
+    resume = spending_control_summary(1.0, None, StepUsage(appels=1, tokens_sortie=42))
     assert "SANS PRISE" in resume
     assert "--plafond-tokens" in resume
 
 
 def test_resume_annonce_le_plafond_en_tokens_actif():
-    resume = resume_controle_depense(None, 1000, StepUsage(appels=1, tokens_sortie=200))
+    resume = spending_control_summary(None, 1000, StepUsage(appels=1, tokens_sortie=200))
     assert "tokens hors cache relu (200/1000)" in resume
 
 
 def test_resume_expose_le_cout_inoperant_quand_les_tokens_prennent_le_relais():
-    resume = resume_controle_depense(1.0, 1000, StepUsage(appels=1, tokens_sortie=200))
+    resume = spending_control_summary(1.0, 1000, StepUsage(appels=1, tokens_sortie=200))
     assert "tokens hors cache relu (200/1000)" in resume
     assert "coût inopérant" in resume
 
 
 def test_resume_sans_aucun_plafond():
-    assert resume_controle_depense(None, None, StepUsage()) == "aucun plafond armé"
+    assert spending_control_summary(None, None, StepUsage()) == "aucun plafond armé"
 
 
 def test_report_usage_leve_chez_l_appelant_quand_le_plafond_creve():
     # Le canal de mesure relaie le garde-fou (#9) : le signalement fautif lève,
     # mais la mesure est déjà comptabilisée — le coût du dépassement reste visible.
-    plafond = PlafondDepense(RunJournal(), plafond_cout_usd=0.01)
+    plafond = SpendingCap(RunJournal(), max_cost_usd=0.01)
     with collect_usage(plafond=plafond) as recolte:
         report_usage(StepUsage(appels=1, cout_usd=0.008))
-        with pytest.raises(PlafondDepenseDepasse):
+        with pytest.raises(SpendingCapExceeded):
             report_usage(StepUsage(appels=1, cout_usd=0.008))
 
     assert recolte.total.appels == 2
@@ -556,7 +556,7 @@ def test_l_union_sans_intervalle_est_inconnue_et_non_nulle():
 
 
 def test_un_intervalle_se_deduit_de_l_horodatage_et_de_la_duree():
-    debut, fin = intervalle_depuis("2026-09-20T10:00:40+00:00", 40_000)
+    debut, fin = interval_from("2026-09-20T10:00:40+00:00", 40_000)
     assert fin - debut == timedelta(seconds=40)
     assert debut == datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
 
@@ -572,7 +572,7 @@ def test_un_intervalle_se_deduit_de_l_horodatage_et_de_la_duree():
     ],
 )
 def test_une_etape_sans_intervalle_lisible_ne_fausse_pas_l_union(horodatage, duree_ms):
-    assert intervalle_depuis(horodatage, duree_ms) is None
+    assert interval_from(horodatage, duree_ms) is None
 
 
 def test_le_grand_livre_rend_l_union_et_non_la_somme_des_durees():
@@ -582,15 +582,15 @@ def test_le_grand_livre_rend_l_union_et_non_la_somme_des_durees():
     journal = RunJournal()
     _consigne(journal, etape="t1", usage=StepUsage(appels=1).avec_duree(60_000))
     _consigne(journal, etape="t2", usage=StepUsage(appels=1).avec_duree(60_000))
-    cout = RunCost.depuis_journal(journal)
+    cout = RunCost.from_journal(journal)
 
     # Les compteurs, eux, se somment bien : deux tâches de front coûtent deux fois.
     assert cout.total.appels == 2
     # La durée, non. Une seconde de marge : les deux consignations peuvent
     # tomber de part et d'autre d'un tic d'horloge (horodatage à la seconde).
-    assert cout.duree_mur_ms is not None
-    assert 60_000 <= cout.duree_mur_ms <= 61_000
-    assert cout.total.duree_ms == cout.duree_mur_ms
+    assert cout.wall_clock_ms is not None
+    assert 60_000 <= cout.wall_clock_ms <= 61_000
+    assert cout.total.duree_ms == cout.wall_clock_ms
 
 
 def test_le_total_du_run_ne_porte_aucune_attente():
@@ -603,7 +603,7 @@ def test_le_total_du_run_ne_porte_aucune_attente():
         etape="t1",
         usage=StepUsage(appels=1).avec_duree(60_000, attente_atelier_ms=30_000),
     )
-    total = RunCost.depuis_journal(journal).total
+    total = RunCost.from_journal(journal).total
 
     assert total.duree_attente_ms is None
     assert total.duree_execution_ms == total.duree_ms
@@ -614,4 +614,4 @@ def test_une_etape_de_reprise_n_occupe_pas_le_run():
     # livre, il n'occupe donc rien non plus.
     journal = RunJournal()
     _consigne(journal, etape="reprise", usage=StepUsage().avec_duree(90_000))
-    assert RunCost.depuis_journal(journal).duree_mur_ms is None
+    assert RunCost.from_journal(journal).wall_clock_ms is None

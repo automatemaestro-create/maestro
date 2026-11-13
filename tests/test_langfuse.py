@@ -1,22 +1,20 @@
-"""Tests de l'intégration Langfuse (parent #79) : instrumentation et évaluation.
+"""Tests of the Langfuse integration (parent #79): instrumentation and scoring.
 
-Aucun appel réseau sortant : le « Langfuse » des tests est un serveur HTTP local
-factice qui reçoit l'API d'ingestion. Couvre les critères du lot final (#80) :
+No outgoing network call: the tests' "Langfuse" is a fake local HTTP server that
+receives the ingestion API. Covers the criteria of the final batch (#80):
 
-- **instrumentation** (#81, tests différés ici — docs/10 §5.1) : chaque ligne du
-  journal (#8) devient une trace + une observation Langfuse (génération avec
-  tokens/coût natifs #55, span sinon), les statuts portent les niveaux, et
-  l'export — posé en handler logging — n'échoue jamais l'exécution qu'il
-  observe ;
-- **évaluation** (#80) : en fin d'exécution, des scores exploitables (réussite
-  globale, taux de tâches réussies) partent sur la trace du run via la même API
-  d'ingestion, dérivés de la comptabilité par tâche (#55) ;
-- **mode dégradé sans Langfuse** : sans les deux clés, aucun handler n'est posé
-  et aucun score n'est publié — fonctionnement strictement identique ;
-- **idempotence de l'activation** (#195) : `maestro.trace` étant un logger
-  global qu'aucun appelant ne nettoie, N activations ne laissent qu'un handler —
-  et la suite de tests elle-même ne publie jamais vers le vrai Langfuse
-  (garde-fou de `tests/conftest.py`).
+- **instrumentation** (#81, tests deferred here — docs/10 §5.1): each line of the
+  journal (#8) becomes a Langfuse trace + observation (a generation with native
+  tokens/cost #55, a span otherwise), statuses carry the levels, and the export —
+  installed as a logging handler — never fails the run it observes;
+- **scoring** (#80): at the end of a run, usable scores (overall success, rate of
+  succeeded tasks) go onto the run's trace through the same ingestion API, derived
+  from the per-task accounting (#55);
+- **degraded mode without Langfuse**: without both keys, no handler is installed
+  and no score is published — behaviour strictly identical;
+- **idempotent activation** (#195): `maestro.trace` being a global logger that no
+  caller cleans up, N activations leave a single handler — and the test suite
+  itself never publishes to the real Langfuse (guard of `tests/conftest.py`).
 """
 
 import base64
@@ -31,26 +29,26 @@ import pytest
 
 from maestro.config import Settings, load_settings
 from maestro.telemetry import (
-    ETAPE_PLANIFICATION,
     LOGGER_NAME,
+    STEP_PLANNING,
     RunJournal,
     StepUsage,
-    activer_export_langfuse,
-    evaluer_run_langfuse,
-    scores_depuis_journal,
+    enable_langfuse_export,
+    score_run_langfuse,
+    scores_from_journal,
 )
 from maestro.telemetry.langfuse import (
-    SCORE_RUN_REUSSI,
-    SCORE_TAUX_REUSSITE,
+    SCORE_RUN_SUCCEEDED,
+    SCORE_SUCCESS_RATE,
     LangfuseExportHandler,
-    evenements_depuis_step,
-    publieur_langfuse,
+    events_from_step,
+    langfuse_publisher,
 )
 
 
-def _settings(**surcharges) -> Settings:
-    """Un `Settings` factice ; seuls les champs Langfuse importent ici."""
-    defauts = dict(
+def _settings(**overrides) -> Settings:
+    """A fake `Settings`; only the Langfuse fields matter here."""
+    defaults = dict(
         anthropic_api_key=None,
         anthropic_model="claude-opus-4-8",
         claude_auth_mode=None,
@@ -58,13 +56,13 @@ def _settings(**surcharges) -> Settings:
         database_url=None,
         redis_url=None,
     )
-    defauts.update(surcharges)
-    return Settings(**defauts)
+    defaults.update(overrides)
+    return Settings(**defaults)
 
 
-def _ligne(**surcharges) -> dict:
-    """Une ligne de journal (`StepRecord.to_dict`) prête à convertir."""
-    ligne = {
+def _line(**overrides) -> dict:
+    """A journal line (`StepRecord.to_dict`) ready to convert."""
+    line = {
         "run_id": "run-lf",
         "etape": "t1",
         "nom": "Tâche 1",
@@ -77,13 +75,13 @@ def _ligne(**surcharges) -> dict:
         "erreur": None,
         "usage": StepUsage().to_dict(),
     }
-    ligne.update(surcharges)
-    return ligne
+    line.update(overrides)
+    return line
 
 
-def _consigne(journal: RunJournal, **surcharges):
-    """Consigne une étape par défaut, surchargée champ à champ par le test."""
-    champs = {
+def _record(journal: RunJournal, **overrides):
+    """Records a default step, overridden field by field by the test."""
+    fields = {
         "etape": "t1",
         "nom": "Tâche 1",
         "agent": "dev",
@@ -93,429 +91,430 @@ def _consigne(journal: RunJournal, **surcharges):
         "sortie": "fait",
         "usage": StepUsage(),
     }
-    champs.update(surcharges)
-    return journal.consigne(**champs)
+    fields.update(overrides)
+    return journal.consigne(**fields)
 
 
-# --- Conversion journal → événements d'ingestion (#81) ----------------------------------
+# --- Journal → ingestion events conversion (#81) ----------------------------------------
 
 
-def test_la_planification_upserte_la_trace_avec_objectif_et_horodatage():
+def test_planning_upserts_the_trace_with_goal_and_timestamp():
     usage = StepUsage(appels=1, tokens_entree=100, tokens_sortie=10).avec_duree(10_000)
-    ligne = _ligne(
-        etape=ETAPE_PLANIFICATION, nom="Planification de l'objectif",
+    line = _line(
+        etape=STEP_PLANNING, nom="Planification de l'objectif",
         agent="orchestrateur", role="Orchestrateur",
         entree="construire un mini-CRM", sortie="2 tâche(s) planifiée(s)",
         usage=usage.to_dict(),
     )
 
-    trace, observation = evenements_depuis_step(ligne)
+    trace, observation = events_from_step(line)
 
     assert trace["type"] == "trace-create"
-    # Seule la planification pose l'entrée de la trace et son horodatage — le
-    # début de l'étape, soit sa fin consignée moins la durée mesurée (#8).
+    # Only planning sets the trace's input and timestamp — the start of the step,
+    # i.e. its recorded end minus the measured duration (#8).
     assert trace["body"]["id"] == "run-lf"
     assert trace["body"]["input"] == "construire un mini-CRM"
     assert trace["body"]["timestamp"] == "2026-07-13T10:00:00+00:00"
     assert observation["type"] == "generation-create"
     assert observation["body"]["traceId"] == "run-lf"
-    # Enveloppes d'ingestion : id d'événement unique, horodatage porté.
+    # Ingestion envelopes: unique event id, timestamp carried.
     assert trace["id"] != observation["id"]
     assert trace["timestamp"] == "2026-07-13T10:00:10+00:00"
 
 
-def test_une_tache_avec_appels_modele_devient_une_generation_chiffree():
+def test_a_task_with_model_calls_becomes_a_priced_generation():
     usage = StepUsage(
         appels=2, tokens_entree=100, tokens_sortie=25, cout_usd=0.0375, outils=("Read",)
     )
-    ligne = _ligne(usage=usage.to_dict())
+    line = _line(usage=usage.to_dict())
 
-    trace, observation = evenements_depuis_step(ligne)
+    trace, observation = events_from_step(line)
 
-    # L'upsert de trace d'une étape ordinaire ne réécrit ni entrée ni horodatage.
+    # The trace upsert of an ordinary step rewrites neither input nor timestamp.
     assert "input" not in trace["body"] and "timestamp" not in trace["body"]
     assert observation["type"] == "generation-create"
-    corps = observation["body"]
-    # Tokens et coût au format natif Langfuse (#55) : visibles par observation.
-    assert corps["usage"] == {
+    body = observation["body"]
+    # Tokens and cost in the native Langfuse format (#55): visible per observation.
+    assert body["usage"] == {
         "input": 100, "output": 25, "unit": "TOKENS", "totalCost": 0.0375,
     }
-    assert corps["name"] == "Tâche 1"
-    assert corps["level"] == "DEFAULT"
-    assert corps["metadata"]["agent"] == "dev"
-    assert corps["metadata"]["outils"] == ["Read"]
+    assert body["name"] == "Tâche 1"
+    assert body["level"] == "DEFAULT"
+    assert body["metadata"]["agent"] == "dev"
+    assert body["metadata"]["outils"] == ["Read"]
 
 
-def test_la_version_de_playbook_voyage_dans_les_metadonnees():
-    # Traçabilité de la version utilisée (#78 → #75) : visible dans Langfuse aussi.
-    _, observation = evenements_depuis_step(_ligne(playbook_version=3))
+def test_the_playbook_version_travels_in_the_metadata():
+    # Traceability of the version used (#78 → #75): visible in Langfuse too.
+    _, observation = events_from_step(_line(playbook_version=3))
     assert observation["body"]["metadata"]["playbook_version"] == 3
 
-    # Prompt du code (playbook jamais édité, ou ligne d'avant #78) : None, pas 0.
-    _, sans_version = evenements_depuis_step(_ligne())
-    assert sans_version["body"]["metadata"]["playbook_version"] is None
+    # Prompt from the code (playbook never edited, or a pre-#78 line): None, not 0.
+    _, without_version = events_from_step(_line())
+    assert without_version["body"]["metadata"]["playbook_version"] is None
 
 
-def test_une_etape_sans_appel_modele_devient_un_span():
-    ligne = _ligne(etape="t1:validation", statut="approuve", usage=StepUsage().to_dict())
+def test_a_step_without_model_call_becomes_a_span():
+    line = _line(etape="t1:validation", statut="approuve", usage=StepUsage().to_dict())
 
-    _, observation = evenements_depuis_step(ligne)
+    _, observation = events_from_step(line)
 
     assert observation["type"] == "span-create"
     assert "usage" not in observation["body"]
 
 
-def test_le_cout_inconnu_reste_absent_de_l_usage_natif():
-    # Un fournisseur muet sur le coût (#55) : pas de totalCost, plutôt qu'un 0 faux.
-    ligne = _ligne(usage=StepUsage(appels=1, tokens_entree=10).to_dict())
+def test_an_unknown_cost_stays_absent_from_the_native_usage():
+    # A provider silent on cost (#55): no totalCost, rather than a false 0.
+    line = _line(usage=StepUsage(appels=1, tokens_entree=10).to_dict())
 
-    _, observation = evenements_depuis_step(ligne)
+    _, observation = events_from_step(line)
 
     assert "totalCost" not in observation["body"]["usage"]
 
 
 @pytest.mark.parametrize(
-    ("statut", "niveau"),
+    ("status", "level"),
     [("terminee", "DEFAULT"), ("echec", "ERROR"), ("bloquee", "WARNING"), ("refuse", "WARNING")],
 )
-def test_le_statut_de_l_etape_porte_le_niveau_langfuse(statut, niveau):
-    erreur = "boum" if statut == "echec" else None
-    _, observation = evenements_depuis_step(_ligne(statut=statut, erreur=erreur))
+def test_the_step_status_carries_the_langfuse_level(status, level):
+    error = "boum" if status == "echec" else None
+    _, observation = events_from_step(_line(statut=status, erreur=error))
 
-    assert observation["body"]["level"] == niveau
-    assert observation["body"]["statusMessage"] == erreur
+    assert observation["body"]["level"] == level
+    assert observation["body"]["statusMessage"] == error
 
 
-def test_sans_duree_ou_horodatage_illisible_l_observation_est_ponctuelle():
-    sans_duree = _ligne(usage=StepUsage(appels=1).to_dict())
-    _, obs = evenements_depuis_step(sans_duree)
+def test_without_duration_or_with_an_unreadable_timestamp_the_observation_is_a_point():
+    no_duration = _line(usage=StepUsage(appels=1).to_dict())
+    _, obs = events_from_step(no_duration)
     assert obs["body"]["startTime"] == obs["body"]["endTime"]
 
-    illisible = _ligne(horodatage="pas-une-date", usage=StepUsage().avec_duree(500).to_dict())
-    _, obs = evenements_depuis_step(illisible)
+    unreadable = _line(horodatage="pas-une-date", usage=StepUsage().avec_duree(500).to_dict())
+    _, obs = events_from_step(unreadable)
     assert obs["body"]["startTime"] == "pas-une-date"
 
 
-def test_une_ligne_illisible_ne_produit_aucun_evenement():
-    # L'export est un miroir du journal : une ligne étrangère ne fabrique rien.
-    assert evenements_depuis_step({}) == ()
-    assert evenements_depuis_step({"etape": "t1"}) == ()  # run_id absent
-    assert evenements_depuis_step(_ligne(etape="")) == ()
-    assert evenements_depuis_step(_ligne(run_id=42)) == ()
+def test_an_unreadable_line_produces_no_event():
+    # The export mirrors the journal: a foreign line fabricates nothing.
+    assert events_from_step({}) == ()
+    assert events_from_step({"etape": "t1"}) == ()  # run_id missing
+    assert events_from_step(_line(etape="")) == ()
+    assert events_from_step(_line(run_id=42)) == ()
 
 
-# --- Handler logging : le journal part vers Langfuse sans jamais le gêner ----------------
+# --- Logging handler: the journal goes to Langfuse without ever getting in its way ------
 
 
 @pytest.fixture()
-def logger_trace():
-    """Le logger du journal, rendu au niveau INFO puis nettoyé de tout handler posé."""
+def trace_logger():
+    """The journal's logger, set back to INFO then cleaned of any handler added."""
     logger = logging.getLogger(LOGGER_NAME)
-    handlers_avant = list(logger.handlers)
+    handlers_before = list(logger.handlers)
     logger.setLevel(logging.INFO)
     try:
         yield logger
     finally:
         for handler in list(logger.handlers):
-            if handler not in handlers_avant:
+            if handler not in handlers_before:
                 logger.removeHandler(handler)
 
 
-def test_le_handler_publie_chaque_etape_consignee(logger_trace):
-    lots: list[list[dict]] = []
-    logger_trace.addHandler(LangfuseExportHandler(lambda evts: lots.append(list(evts))))
+def test_the_handler_publishes_each_recorded_step(trace_logger):
+    batches: list[list[dict]] = []
+    trace_logger.addHandler(LangfuseExportHandler(lambda events: batches.append(list(events))))
 
     journal = RunJournal(run_id="run-handler")
-    _consigne(journal, usage=StepUsage(appels=1))
-    _consigne(journal, etape="t2", statut="echec", erreur="boum")
+    _record(journal, usage=StepUsage(appels=1))
+    _record(journal, etape="t2", statut="echec", erreur="boum")
 
-    assert len(lots) == 2  # un lot (trace + observation) par étape consignée
-    assert [e["type"] for e in lots[0]] == ["trace-create", "generation-create"]
-    assert [e["type"] for e in lots[1]] == ["trace-create", "span-create"]
-    # Tout se rattache à la trace du run : par `traceId` (observations) ou `id` (trace).
+    assert len(batches) == 2  # one batch (trace + observation) per recorded step
+    assert [e["type"] for e in batches[0]] == ["trace-create", "generation-create"]
+    assert [e["type"] for e in batches[1]] == ["trace-create", "span-create"]
+    # Everything attaches to the run's trace: by `traceId` (observations) or `id` (trace).
     assert all(e["body"].get("traceId", e["body"].get("id")) == "run-handler"
-               for lot in lots for e in lot)
+               for batch in batches for e in batch)
 
 
-def test_une_ligne_non_journal_est_ignoree_sans_publication(logger_trace, monkeypatch):
-    monkeypatch.setattr(logging, "raiseExceptions", False)  # handleError silencieux
-    lots: list[list[dict]] = []
-    logger_trace.addHandler(LangfuseExportHandler(lambda evts: lots.append(list(evts))))
+def test_a_non_journal_line_is_ignored_without_publishing(trace_logger, monkeypatch):
+    monkeypatch.setattr(logging, "raiseExceptions", False)  # silent handleError
+    batches: list[list[dict]] = []
+    trace_logger.addHandler(LangfuseExportHandler(lambda events: batches.append(list(events))))
 
-    logger_trace.info("pas du JSON")  # illisible : signalée via handleError, sans lever
-    logger_trace.info('"du JSON, mais pas une étape"')
+    trace_logger.info("pas du JSON")  # unreadable: reported via handleError, without raising
+    trace_logger.info('"du JSON, mais pas une étape"')
 
-    assert lots == []
+    assert batches == []
 
 
-def test_un_echec_de_publication_ne_casse_pas_la_consignation(logger_trace, monkeypatch):
+def test_a_publication_failure_does_not_break_recording(trace_logger, monkeypatch):
     monkeypatch.setattr(logging, "raiseExceptions", False)
 
-    def _publier_en_panne(evenements):
+    def _failing_publish(events):
         raise ConnectionError("Langfuse injoignable")
 
-    logger_trace.addHandler(LangfuseExportHandler(_publier_en_panne))
+    trace_logger.addHandler(LangfuseExportHandler(_failing_publish))
     journal = RunJournal()
 
-    record = _consigne(journal)  # ne doit pas lever : l'export n'échoue jamais le run
+    record = _record(journal)  # must not raise: the export never fails the run
 
     assert journal.records == (record,)
 
 
-# --- Publication HTTP et bascule configurative -------------------------------------------
+# --- HTTP publication and configuration switch ------------------------------------------
 
 
 class _IngestionHandler(BaseHTTPRequestHandler):
-    """Reçoit l'API d'ingestion Langfuse et archive chaque requête pour inspection."""
+    """Receives the Langfuse ingestion API and archives each request for inspection."""
 
     def do_POST(self):
-        longueur = int(self.headers.get("Content-Length", 0))
-        corps = json.loads(self.rfile.read(longueur) or b"{}")
-        self.server.requetes.append(
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        self.server.requests.append(
             {
-                "chemin": self.path,
-                "corps": corps,
-                "autorisation": self.headers.get("Authorization"),
+                "path": self.path,
+                "body": body,
+                "authorization": self.headers.get("Authorization"),
             }
         )
-        # 207 : la réponse multi-statut nominale de l'ingestion Langfuse.
-        brut = json.dumps({"successes": [], "errors": []}).encode("utf-8")
-        self.send_response(self.server.statut)
+        # 207: the nominal multi-status response of the Langfuse ingestion.
+        raw = json.dumps({"successes": [], "errors": []}).encode("utf-8")
+        self.send_response(self.server.status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(brut)))
+        self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
-        self.wfile.write(brut)
+        self.wfile.write(raw)
 
-    def log_message(self, *args):  # silencieux : pas de bruit dans la sortie des tests
+    def log_message(self, *args):  # silent: no noise in the test output
         pass
 
 
 @pytest.fixture()
-def langfuse_local():
-    """Langfuse factice sur un port libre ; `host` pointe dessus, `requetes` archive."""
-    serveur = ThreadingHTTPServer(("127.0.0.1", 0), _IngestionHandler)
-    serveur.requetes = []
-    serveur.statut = 207
-    thread = threading.Thread(target=serveur.serve_forever, daemon=True)
+def local_langfuse():
+    """Fake Langfuse on a free port; `host` points at it, `requests` archives."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _IngestionHandler)
+    server.requests = []
+    server.status = 207
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    serveur.host = f"http://127.0.0.1:{serveur.server_address[1]}"
+    server.host = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        yield serveur
+        yield server
     finally:
-        serveur.shutdown()
-        serveur.server_close()
+        server.shutdown()
+        server.server_close()
 
 
-def test_le_publieur_poste_le_lot_authentifie_sur_l_api_d_ingestion(langfuse_local):
+def test_the_publisher_posts_the_authenticated_batch_to_the_ingestion_api(local_langfuse):
     settings = _settings(
         langfuse_public_key="pk-test",
         langfuse_secret_key="sk-test",
-        langfuse_host=langfuse_local.host + "/",  # le / final ne double pas le chemin
+        langfuse_host=local_langfuse.host + "/",  # the trailing / does not double the path
     )
 
-    publieur_langfuse(settings)([{"type": "trace-create"}, {"type": "span-create"}])
+    langfuse_publisher(settings)([{"type": "trace-create"}, {"type": "span-create"}])
 
-    (requete,) = langfuse_local.requetes
-    assert requete["chemin"] == "/api/public/ingestion"
-    assert [e["type"] for e in requete["corps"]["batch"]] == ["trace-create", "span-create"]
-    attendu = base64.b64encode(b"pk-test:sk-test").decode("ascii")
-    assert requete["autorisation"] == f"Basic {attendu}"
+    (request,) = local_langfuse.requests
+    assert request["path"] == "/api/public/ingestion"
+    assert [e["type"] for e in request["body"]["batch"]] == ["trace-create", "span-create"]
+    expected = base64.b64encode(b"pk-test:sk-test").decode("ascii")
+    assert request["authorization"] == f"Basic {expected}"
 
 
-def test_le_publieur_leve_sur_une_reponse_en_erreur(langfuse_local):
-    langfuse_local.statut = 500
+def test_the_publisher_raises_on_an_error_response(local_langfuse):
+    local_langfuse.status = 500
     settings = _settings(
-        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=langfuse_local.host
+        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=local_langfuse.host
     )
 
     with pytest.raises(httpx2.HTTPStatusError):
-        publieur_langfuse(settings)([{"type": "trace-create"}])
+        langfuse_publisher(settings)([{"type": "trace-create"}])
 
 
-def test_sans_cles_aucun_handler_n_est_pose(logger_trace):
-    # Mode dégradé : sans les deux clés, l'activation ne branche rien du tout.
-    handlers_avant = list(logger_trace.handlers)
+def test_without_keys_no_handler_is_installed(trace_logger):
+    # Degraded mode: without both keys, the activation plugs nothing at all.
+    handlers_before = list(trace_logger.handlers)
 
-    assert activer_export_langfuse(_settings()) is None
-    assert activer_export_langfuse(_settings(langfuse_public_key="pk")) is None
-    assert activer_export_langfuse(_settings(langfuse_secret_key="sk")) is None
-    assert logger_trace.handlers == handlers_avant
+    assert enable_langfuse_export(_settings()) is None
+    assert enable_langfuse_export(_settings(langfuse_public_key="pk")) is None
+    assert enable_langfuse_export(_settings(langfuse_secret_key="sk")) is None
+    assert trace_logger.handlers == handlers_before
 
 
-def test_avec_les_deux_cles_le_handler_est_pose_et_retirable(logger_trace):
-    handler = activer_export_langfuse(_settings(langfuse_public_key="pk",
-                                                langfuse_secret_key="sk"))
+def test_with_both_keys_the_handler_is_installed_and_removable(trace_logger):
+    handler = enable_langfuse_export(_settings(langfuse_public_key="pk",
+                                               langfuse_secret_key="sk"))
 
     assert handler is not None
-    assert handler in logger_trace.handlers
-    logger_trace.removeHandler(handler)
-    assert handler not in logger_trace.handlers
+    assert handler in trace_logger.handlers
+    trace_logger.removeHandler(handler)
+    assert handler not in trace_logger.handlers
 
 
-def test_l_activation_repetee_ne_pose_qu_un_seul_handler(logger_trace):
-    # `maestro.trace` est un logger *global* et les points d'entrée activent l'export
-    # à chaque invocation, sans jamais le retirer (#195) : N activations dans un même
-    # processus ne doivent pas accrocher N handlers, sans quoi chaque ligne consignée
-    # part N fois — traces et coûts dupliqués, et N POST synchrones par ligne.
+def test_repeated_activation_installs_a_single_handler(trace_logger):
+    # `maestro.trace` is a *global* logger and the entry points enable the export on
+    # every invocation, never removing it (#195): N activations in one process must
+    # not hang N handlers, otherwise each recorded line goes out N times — duplicated
+    # traces and costs, and N synchronous POSTs per line.
     settings = _settings(langfuse_public_key="pk", langfuse_secret_key="sk")
 
-    premier = activer_export_langfuse(settings)
+    first = enable_langfuse_export(settings)
     for _ in range(3):
-        assert activer_export_langfuse(settings) is premier  # le handler déjà posé
+        assert enable_langfuse_export(settings) is first  # the handler already installed
 
-    exporteurs = [h for h in logger_trace.handlers if isinstance(h, LangfuseExportHandler)]
-    assert exporteurs == [premier]
+    exporters = [h for h in trace_logger.handlers if isinstance(h, LangfuseExportHandler)]
+    assert exporters == [first]
 
-    # L'idempotence n'interdit pas de réactiver : retiré, le handler se repose.
-    logger_trace.removeHandler(premier)
-    repose = activer_export_langfuse(settings)
-    assert repose is not None and repose is not premier
+    # Idempotence does not forbid re-enabling: once removed, the handler is installed again.
+    trace_logger.removeHandler(first)
+    reinstalled = enable_langfuse_export(settings)
+    assert reinstalled is not None and reinstalled is not first
 
 
-def test_la_suite_de_tests_ne_publie_jamais_vers_le_vrai_langfuse(logger_trace):
-    # Garde-fou de `tests/conftest.py` : sur un poste dont le `.env` porte les vraies
-    # clés, l'activation « par défaut » (sans settings explicite — celle que font les
-    # `main()`) posait un handler, et la suite sortait sur le réseau à raison d'un POST
-    # synchrone par ligne journalisée : 17 min 51 s au lieu de 7 min 08 s (#195).
-    assert activer_export_langfuse() is None
-    assert not [h for h in logger_trace.handlers if isinstance(h, LangfuseExportHandler)]
+def test_the_test_suite_never_publishes_to_the_real_langfuse(trace_logger):
+    # Guard of `tests/conftest.py`: on a workstation whose `.env` carries the real
+    # keys, the "default" activation (without explicit settings — the one the
+    # `main()` functions make) would install a handler, and the suite would go out on
+    # the network at one synchronous POST per journaled line: 17 min 51 s instead of
+    # 7 min 08 s (#195).
+    assert enable_langfuse_export() is None
+    assert not [h for h in trace_logger.handlers if isinstance(h, LangfuseExportHandler)]
 
-    # Rien ne peut viser le vrai hôte, même en construisant un publieur soi-même.
+    # Nothing can target the real host, even by building a publisher oneself.
     settings = load_settings()
     assert not settings.langfuse_public_key and not settings.langfuse_secret_key
     assert urlparse(settings.langfuse_host).hostname in {"127.0.0.1", "localhost"}
 
 
-# --- Évaluation des exécutions (#80) ------------------------------------------------------
+# --- Run scoring (#80) ------------------------------------------------------------------
 
 
-def test_un_run_tout_reussi_score_1_sur_sa_trace():
+def test_a_fully_succeeded_run_scores_1_on_its_trace():
     journal = RunJournal(run_id="run-eval")
-    _consigne(journal, etape=ETAPE_PLANIFICATION, agent="orchestrateur", role="Orchestrateur")
-    _consigne(journal, etape="t1")
-    _consigne(journal, etape="t2", agent="qa", role="QA / Testeur")
+    _record(journal, etape=STEP_PLANNING, agent="orchestrateur", role="Orchestrateur")
+    _record(journal, etape="t1")
+    _record(journal, etape="t2", agent="qa", role="QA / Testeur")
 
-    reussi, taux = scores_depuis_journal(journal)
+    succeeded, rate = scores_from_journal(journal)
 
-    assert reussi["type"] == "score-create" and taux["type"] == "score-create"
-    assert reussi["body"]["traceId"] == "run-eval"
-    assert reussi["body"]["name"] == SCORE_RUN_REUSSI
-    assert reussi["body"]["value"] == 1
-    assert reussi["body"]["dataType"] == "BOOLEAN"
-    assert taux["body"]["name"] == SCORE_TAUX_REUSSITE
-    assert taux["body"]["value"] == 1.0
-    assert taux["body"]["dataType"] == "NUMERIC"
-    assert "2/2 tâche(s) réussie(s)" in taux["body"]["comment"]
+    assert succeeded["type"] == "score-create" and rate["type"] == "score-create"
+    assert succeeded["body"]["traceId"] == "run-eval"
+    assert succeeded["body"]["name"] == SCORE_RUN_SUCCEEDED
+    assert succeeded["body"]["value"] == 1
+    assert succeeded["body"]["dataType"] == "BOOLEAN"
+    assert rate["body"]["name"] == SCORE_SUCCESS_RATE
+    assert rate["body"]["value"] == 1.0
+    assert rate["body"]["dataType"] == "NUMERIC"
+    assert "2/2 tâche(s) réussie(s)" in rate["body"]["comment"]
 
 
-def test_un_run_avec_echec_et_blocage_score_0_et_le_taux_reel():
+def test_a_run_with_failure_and_block_scores_0_and_the_real_rate():
     journal = RunJournal()
-    _consigne(journal, etape="t1")
-    _consigne(journal, etape="t2", statut="echec", erreur="boum")
-    _consigne(journal, etape="t3", statut="bloquee", erreur="dépendance t2 en échec")
+    _record(journal, etape="t1")
+    _record(journal, etape="t2", statut="echec", erreur="boum")
+    _record(journal, etape="t3", statut="bloquee", erreur="dépendance t2 en échec")
 
-    reussi, taux = scores_depuis_journal(journal)
+    succeeded, rate = scores_from_journal(journal)
 
-    assert reussi["body"]["value"] == 0
-    assert taux["body"]["value"] == pytest.approx(1 / 3)
-    assert "1 échec(s), 1 bloquée(s)" in reussi["body"]["comment"]
+    assert succeeded["body"]["value"] == 0
+    assert rate["body"]["value"] == pytest.approx(1 / 3)
+    assert "1 échec(s), 1 bloquée(s)" in succeeded["body"]["comment"]
 
 
-def test_les_annexes_ne_comptent_pas_comme_taches():
-    # L'issue d'une tâche vient de sa propre étape ; ses annexes (#55) n'en créent pas.
+def test_side_steps_do_not_count_as_tasks():
+    # A task's outcome comes from its own step; its side steps (#55) create none.
     journal = RunJournal()
-    _consigne(journal, etape="t1")
-    _consigne(journal, etape="t1:validation", statut="approuve")
+    _record(journal, etape="t1")
+    _record(journal, etape="t1:validation", statut="approuve")
 
-    reussi, taux = scores_depuis_journal(journal)
+    succeeded, rate = scores_from_journal(journal)
 
-    assert reussi["body"]["value"] == 1
-    assert "1/1 tâche(s) réussie(s)" in taux["body"]["comment"]
+    assert succeeded["body"]["value"] == 1
+    assert "1/1 tâche(s) réussie(s)" in rate["body"]["comment"]
 
 
-def test_sans_tache_rien_a_evaluer():
-    # Aucun score plutôt qu'un score faux : journal vide, ou planification seule
-    # (échouée avant tout plan — l'exécution n'a pas eu lieu).
-    assert scores_depuis_journal(RunJournal()) == ()
+def test_without_a_task_there_is_nothing_to_score():
+    # No score rather than a false one: empty journal, or planning alone (failed
+    # before any plan — the run did not take place).
+    assert scores_from_journal(RunJournal()) == ()
 
     journal = RunJournal()
-    _consigne(journal, etape=ETAPE_PLANIFICATION, statut="echec", erreur="plan illisible")
-    assert scores_depuis_journal(journal) == ()
+    _record(journal, etape=STEP_PLANNING, statut="echec", erreur="plan illisible")
+    assert scores_from_journal(journal) == ()
 
 
-def test_evaluer_est_un_no_op_sans_cles():
+def test_scoring_is_a_no_op_without_keys():
     journal = RunJournal()
-    _consigne(journal)
+    _record(journal)
 
-    # Mode dégradé : rien n'est publié, rien ne part sur le réseau.
-    assert evaluer_run_langfuse(journal, _settings()) == ()
+    # Degraded mode: nothing is published, nothing goes out on the network.
+    assert score_run_langfuse(journal, _settings()) == ()
 
 
-def test_evaluer_publie_les_scores_sur_l_api_d_ingestion(langfuse_local):
+def test_scoring_publishes_the_scores_to_the_ingestion_api(local_langfuse):
     settings = _settings(
-        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=langfuse_local.host
+        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=local_langfuse.host
     )
     journal = RunJournal(run_id="run-publie")
-    _consigne(journal)
+    _record(journal)
 
-    publies = evaluer_run_langfuse(journal, settings)
+    published = score_run_langfuse(journal, settings)
 
-    (requete,) = langfuse_local.requetes
-    lot = requete["corps"]["batch"]
-    assert [e["body"]["name"] for e in lot] == [SCORE_RUN_REUSSI, SCORE_TAUX_REUSSITE]
-    assert all(e["body"]["traceId"] == "run-publie" for e in lot)
-    assert len(publies) == 2
+    (request,) = local_langfuse.requests
+    batch = request["body"]["batch"]
+    assert [e["body"]["name"] for e in batch] == [SCORE_RUN_SUCCEEDED, SCORE_SUCCESS_RATE]
+    assert all(e["body"]["traceId"] == "run-publie" for e in batch)
+    assert len(published) == 2
 
 
-def test_un_langfuse_injoignable_n_affecte_pas_l_execution_evaluee(caplog):
-    # Résilience : la publication échoue (port fermé), l'évaluation l'avale et le signale.
+def test_an_unreachable_langfuse_does_not_affect_the_scored_run(caplog):
+    # Resilience: the publication fails (closed port), scoring swallows it and reports it.
     settings = _settings(
         langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host="http://127.0.0.1:9"
     )
     journal = RunJournal()
-    _consigne(journal)
+    _record(journal)
 
     with caplog.at_level(logging.WARNING, logger="maestro.telemetry.langfuse"):
-        assert evaluer_run_langfuse(journal, settings) == ()
+        assert score_run_langfuse(journal, settings) == ()
 
     assert "Scores Langfuse non publiés" in caplog.text
 
 
-def test_sans_rien_a_evaluer_aucune_publication_meme_avec_cles(langfuse_local):
+def test_with_nothing_to_score_nothing_is_published_even_with_keys(local_langfuse):
     settings = _settings(
-        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=langfuse_local.host
+        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=local_langfuse.host
     )
 
-    assert evaluer_run_langfuse(RunJournal(), settings) == ()
-    assert langfuse_local.requetes == []
+    assert score_run_langfuse(RunJournal(), settings) == ()
+    assert local_langfuse.requests == []
 
 
-# --- De bout en bout : traces au fil des étapes, scores en fin de run --------------------
+# --- End to end: traces along the steps, scores at the end of the run -------------------
 
 
-def test_de_bout_en_bout_traces_puis_scores_sur_la_meme_trace(logger_trace, langfuse_local):
+def test_end_to_end_traces_then_scores_on_the_same_trace(trace_logger, local_langfuse):
     settings = _settings(
-        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=langfuse_local.host
+        langfuse_public_key="pk", langfuse_secret_key="sk", langfuse_host=local_langfuse.host
     )
-    handler = activer_export_langfuse(settings)
+    handler = enable_langfuse_export(settings)
     try:
         journal = RunJournal(run_id="run-complet")
-        _consigne(journal, etape=ETAPE_PLANIFICATION, agent="orchestrateur",
-                  role="Orchestrateur", usage=StepUsage(appels=1, cout_usd=0.01))
-        _consigne(journal, etape="t1", usage=StepUsage(appels=1, cout_usd=0.02))
-        evaluer_run_langfuse(journal, settings)
+        _record(journal, etape=STEP_PLANNING, agent="orchestrateur",
+                role="Orchestrateur", usage=StepUsage(appels=1, cout_usd=0.01))
+        _record(journal, etape="t1", usage=StepUsage(appels=1, cout_usd=0.02))
+        score_run_langfuse(journal, settings)
     finally:
-        logger_trace.removeHandler(handler)
+        trace_logger.removeHandler(handler)
 
-    # Un lot par étape consignée (#81), puis le lot des scores (#80).
+    # One batch per recorded step (#81), then the batch of scores (#80).
     types = [
-        [e["type"] for e in requete["corps"]["batch"]] for requete in langfuse_local.requetes
+        [e["type"] for e in request["body"]["batch"]] for request in local_langfuse.requests
     ]
     assert types == [
         ["trace-create", "generation-create"],
         ["trace-create", "generation-create"],
         ["score-create", "score-create"],
     ]
-    # Tout se recoupe sur la même trace : celle du run_id.
-    dernier = langfuse_local.requetes[-1]["corps"]["batch"]
-    assert all(e["body"]["traceId"] == "run-complet" for e in dernier)
+    # Everything lines up on the same trace: the run_id's.
+    last = local_langfuse.requests[-1]["body"]["batch"]
+    assert all(e["body"]["traceId"] == "run-complet" for e in last)

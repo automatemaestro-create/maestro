@@ -106,7 +106,7 @@ from maestro.plan_run import NoeudPlan
 from maestro.projets import MESSAGE_PREMIER_COMMIT, Projet, ProjetStore, detecter_vcs
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import ETAPE_CADENCE, RunCost, RunJournal
+from maestro.telemetry import STEP_CADENCE, RunCost, RunJournal
 
 GIT = shutil.which("git")
 avec_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
@@ -326,7 +326,7 @@ def _moteur(
 
 
 def _cadences(journal: RunJournal) -> list[Any]:
-    return [record for record in journal.records if record.etape == ETAPE_CADENCE]
+    return [record for record in journal.records if record.etape == STEP_CADENCE]
 
 
 def _fusions(journal: RunJournal) -> dict[str, str]:
@@ -770,7 +770,7 @@ def test_l_etape_de_cadence_devient_une_activite_du_run_qui_porte_sa_cause() -> 
     event = _activite(NON_VERSIONNE)
 
     assert event.type == EVENEMENT_AGENT_ACTIVITE
-    assert event.tache_id == "" and event.etape_run == ETAPE_CADENCE
+    assert event.tache_id == "" and event.etape_run == STEP_CADENCE
     assert event.cadence is not None
     assert event.cadence["mention"] == "une tâche à la fois : projet non versionné"
     assert event.detail == NON_VERSIONNE.phrase()
@@ -783,7 +783,7 @@ def test_la_cadence_n_ouvre_aucune_tache_au_grand_livre() -> None:
         journal, NON_VERSIONNE, STATUT_UNE_A_UNE, agent="o", role="O", projet_id=PROJET
     )
 
-    assert RunCost.depuis_journal(journal).taches == ()
+    assert RunCost.from_journal(journal).tasks == ()
 
 
 # --------------------------------------------------------------------------- #

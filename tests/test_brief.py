@@ -98,9 +98,9 @@ from maestro.orchestrator.prompt import bloc_outillage, prompt_orchestrateur
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.sources.extraction import ETAT_LU, Lecture, RapportLecture
+from maestro.sources.extraction import STATE_READ, Reading, ReadingReport
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_BRIEF, ETAPE_PLANIFICATION, ETAPE_REPRISE
+from maestro.telemetry.costs import STEP_BRIEF, STEP_PLANNING, STEP_RESUME
 
 RUN = "b1e5f0000001"
 
@@ -666,7 +666,7 @@ def test_l_etape_de_brief_est_consignee_au_journal():
     asyncio.run(
         engine.run("Prototyper un mini-CRM", journal=journal, mode_brief=MODE_BRIEF_AUTO)
     )
-    etapes = [ligne for ligne in journal.records if ligne.etape == ETAPE_BRIEF]
+    etapes = [ligne for ligne in journal.records if ligne.etape == STEP_BRIEF]
     assert len(etapes) == 1
     assert etapes[0].agent == "orchestrateur"
     assert etapes[0].statut == "terminee"
@@ -685,7 +685,7 @@ def test_un_brief_illisible_est_consigne_puis_remonte():
         asyncio.run(
             engine.run("Prototyper un mini-CRM", journal=journal, mode_brief=MODE_BRIEF_AUTO)
         )
-    etapes = [ligne for ligne in journal.records if ligne.etape == ETAPE_BRIEF]
+    etapes = [ligne for ligne in journal.records if ligne.etape == STEP_BRIEF]
     assert len(etapes) == 1
     assert etapes[0].statut == "echec"
 
@@ -735,10 +735,10 @@ def test_de_bout_en_bout_la_source_jointe_au_lancement_atteint_le_prompt_du_brie
             ProviderExecution(), Orchestrator(cadrage, model="claude-opus-4-8")
         )
 
-    def lecteur(matiere: Any) -> RapportLecture:
-        return RapportLecture(
-            lectures=tuple(
-                Lecture(nom="cdc.md", type=source.type, etat=ETAT_LU,
+    def lecteur(matiere: Any) -> ReadingReport:
+        return ReadingReport(
+            readings=tuple(
+                Reading(name="cdc.md", type=source.type, state=STATE_READ,
                         markdown="Les fiches portent un SIRET.", tokens=9)
                 for source in matiere
             )
@@ -1341,7 +1341,7 @@ def test_le_pont_nomme_l_etape_de_cadrage_sur_l_evenement():
     """La ligne `brief` du journal arrive à la projection **en se nommant**.
 
     C'est la moitié manquante du défaut S9 (revue #568) : le moteur consignait
-    bien l'étape (`ETAPE_BRIEF`, #318), mais le pont la traduisait en activité
+    bien l'étape (`STEP_BRIEF`, #318), mais le pont la traduisait en activité
     d'agent sans `tache_id` — indiscernable de la planification pour le grand
     livre que la Control Tower sert, d'où un seau `brief` vide quel que soit
     l'écran qui avait lancé le run. Le nom de l'étape voyage donc avec
@@ -1349,12 +1349,12 @@ def test_le_pont_nomme_l_etape_de_cadrage_sur_l_evenement():
     texte par son libellé (#746).
     """
     (event,) = evenements_depuis_step(
-        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif", 0.02)
+        _ligne_de_run(STEP_BRIEF, "Brief de l'objectif", 0.02)
     )
 
     assert event.type == EVENEMENT_AGENT_ACTIVITE
     assert event.tache_id == ""
-    assert event.etape_run == ETAPE_BRIEF
+    assert event.etape_run == STEP_BRIEF
 
 
 def test_une_etape_de_tache_ne_porte_aucune_etape_de_run():
@@ -1390,9 +1390,9 @@ def test_le_grand_livre_separe_le_cadrage_de_la_planification():
     """
     state = ControlTowerState()
     lignes = (
-        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif", 0.02),
-        _ligne_de_run(ETAPE_BRIEF, "Brief de l'objectif (clarification 1)", 0.01),
-        _ligne_de_run(ETAPE_PLANIFICATION, "Planification", 0.05),
+        _ligne_de_run(STEP_BRIEF, "Brief de l'objectif", 0.02),
+        _ligne_de_run(STEP_BRIEF, "Brief de l'objectif (clarification 1)", 0.01),
+        _ligne_de_run(STEP_PLANNING, "Planification", 0.05),
     )
     for ligne in lignes:
         for event in evenements_depuis_step(ligne):
@@ -1404,7 +1404,7 @@ def test_le_grand_livre_separe_le_cadrage_de_la_planification():
     # livre du moteur les cumule déjà (#318).
     assert cout.brief.cout_usd == pytest.approx(0.03)
     assert cout.brief.appels == 2
-    assert cout.planification.cout_usd == pytest.approx(0.05)
+    assert cout.planning.cout_usd == pytest.approx(0.05)
     assert cout.total.cout_usd == pytest.approx(0.08)
 
 
@@ -1414,6 +1414,6 @@ def test_une_reprise_n_est_ni_un_cadrage_ni_une_planification():
     Elle n'a aucun usage par construction, mais la nommer est ce qui empêche la
     prochaine lecture de la ranger quelque part par défaut.
     """
-    (event,) = evenements_depuis_step(_ligne_de_run(ETAPE_REPRISE, "Reprise"))
+    (event,) = evenements_depuis_step(_ligne_de_run(STEP_RESUME, "Reprise"))
 
-    assert event.etape_run == ETAPE_REPRISE
+    assert event.etape_run == STEP_RESUME

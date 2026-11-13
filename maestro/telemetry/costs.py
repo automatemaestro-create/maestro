@@ -1,36 +1,36 @@
-"""Comptabilité de coût par tâche — le grand livre d'une exécution (ticket #55).
+"""Per-task cost accounting — the ledger of a run (ticket #55).
 
-Le journal (#8) consigne déjà chaque étape avec son usage (tokens, coût, durée) ;
-cette brique le **réorganise en comptabilité** : une entrée par tâche
-(`TaskCost`), l'étape de planification à part, et l'agrégat de l'exécution
-(`RunCost`) — la vue « coût de l'exécution, traçable par tâche » du critère MVP
-n°6 (parent #49), que l'API Control Tower exposera (#57) et sur laquelle le
-plafond de dépense s'adosse (`PlafondDepense`, #56) : le garde-fou (#9) relit ce
-grand livre à chaque mesure d'usage, sans compteur parallèle.
+The journal (#8) already records each step with its usage (tokens, cost,
+duration); this building block **reorganizes it into accounting**: one entry per
+task (`TaskCost`), the planning step apart, and the run aggregate (`RunCost`) —
+the "run cost, traceable per task" view of MVP criterion no. 6 (parent #49),
+which the Control Tower API exposes (#57) and on which the spending cap rests
+(`SpendingCap`, #56): the guardrail (#9) rereads this ledger at each usage
+measurement, with no parallel counter.
 
-L'attribution suit la convention d'étape du journal : `planification` et `brief`
-(#318) pour l'orchestrateur, `<tache>` pour l'étape de la tâche elle-même, et
-`<tache>:<annexe>` pour ses étapes annexes (validation humaine #48, message
-inter-agents #44) — chaque annexe est rattachée à sa tâche. Chaque ligne du
-journal est ainsi comptée exactement une fois : le total de la comptabilité
-retombe sur `RunJournal.usage_totale`.
+Attribution follows the journal's step convention: `planification` and `brief`
+(#318) for the orchestrator, `<task>` for the step of the task itself, and
+`<task>:<annex>` for its ancillary steps (human validation #48, inter-agent
+message #44) — each annex is attached to its task. Each journal line is thus
+counted exactly once: the accounting total falls back on
+`RunJournal.usage_totale`.
 
-Cette liste d'étapes hors tâche est **fermée par le code, pas par convention** :
-la règle par défaut est « toute autre étape est une tâche », donc une étape de run
-qu'on oublierait d'y déclarer n'échouerait pas — elle ouvrirait une ligne de tâche
-fantôme dans le grand livre, ce qui est bien pire qu'une erreur.
+This list of non-task steps is **closed by the code, not by convention**: the
+default rule is "any other step is a task", so a run step that someone forgot to
+declare there would not fail — it would open a phantom task line in the ledger,
+which is far worse than an error.
 
-La comptabilité n'évalue **aucun prix** : le coût estimé est celui rapporté par
-le fournisseur via la couche `ModelProvider` (#32) — la tarification par modèle
-reste de son côté, jamais en dur ici. Un fournisseur qui ne rapporte pas de coût
-laisse la tâche à coût « inconnu » (None, à distinguer d'un coût nul).
+The accounting evaluates **no price**: the estimated cost is the one reported by
+the provider through the `ModelProvider` layer (#32) — per-model pricing stays on
+its side, never hard-coded here. A provider that reports no cost leaves the task
+at an "unknown" cost (None, to be told apart from a zero cost).
 
-Ce coût inconnu rendrait le plafond de dépense inopérant sur un tel fournisseur
-(#113) : `PlafondDepense` accepte donc un **plafond en tokens** en complément (ou
-à la place) du plafond de coût — les tokens, eux, sont toujours rapportés. Le
-plafond en USD garde la main dès que le coût est connu ; le plafond en tokens
-prend le relais sinon, et `resume_controle_depense` dit à l'opérateur lequel des
-deux tient réellement (au lieu d'un plafond silencieusement sans prise).
+That unknown cost would make the spending cap ineffective on such a provider
+(#113): `SpendingCap` therefore accepts a **token cap** in addition to (or
+instead of) the cost cap — tokens are always reported. The USD cap takes over as
+soon as the cost is known; the token cap takes over otherwise, and
+`spending_control_summary` tells the operator which of the two really holds
+(instead of a silently ineffective cap).
 """
 
 from __future__ import annotations
@@ -44,511 +44,506 @@ from maestro.telemetry.journal import RunJournal, StepRecord
 from maestro.telemetry.usage import StepUsage
 
 
-def intervalle_depuis(
-    horodatage: str, duree_ms: int | None
+def interval_from(
+    timestamp: str, duration_ms: int | None
 ) -> tuple[datetime, datetime] | None:
-    """L'intervalle `[début, fin]` qu'une étape a **occupé**, ou None (#989).
+    """The `[start, end]` interval a step **occupied**, or None (#989).
 
-    Le journal ne porte qu'un horodatage, celui de la **consignation** — donc la
-    fin —, et la durée horloge de l'étape : le début s'en déduit. C'est déjà ce
-    que fait l'export Langfuse (`maestro.telemetry.langfuse._debut_depuis`), et
-    le refaire autrement donnerait deux débuts pour la même étape.
+    The journal carries only one timestamp, the one of the **recording** — hence
+    the end —, and the wall clock duration of the step: the start is deduced from
+    them. This is already what the Langfuse export does
+    (`maestro.telemetry.langfuse._start_from`), and doing it differently would
+    give two starts for the same step.
 
-    None quand il n'y a pas d'intervalle à lire : aucune durée mesurée, une durée
-    nulle ou négative, un horodatage vide ou illisible. Une étape sans intervalle
-    ne compte pas dans l'union — elle ne la fausse pas non plus.
+    None when there is no interval to read: no measured duration, a zero or
+    negative duration, an empty or unreadable timestamp. A step without an
+    interval does not count in the union — nor does it distort it.
 
-    Publique parce que le grand livre se construit par **deux** chemins, et
-    qu'ils doivent lire le temps pareil : depuis le journal du moteur
-    (`RunCost.depuis_journal`) et depuis le flux d'événements de la Control Tower
-    (`EtatExecution.cout`). Une règle de temps recopiée des deux côtés d'une
-    frontière est ce que #830 a vu casser.
+    Public because the ledger is built through **two** paths, and they must read
+    time the same way: from the engine journal (`RunCost.from_journal`) and from
+    the Control Tower event stream (`EtatExecution.cout`). A time rule copied on
+    both sides of a boundary is what #830 saw break.
 
-    ⚠ L'horodatage est écrit à la **seconde** (`isoformat(timespec="seconds")`) :
-    les bornes de l'union sont donc quantifiées à la seconde. C'est sans effet
-    sur ce que l'union sert à corriger — un recouvrement de plusieurs minutes
-    entre deux tâches menées de front — et rendre le journal plus fin pour cela
-    seul coûterait à toutes ses lignes.
+    ⚠ The timestamp is written to the **second** (`isoformat(timespec="seconds")`):
+    the bounds of the union are therefore quantized to the second. This has no
+    effect on what the union is for — an overlap of several minutes between two
+    tasks run side by side — and making the journal finer for that alone would
+    cost all its lines.
     """
-    if duree_ms is None or duree_ms <= 0 or not horodatage:
+    if duration_ms is None or duration_ms <= 0 or not timestamp:
         return None
     try:
-        fin = datetime.fromisoformat(horodatage)
+        end = datetime.fromisoformat(timestamp)
     except ValueError:
         return None
-    return (fin - timedelta(milliseconds=duree_ms), fin)
+    return (end - timedelta(milliseconds=duration_ms), end)
 
 
-def _intervalle(record: StepRecord) -> tuple[datetime, datetime] | None:
-    """L'intervalle occupé par une ligne de journal — cf. `intervalle_depuis`."""
-    return intervalle_depuis(record.horodatage, record.usage.duree_ms)
+def _interval(record: StepRecord) -> tuple[datetime, datetime] | None:
+    """The interval occupied by a journal line — see `interval_from`."""
+    return interval_from(record.horodatage, record.usage.duree_ms)
 
 
-def union_ms(intervalles: list[tuple[datetime, datetime]]) -> int | None:
-    """La durée couverte par l'**union** des intervalles, jamais leur somme (#989).
+def union_ms(intervals: list[tuple[datetime, datetime]]) -> int | None:
+    """The duration covered by the **union** of the intervals, never their sum (#989).
 
-    Deux tâches menées de front occupent le run une seule fois sur la part qu'elles
-    partagent. C'est la correction que l'outillage a faite sur les runs de
-    `/orchestrate` (#497 — « l'occupation est l'union des intervalles et jamais
-    leur somme ») et que le produit répétait à l'envers : 47 min annoncées pour
-    43,5 min de mur (revue du 2026-08-26).
+    Two tasks run side by side occupy the run only once over the part they share.
+    This is the correction the tooling made on the `/orchestrate` runs (#497 —
+    "occupancy is the union of the intervals and never their sum") and that the
+    product repeated backwards: 47 min announced for 43.5 min of wall clock
+    (review of 2026-08-26).
 
-    None sur une liste vide — rien de mesuré n'est pas une durée nulle.
+    None on an empty list — nothing measured is not a zero duration.
     """
-    if not intervalles:
+    if not intervals:
         return None
-    # Triés par début, les intervalles se fondent en blocs contigus : on tient
-    # le bloc courant et on ne compte que lorsqu'un trou le clôt.
-    ordonnes = sorted(intervalles)
-    debut_courant, fin_courante = ordonnes[0]
-    couvert = timedelta()
-    for debut, fin in ordonnes[1:]:
-        if debut > fin_courante:
-            # Un trou : le bloc précédent est clos, on le compte et on repart.
-            couvert += fin_courante - debut_courant
-            debut_courant, fin_courante = debut, fin
-        elif fin > fin_courante:
-            fin_courante = fin
-    couvert += fin_courante - debut_courant
-    return int(round(couvert.total_seconds() * 1000))
+    # Sorted by start, the intervals melt into contiguous blocks: we hold the
+    # current block and only count when a gap closes it.
+    ordered = sorted(intervals)
+    current_start, current_end = ordered[0]
+    covered = timedelta()
+    for start, end in ordered[1:]:
+        if start > current_end:
+            # A gap: the previous block is closed, we count it and start over.
+            covered += current_end - current_start
+            current_start, current_end = start, end
+        elif end > current_end:
+            current_end = end
+    covered += current_end - current_start
+    return int(round(covered.total_seconds() * 1000))
 
 
-#: Étape du journal qui n'appartient à aucune tâche : la planification (#8).
-ETAPE_PLANIFICATION = "planification"
+#: Journal step that belongs to no task: the planning (#8).
+STEP_PLANNING = "planification"
 
-#: Étape du journal qui n'appartient à aucune tâche : le **brief** structuré (#318).
-#: À déclarer ici et pas seulement à consigner : sans cette ligne, `depuis_journal`
-#: retomberait sur sa règle par défaut — « toute autre étape est une tâche » — et
-#: ouvrirait une entrée de tâche fantôme nommée « brief » dans le grand livre. Son
-#: usage serait bien compté, mais attribué à un travail qui n'existe pas.
-ETAPE_BRIEF = "brief"
+#: Journal step that belongs to no task: the structured **brief** (#318).
+#: To declare here and not only to record: without this line, `from_journal`
+#: would fall back on its default rule — "any other step is a task" — and would
+#: open a phantom task entry named "brief" in the ledger. Its usage would be
+#: counted, but attributed to a job that does not exist.
+STEP_BRIEF = "brief"
 
-#: Étape du journal qui n'appartient à aucune tâche : la reprise d'un run
-#: interrompu (#96) — un marqueur de run, pas un travail d'agent. Usage nul par
-#: construction (aucun modèle n'est sollicité pour reprendre) : l'exclure du
-#: grand livre lui évite une entrée de tâche fantôme, sans rien changer au total.
-ETAPE_REPRISE = "reprise"
+#: Journal step that belongs to no task: the resumption of an interrupted run
+#: (#96) — a run marker, not agent work. Null usage by construction (no model is
+#: called to resume): excluding it from the ledger spares it a phantom task
+#: entry, without changing the total.
+STEP_RESUME = "reprise"
 
-#: Étape du journal qui n'appartient à aucune tâche : la **confrontation de
-#: l'équipe au plan** (#1227), entre la décomposition et la première tâche — le
-#: rôle qui manque, et depuis #1299 combien de tâches chaque rôle prendra de front.
-#: Usage nul par construction — confronter des tags à des fiches ne sollicite aucun
-#: modèle —, mais **comptée dans le temps du run** (contrairement à
-#: `ETAPE_REPRISE`) : l'attente de qui décide occupe le run comme le reste, et un
-#: run suspendu quatre minutes sur un recrutement n'a pas duré quatre minutes de
-#: moins. À déclarer ici pour la raison d'`ETAPE_BRIEF` : sans cette ligne, la
-#: règle par défaut ouvrirait dans le grand livre une entrée de tâche fantôme
-#: nommée « equipe ».
-ETAPE_EQUIPE = "equipe"
+#: Journal step that belongs to no task: the **confrontation of the team with the
+#: plan** (#1227), between the decomposition and the first task — the missing
+#: role, and since #1299 how many tasks each role will take side by side. Null
+#: usage by construction — confronting tags with sheets calls no model —, but
+#: **counted in the run time** (unlike `STEP_RESUME`): waiting for whoever
+#: decides occupies the run like the rest, and a run suspended four minutes on a
+#: hiring did not last four minutes less. To declare here for the reason of
+#: `STEP_BRIEF`: without this line, the default rule would open a phantom task
+#: entry named "equipe" in the ledger.
+STEP_TEAM = "equipe"
 
-#: Étape du journal qui n'appartient à aucune tâche : la **cadence** du run (#1298)
-#: — pourquoi ses tâches passent une à une (plan en chaîne, projet non versionné,
-#: agent au complet), et ce qu'est devenue la proposition de versionner le projet.
-#: Usage nul par construction : constater ne sollicite aucun modèle. À déclarer ici
-#: pour la raison d'`ETAPE_BRIEF` : sans cette ligne, la règle par défaut ouvrirait
-#: dans le grand livre une entrée de tâche fantôme nommée « cadence ».
-ETAPE_CADENCE = "cadence"
+#: Journal step that belongs to no task: the **cadence** of the run (#1298) — why
+#: its tasks go one by one (chained plan, unversioned project, agent at full
+#: capacity), and what became of the proposal to version the project. Null usage
+#: by construction: stating calls no model. To declare here for the reason of
+#: `STEP_BRIEF`: without this line, the default rule would open a phantom task
+#: entry named "cadence" in the ledger.
+STEP_CADENCE = "cadence"
 
-#: Étape du journal qui n'appartient à aucune tâche : le **plafond de dépense
-#: atteint** (#1182) — la question posée à la personne, puis ce qu'elle a décidé
-#: (relever, réduire, arrêter). Usage nul par construction : la suspension ne
-#: sollicite aucun modèle, et la dépense de la tâche interrompue est portée par
-#: sa propre ligne (`<tâche>:plafond`), jamais par celle-ci. Comptée dans le temps
-#: du run comme `ETAPE_EQUIPE`, pour la même raison : un run suspendu une heure
-#: sur son budget a duré cette heure-là. À déclarer ici pour la raison
-#: d'`ETAPE_BRIEF` : sans cette ligne, la règle par défaut ouvrirait dans le grand
-#: livre une entrée de tâche fantôme nommée « plafond ».
-ETAPE_PLAFOND = "plafond"
+#: Journal step that belongs to no task: the **spending cap reached** (#1182) —
+#: the question put to the person, then what they decided (raise, reduce, stop).
+#: Null usage by construction: the suspension calls no model, and the spending
+#: of the interrupted task is carried by its own line (`<task>:plafond`), never
+#: by this one. Counted in the run time like `STEP_TEAM`, for the same reason: a
+#: run suspended for an hour on its budget lasted that hour. To declare here for
+#: the reason of `STEP_BRIEF`: without this line, the default rule would open a
+#: phantom task entry named "plafond" in the ledger.
+STEP_SPENDING_CAP = "plafond"
 
-#: Étape qui n'appartient à aucune tâche : le **bilan** d'un run terminé (#1284), un
-#: appel au modèle rendu **après** la fin du run et compté dans son coût. Il ne naît
-#: jamais au journal du moteur — l'API le rend et le publie —, mais la liste des
-#: étapes hors tâche est fermée par le code : déclarée ici, elle ne peut pas ouvrir
-#: une tâche fantôme nommée « bilan » le jour où un journal la porterait. Son
-#: intervalle ne compte **pas** dans le temps de mur du run, qui était fini.
-ETAPE_BILAN = "bilan"
+#: Step that belongs to no task: the **assessment** of a finished run (#1284), a
+#: model call rendered **after** the end of the run and counted in its cost. It is
+#: never born in the engine journal — the API renders and publishes it —, but the
+#: list of non-task steps is closed by the code: declared here, it cannot open a
+#: phantom task named "bilan" the day a journal carries it. Its interval does
+#: **not** count in the wall clock time of the run, which was over.
+STEP_ASSESSMENT = "bilan"
 
-#: Étape qui n'appartient à aucune tâche : la **sonde du point de contrôle** (#1304),
-#: une session de modèle jouée une fois par fournisseur, au démarrage de la première
-#: session d'agent, pour éprouver qu'un refus de Maestro tient chez lui. Elle coûte
-#: (≈ 20 k tokens sur le vrai CLI) et tombait dans la première tâche qui l'armait :
-#: la sonde court dans une tâche asyncio née de la session de l'agent, donc sous son
-#: collecteur (#1398). Elle se consigne désormais par `report_usage_du_run`, sur
-#: cette ligne du run. À déclarer ici pour la raison d'`ETAPE_BRIEF` : sans cette
-#: ligne, la règle par défaut ouvrirait une tâche fantôme nommée « sonde ».
-ETAPE_SONDE = "sonde"
+#: Step that belongs to no task: the **checkpoint probe** (#1304), a model session
+#: played once per provider, at the start of the first agent session, to prove
+#: that a Maestro refusal holds on its side. It costs (≈ 20 k tokens on the real
+#: CLI) and used to fall into the first task that armed it: the probe runs in an
+#: asyncio task born from the agent session, hence under its collector (#1398).
+#: It is now recorded through `report_usage_du_run`, on this run line. To declare
+#: here for the reason of `STEP_BRIEF`: without this line, the default rule would
+#: open a phantom task named "sonde".
+STEP_PROBE = "sonde"
 
-#: Étape qui n'appartient à aucune tâche : la **recette du run** (#1530) — chaque
-#: critère d'acceptation du brief confronté au livrable intégré, en l'exécutant, une
-#: fois toutes les tâches soldées (`maestro.engine.recette`). Elle remplace la tâche
-#: de recette que le plan portait (p5 : 12 min 50 s et 1,633 $ sur le chemin), donc
-#: elle se compte **dans le temps de mur du run**, à la différence du bilan : le run
-#: n'est fini qu'une fois ses critères vérifiés. Sa propre ligne, pour qu'on lise ce
-#: que coûte la vérification de fin face à la tâche qu'elle remplace. À déclarer ici
-#: pour la raison d'`ETAPE_BRIEF` : sans cette ligne, une tâche fantôme « recette ».
-ETAPE_RECETTE = "recette"
+#: Step that belongs to no task: the **acceptance of the run** (#1530) — each
+#: acceptance criterion of the brief confronted with the integrated deliverable,
+#: by running it, once all the tasks are settled (`maestro.engine.recette`). It
+#: replaces the acceptance task the plan used to carry (p5: 12 min 50 s and
+#: $1.633 on the path), so it counts **in the wall clock time of the run**, unlike
+#: the assessment: the run is only over once its criteria are verified. Its own
+#: line, so that one reads what the final verification costs against the task it
+#: replaces. To declare here for the reason of `STEP_BRIEF`: without this line, a
+#: phantom "recette" task.
+STEP_ACCEPTANCE = "recette"
 
 
 @dataclass(frozen=True)
 class TaskCost:
-    """L'entrée « tâche » du grand livre : qui a fait quoi, pour quel usage.
+    """The "task" entry of the ledger: who did what, for what usage.
 
-    `usage` fusionne l'étape de la tâche et ses étapes annexes (validation,
-    message) — celles-ci rapportent un usage nul aujourd'hui, la fusion les
-    garderait comptées si elles en portaient un demain. `nom`, `agent`, `role`
-    et `statut` viennent de l'étape de la tâche elle-même ; ils restent vides
-    tant que seule une annexe a été consignée (tâche encore en cours).
+    `usage` merges the step of the task and its ancillary steps (validation,
+    message) — these report a null usage today, the merge would keep them counted
+    if they carried one tomorrow. `name`, `agent`, `role` and `status` come from
+    the step of the task itself; they stay empty as long as only an annex has been
+    recorded (task still running).
 
-    `ticket` (#187) est le ticket dont relève la tâche : à la
-    différence de l'identité, elle est prise sur **n'importe quelle** étape qui
-    en porte une — l'annexe `<tache>:reference` en est justement le seul porteur
-    quand un agent la pose en cours d'exécution.
+    `ticket` (#187) is the ticket the task belongs to: unlike the identity, it is
+    taken from **any** step that carries one — the `<task>:reference` annex is
+    precisely the only carrier when an agent sets it during execution.
 
-    `projet_id` (#222) est le projet auquel la tâche appartient, pris au même
-    régime que `ticket` : sur **n'importe quelle** étape qui en porte un — c'est
-    ce qui permet de filtrer la comptabilité par projet.
+    `project_id` (#222) is the project the task belongs to, taken under the same
+    regime as `ticket`: from **any** step that carries one — this is what allows
+    filtering the accounting by project.
     """
 
-    tache_id: str
-    nom: str = ""
+    task_id: str
+    name: str = ""
     agent: str = ""
     role: str = ""
-    statut: str = ""
+    status: str = ""
     usage: StepUsage = StepUsage()
     ticket: ReferenceTicket | None = None
-    projet_id: str | None = None
+    project_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet l'entrée en dict JSON-sérialisable (la forme de l'API, #57)."""
+        """Re-emits the entry as a JSON-serializable dict (the API form, #57)."""
         return {
-            "tache_id": self.tache_id,
-            "nom": self.nom,
+            "tache_id": self.task_id,
+            "nom": self.name,
             "agent": self.agent,
             "role": self.role,
-            "statut": self.statut,
+            "statut": self.status,
             "usage": self.usage.to_dict(),
             "ticket": ticket_en_dict(self.ticket),
-            "projet_id": self.projet_id,
+            "projet_id": self.project_id,
         }
 
 
 @dataclass(frozen=True)
 class RunCost:
-    """Le grand livre d'une exécution : le coût par tâche et l'agrégat du run.
+    """The ledger of a run: the cost per task and the run aggregate.
 
-    `taches` suit l'ordre de première apparition au journal — l'ordre
-    d'achèvement des tâches (#7), chaque entrée restant reliée au plan par
-    `tache_id` ; `planification` porte l'usage de l'orchestrateur.
+    `tasks` follows the order of first appearance in the journal — the order in
+    which tasks finished (#7), each entry staying linked to the plan by `task_id`;
+    `planning` carries the usage of the orchestrator.
 
-    `brief` (#318) porte l'usage de l'étape de **brief**, à part de la
-    planification et à part des tâches. À part de la planification parce que ce
-    sont deux appels modèle distincts, et que le brief peut être **régénéré**
-    plusieurs fois par les allers-retours de clarification (#321) : les confondre
-    masquerait ce que coûte réellement la mise au point de l'intention. Nul tant
-    qu'aucun run n'est passé par cette étape — c'est le lot 6 (#320) qui la
-    branche sur la boucle.
+    `brief` (#318) carries the usage of the **brief** step, apart from the
+    planning and apart from the tasks. Apart from the planning because these are
+    two distinct model calls, and the brief can be **regenerated** several times
+    by the clarification round trips (#321): confusing them would hide what
+    refining the intent really costs. Null as long as no run went through this
+    step — it is lot 6 (#320) that plugs it into the loop.
 
-    `bilan` (#1284) porte l'usage du **bilan sur pièces**, rendu une fois le run
-    fini. À part pour la raison du brief : c'est un appel distinct, et le compter en
-    planification ferait payer au cadrage ce que coûte le regard porté après coup.
-    Nul tant qu'aucun bilan n'a été rendu.
+    `assessment` (#1284) carries the usage of the **evidence-based assessment**,
+    rendered once the run is over. Apart for the reason of the brief: it is a
+    distinct call, and counting it in the planning would make the framing pay for
+    the look taken afterwards. Null as long as no assessment has been rendered.
 
-    `sonde` (#1398) porte l'usage de la **sonde du point de contrôle** (#1304) :
-    jouée pendant la première tâche, elle n'en est pas une part — la compter dans
-    `socle-nextjs` lui faisait porter ≈ 20 k tokens qu'elle n'avait pas consommés.
-    Nul tant qu'aucune sonde n'a coûté.
+    `probe` (#1398) carries the usage of the **checkpoint probe** (#1304): played
+    during the first task, it is not part of it — counting it in `socle-nextjs`
+    made it carry ≈ 20 k tokens it had not consumed. Null as long as no probe
+    has cost.
 
-    `recette` (#1530) porte l'usage de la **recette du run** — les critères du brief
-    vérifiés sur le livrable intégré, à la fin du run. À part pour qu'on lise ce que
-    coûte la vérification de fin, face à la tâche de recette qu'elle remplace ; dans
-    le temps de mur, puisqu'elle est sur le chemin du run. Nul sans recette.
+    `acceptance` (#1530) carries the usage of the **run acceptance** — the brief
+    criteria verified on the integrated deliverable, at the end of the run. Apart
+    so that one reads what the final verification costs, against the acceptance
+    task it replaces; in the wall clock time, since it is on the path of the run.
+    Null without acceptance.
     """
 
     run_id: str
-    planification: StepUsage = StepUsage()
+    planning: StepUsage = StepUsage()
     brief: StepUsage = StepUsage()
-    taches: tuple[TaskCost, ...] = ()
-    #: Ce que le run a **occupé** : l'union des intervalles de ses étapes (#989),
-    #: `None` quand aucune n'a de durée lisible. C'est cette valeur que `total`
-    #: porte comme durée, à la place d'une somme qui comptait deux fois les
-    #: tâches menées de front.
-    duree_mur_ms: int | None = None
-    bilan: StepUsage = StepUsage()
-    sonde: StepUsage = StepUsage()
-    recette: StepUsage = StepUsage()
+    tasks: tuple[TaskCost, ...] = ()
+    #: What the run **occupied**: the union of the intervals of its steps (#989),
+    #: `None` when none has a readable duration. This is the value `total` carries
+    #: as its duration, in place of a sum that counted tasks run side by side
+    #: twice.
+    wall_clock_ms: int | None = None
+    assessment: StepUsage = StepUsage()
+    probe: StepUsage = StepUsage()
+    acceptance: StepUsage = StepUsage()
 
     @property
     def total(self) -> StepUsage:
-        """Usage agrégé de l'exécution — compteurs sommés, durée **unie** (#989).
+        """Aggregated usage of the run — counters summed, duration **united** (#989).
 
-        Tokens, appels, tours et coût se somment : deux tâches de front coûtent
-        bien deux fois. La **durée**, non : c'est du temps de mur, et le run n'en
-        a vécu qu'un — d'où `duree_mur_ms`, l'union des intervalles, à la place
-        de la somme que `fusion` produirait.
+        Tokens, calls, turns and cost are summed: two tasks side by side do cost
+        twice. The **duration** does not: it is wall clock time, and the run lived
+        only one — hence `wall_clock_ms`, the union of the intervals, in place of
+        the sum `fusion` would produce.
 
-        Ses **attentes** retombent à `None`, et c'est voulu : une somme d'attentes
-        de tâches parallèles n'est pas une attente du run, et la retrancher d'une
-        union donnerait un « travail du run » qui ne veut rien dire. Au niveau du
-        run, la durée est une seule mesure — celle que GitHub Actions appelle
-        « Total duration » ; la décomposition travail/attente se lit par tâche,
-        là où elle a un sens.
+        Its **waits** fall back to `None`, and this is intended: a sum of waits of
+        parallel tasks is not a wait of the run, and subtracting it from a union
+        would give a "run work" that means nothing. At the run level, the duration
+        is a single measure — the one GitHub Actions calls "Total duration"; the
+        work/wait breakdown is read per task, where it makes sense.
 
-        Les compteurs, eux, retombent bien sur `RunJournal.usage_totale`. Le
-        **bilan** (#1284) s'y ajoute : il ne naît pas au journal du moteur, mais
-        c'est une dépense du run, et un total qui la tairait ne serait plus celui
-        que la liste des runs affiche. La **sonde** (#1398) aussi : elle a changé de
-        ligne, pas de run. Et la **recette** (#1530), qui est une dépense du run.
+        The counters, for their part, do fall back on `RunJournal.usage_totale`.
+        The **assessment** (#1284) is added to them: it is not born in the engine
+        journal, but it is a spending of the run, and a total that kept quiet about
+        it would no longer be the one the run list displays. The **probe** (#1398)
+        too: it changed line, not run. And the **acceptance** (#1530), which is a
+        spending of the run.
         """
         total = (
-            self.planification.fusion(self.brief)
-            .fusion(self.bilan)
-            .fusion(self.sonde)
-            .fusion(self.recette)
+            self.planning.fusion(self.brief)
+            .fusion(self.assessment)
+            .fusion(self.probe)
+            .fusion(self.acceptance)
         )
-        for tache in self.taches:
-            total = total.fusion(tache.usage)
+        for task in self.tasks:
+            total = total.fusion(task.usage)
         return replace(
             total,
-            duree_ms=self.duree_mur_ms,
+            duree_ms=self.wall_clock_ms,
             duree_arbitrage_ms=None,
             duree_attente_creneau_ms=None,
             duree_attente_atelier_ms=None,
         )
 
     @classmethod
-    def depuis_journal(cls, journal: RunJournal) -> RunCost:  # noqa: C901
-        """Comptabilise `journal` : chaque ligne attribuée à sa tâche, comptée une fois.
+    def from_journal(cls, journal: RunJournal) -> RunCost:  # noqa: C901
+        """Accounts for `journal`: each line attributed to its task, counted once.
 
-        S'appuie sur `RunJournal.records` (l'agrégat mémoire) : utilisable en
-        fin d'exécution comme en cours de run (comptabilité partielle — une
-        tâche dont seule une annexe est consignée apparaît sans identité ni
-        statut, son usage déjà compté).
+        Relies on `RunJournal.records` (the in-memory aggregate): usable at the end
+        of a run as well as during it (partial accounting — a task of which only an
+        annex is recorded appears without identity or status, its usage already
+        counted).
         """
-        planification = StepUsage()
+        planning = StepUsage()
         brief = StepUsage()
-        bilan = StepUsage()
-        sonde = StepUsage()
-        recette = StepUsage()
-        entrees: dict[str, TaskCost] = {}
-        # Les intervalles de toutes les étapes comptées — planification et brief
-        # compris : ils occupent le run comme le reste, et c'est le temps de mur
-        # du run entier qu'on mesure, pas celui de ses seules tâches.
-        intervalles: list[tuple[datetime, datetime]] = []
+        assessment = StepUsage()
+        probe = StepUsage()
+        acceptance = StepUsage()
+        entries: dict[str, TaskCost] = {}
+        # The intervals of all the counted steps — planning and brief included:
+        # they occupy the run like the rest, and it is the wall clock time of the
+        # whole run that is measured, not that of its tasks alone.
+        intervals: list[tuple[datetime, datetime]] = []
         for record in journal.records:
-            if record.etape == ETAPE_BILAN:
-                # Le bilan (#1284) : rendu après la fin, il coûte au run sans
-                # l'occuper — son intervalle reste hors du temps de mur.
-                bilan = bilan.fusion(record.usage)
+            if record.etape == STEP_ASSESSMENT:
+                # The assessment (#1284): rendered after the end, it costs the
+                # run without occupying it — its interval stays out of the wall
+                # clock time.
+                assessment = assessment.fusion(record.usage)
                 continue
-            if record.etape != ETAPE_REPRISE:
-                intervalle = _intervalle(record)
-                if intervalle is not None:
-                    intervalles.append(intervalle)
-            if record.etape == ETAPE_PLANIFICATION:
-                planification = planification.fusion(record.usage)
+            if record.etape != STEP_RESUME:
+                interval = _interval(record)
+                if interval is not None:
+                    intervals.append(interval)
+            if record.etape == STEP_PLANNING:
+                planning = planning.fusion(record.usage)
                 continue
-            if record.etape == ETAPE_SONDE:
-                # La sonde du point de contrôle (#1398) : une dépense du run, jouée
-                # pendant une tâche sans en être une part.
-                sonde = sonde.fusion(record.usage)
+            if record.etape == STEP_PROBE:
+                # The checkpoint probe (#1398): a spending of the run, played
+                # during a task without being part of it.
+                probe = probe.fusion(record.usage)
                 continue
-            if record.etape == ETAPE_RECETTE:
-                # La recette du run (#1530) : une étape du run, sur son chemin — son
-                # intervalle est pris ci-dessus, son usage sur sa propre ligne.
-                recette = recette.fusion(record.usage)
+            if record.etape == STEP_ACCEPTANCE:
+                # The run acceptance (#1530): a step of the run, on its path — its
+                # interval is taken above, its usage on its own line.
+                acceptance = acceptance.fusion(record.usage)
                 continue
-            if record.etape == ETAPE_BRIEF:
-                # Une étape du run, pas une tâche (#318) — et fusionnée plutôt
-                # qu'affectée : un brief régénéré (#321) consigne une ligne par
-                # tour, et le grand livre doit en porter le cumul.
+            if record.etape == STEP_BRIEF:
+                # A step of the run, not a task (#318) — and merged rather than
+                # assigned: a regenerated brief (#321) records one line per turn,
+                # and the ledger must carry the sum.
                 brief = brief.fusion(record.usage)
                 continue
-            if record.etape == ETAPE_REPRISE:
-                # Marqueur de run (#96), rattaché à aucune tâche : rien à
-                # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
-                # au journal (`RunJournal.reconstitue`) et comptées à leur place.
+            if record.etape == STEP_RESUME:
+                # Run marker (#96), attached to no task: nothing to account for —
+                # the steps it announces are themselves reintegrated into the
+                # journal (`RunJournal.reconstitue`) and counted in their place.
                 continue
-            if record.etape in (ETAPE_EQUIPE, ETAPE_PLAFOND, ETAPE_CADENCE):
-                # La confrontation de l'équipe au plan (#1227), la décision au
-                # plafond de dépense (#1182), la cadence du run (#1298) : des
-                # étapes du run, sans usage et sans tâche. Leur intervalle est déjà
-                # pris ci-dessus — c'est du temps de run, l'attente humaine comprise.
+            if record.etape in (STEP_TEAM, STEP_SPENDING_CAP, STEP_CADENCE):
+                # The confrontation of the team with the plan (#1227), the
+                # decision at the spending cap (#1182), the cadence of the run
+                # (#1298): steps of the run, without usage and without task. Their
+                # interval is already taken above — it is run time, human waiting
+                # included.
                 continue
-            tache_id = record.etape.split(":", 1)[0]
-            entree = entrees.get(tache_id)
-            if entree is None:
-                entree = TaskCost(tache_id=tache_id)
+            task_id = record.etape.split(":", 1)[0]
+            entry = entries.get(task_id)
+            if entry is None:
+                entry = TaskCost(task_id=task_id)
             if record.ticket is not None:
-                # Le ticket externe (#187) vient de n'importe quelle étape de la
-                # tâche — l'annexe `:reference` n'en porte même que ça.
-                entree = replace(entree, ticket=record.ticket)
+                # The external ticket (#187) comes from any step of the task —
+                # the `:reference` annex carries nothing else.
+                entry = replace(entry, ticket=record.ticket)
             if record.projet_id is not None:
-                # Le projet (#222) suit la même règle : n'importe quelle étape
-                # de la tâche fait foi, une étape sans projet n'efface rien.
-                entree = replace(entree, projet_id=record.projet_id)
-            if record.etape == tache_id:
-                # L'étape de la tâche elle-même : elle fait foi pour l'identité.
-                entree = replace(
-                    entree,
-                    nom=record.nom,
+                # The project (#222) follows the same rule: any step of the task
+                # is authoritative, a step without a project erases nothing.
+                entry = replace(entry, project_id=record.projet_id)
+            if record.etape == task_id:
+                # The step of the task itself: authoritative for the identity.
+                entry = replace(
+                    entry,
+                    name=record.nom,
                     agent=record.agent,
                     role=record.role,
-                    statut=record.statut,
-                    usage=entree.usage.fusion(record.usage),
+                    status=record.statut,
+                    usage=entry.usage.fusion(record.usage),
                 )
             else:
-                entree = replace(entree, usage=entree.usage.fusion(record.usage))
-            entrees[tache_id] = entree
+                entry = replace(entry, usage=entry.usage.fusion(record.usage))
+            entries[task_id] = entry
         return cls(
             run_id=journal.run_id,
-            planification=planification,
+            planning=planning,
             brief=brief,
-            taches=tuple(entrees.values()),
-            duree_mur_ms=union_ms(intervalles),
-            bilan=bilan,
-            sonde=sonde,
-            recette=recette,
+            tasks=tuple(entries.values()),
+            wall_clock_ms=union_ms(intervals),
+            assessment=assessment,
+            probe=probe,
+            acceptance=acceptance,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet le grand livre en dict JSON-sérialisable (la forme de l'API, #57)."""
+        """Re-emits the ledger as a JSON-serializable dict (the API form, #57)."""
         return {
             "run_id": self.run_id,
-            "planification": self.planification.to_dict(),
+            "planification": self.planning.to_dict(),
             "brief": self.brief.to_dict(),
-            "bilan": self.bilan.to_dict(),
-            "sonde": self.sonde.to_dict(),
-            "recette": self.recette.to_dict(),
+            "bilan": self.assessment.to_dict(),
+            "sonde": self.probe.to_dict(),
+            "recette": self.acceptance.to_dict(),
             "total": self.total.to_dict(),
-            "taches": [tache.to_dict() for tache in self.taches],
+            "taches": [task.to_dict() for task in self.tasks],
         }
 
 
-class PlafondDepenseDepasse(RuntimeError):
-    """Levée quand la dépense d'une exécution dépasse son plafond (#9).
+class SpendingCapExceeded(RuntimeError):
+    """Raised when the spending of a run exceeds its cap (#9).
 
-    Émise depuis `report_usage` (donc depuis le fournisseur, entre deux appels
-    modèle) quand `PlafondDepense.verifie` constate le dépassement : elle
-    interrompt l'étape en cours, que l'appelant consigne comme stoppée par le
-    garde-fou.
+    Emitted from `report_usage` (hence from the provider, between two model
+    calls) when `SpendingCap.verifie` notices the overrun: it interrupts the
+    current step, which the caller records as stopped by the guardrail.
     """
 
 
-class PlafondDepense:
-    """Garde-fou de dépense d'une exécution (#9), adossé au grand livre (#56).
+class SpendingCap:
+    """Spending guardrail of a run (#9), backed by the ledger (#56).
 
-    C'est le contrôle que le collecteur d'usage consulte à chaque mesure
-    (`collect_usage(plafond=...)`). Il ne tient **aucun compteur** : à chaque
-    vérification, la dépense déjà engagée est relue dans la comptabilité de
-    l'exécution (`RunCost.depuis_journal`) — la télémétrie est la source unique
-    du coût — et complétée de l'usage de l'étape en cours, pas encore consignée
-    au journal. Les étapes parallèles encore en vol ne comptent qu'à leur
-    consignation : léger sous-comptage transitoire assumé (POC), jamais de
-    double comptage.
+    This is the control the usage collector consults at each measurement
+    (`collect_usage(plafond=...)`). It keeps **no counter**: at each check, the
+    spending already committed is reread in the accounting of the run
+    (`RunCost.from_journal`) — the telemetry is the single source of the cost —
+    and completed with the usage of the current step, not yet recorded in the
+    journal. Parallel steps still in flight only count once recorded: a slight
+    transient undercount, accepted (POC), never a double count.
 
-    Deux seuils, dont au moins un doit être posé : `plafond_cout_usd` (budget en
-    USD, sans prise sur un fournisseur qui ne rapporte pas de coût) et
-    `plafond_tokens` (budget en tokens, opérant sur tout fournisseur — les tokens
-    sont toujours rapportés, #113). Les deux sont vérifiés : le franchissement de
-    l'un ou l'autre stoppe la tâche.
+    Two thresholds, at least one of which must be set: `max_cost_usd` (budget in
+    USD, with no grip on a provider that reports no cost) and `max_tokens` (budget
+    in tokens, working on any provider — tokens are always reported, #113). Both
+    are checked: crossing either one stops the task.
 
-    ⚠ **Le plafond en tokens compte hors cache relu** (#1398,
-    `StepUsage.tokens_hors_cache_lu`) — décision, et non détail. Il portait sur
-    `tokens_total`, qui additionne le contexte de **chaque** tour : une tâche
-    longue servie par le cache y relit à chaque appel tout ce qui précède, et se
-    faisait couper sur ce qu'elle relit (1 845 438 tokens sur p5 pour 1,87 $), pas
-    sur ce qu'elle consomme. Écarté : le total, pour cette raison ; le seul
-    contexte atteint, qui ne dit rien d'une tâche qui tourne longtemps sur un
-    petit contexte. Le prompt frais, le cache écrit et la sortie restent comptés,
-    et un fournisseur qui ne rapporte aucun cache est compté exactement comme
-    avant.
+    ⚠ **The token cap counts excluding cache reads** (#1398,
+    `StepUsage.tokens_hors_cache_lu`) — a decision, not a detail. It used to rest
+    on `tokens_total`, which adds up the context of **every** turn: a long task
+    served by the cache rereads everything that precedes at each call there, and
+    got cut on what it rereads (1,845,438 tokens on p5 for $1.87), not on what it
+    consumes. Ruled out: the total, for this reason; the context reached alone,
+    which says nothing of a task running long on a small context. The fresh
+    prompt, the written cache and the output stay counted, and a provider that
+    reports no cache is counted exactly as before.
     """
 
     def __init__(
         self,
         journal: RunJournal,
-        plafond_cout_usd: float | None = None,
+        max_cost_usd: float | None = None,
         *,
-        plafond_tokens: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
-        if plafond_cout_usd is None and plafond_tokens is None:
+        if max_cost_usd is None and max_tokens is None:
             raise ValueError(
                 "PlafondDepense exige au moins un plafond (coût en USD ou tokens)."
             )
-        if plafond_cout_usd is not None and plafond_cout_usd <= 0:
+        if max_cost_usd is not None and max_cost_usd <= 0:
             raise ValueError(
-                f"plafond_cout_usd doit être > 0 (reçu : {plafond_cout_usd})."
+                f"plafond_cout_usd doit être > 0 (reçu : {max_cost_usd})."
             )
-        if plafond_tokens is not None and plafond_tokens <= 0:
+        if max_tokens is not None and max_tokens <= 0:
             raise ValueError(
-                f"plafond_tokens doit être > 0 (reçu : {plafond_tokens})."
+                f"plafond_tokens doit être > 0 (reçu : {max_tokens})."
             )
         self._journal = journal
-        self._plafond_cout_usd = plafond_cout_usd
-        self._plafond_tokens = plafond_tokens
+        self._max_cost_usd = max_cost_usd
+        self._max_tokens = max_tokens
 
     def verifie(self, en_cours: StepUsage) -> None:
-        """Lève `PlafondDepenseDepasse` si la dépense du run, `en_cours` compris, dépasse.
+        """Raises `SpendingCapExceeded` if the run spending, `en_cours` included, exceeds.
 
-        Le coût passe d'abord (le message le plus parlant quand il est connu), les
-        tokens ensuite — le seuil en tokens tient même quand le coût est inconnu.
+        The cost goes first (the most telling message when it is known), tokens
+        next — the token threshold holds even when the cost is unknown.
         """
-        total = RunCost.depuis_journal(self._journal).total.fusion(en_cours)
-        cout = total.cout_usd
+        total = RunCost.from_journal(self._journal).total.fusion(en_cours)
+        cost = total.cout_usd
         if (
-            self._plafond_cout_usd is not None
-            and cout is not None
-            and cout > self._plafond_cout_usd
+            self._max_cost_usd is not None
+            and cost is not None
+            and cost > self._max_cost_usd
         ):
-            raise PlafondDepenseDepasse(
-                f"plafond de dépense dépassé : {cout:.4f} $ consommés sur l'exécution "
-                f"pour un plafond de {self._plafond_cout_usd:.4f} $ — tâche stoppée."
+            raise SpendingCapExceeded(
+                f"plafond de dépense dépassé : {cost:.4f} $ consommés sur l'exécution "
+                f"pour un plafond de {self._max_cost_usd:.4f} $ — tâche stoppée."
             )
         if (
-            self._plafond_tokens is not None
-            and total.tokens_hors_cache_lu > self._plafond_tokens
+            self._max_tokens is not None
+            and total.tokens_hors_cache_lu > self._max_tokens
         ):
-            raise PlafondDepenseDepasse(
+            raise SpendingCapExceeded(
                 f"plafond de tokens dépassé : {total.tokens_hors_cache_lu} tokens consommés "
-                f"hors cache relu sur l'exécution pour un plafond de {self._plafond_tokens} "
+                f"hors cache relu sur l'exécution pour un plafond de {self._max_tokens} "
                 "— tâche stoppée."
             )
 
 
-def resume_controle_depense(
-    plafond_cout_usd: float | None,
-    plafond_tokens: int | None,
+def spending_control_summary(
+    max_cost_usd: float | None,
+    max_tokens: int | None,
     usage: StepUsage,
 ) -> str:
-    """Décrit en une ligne le contrôle de dépense actif, pour l'opérateur (#113).
+    """Describes the active spending control in one line, for the operator (#113).
 
-    Rend visible le cas « plafond silencieusement inopérant » : un plafond de coût
-    armé sur un fournisseur qui ne rapporte pas de coût (`usage.cout_usd` None) n'a
-    aucune prise — seul un plafond en tokens plafonne alors réellement. Destinée à
-    la synthèse du run et au rapport JSON (`RunReport`), pas à la logique de
-    contrôle (portée par `PlafondDepense.verifie`).
+    Makes the "silently ineffective cap" case visible: a cost cap armed on a
+    provider that reports no cost (`usage.cout_usd` None) has no grip — only a
+    token cap then really caps. Meant for the run summary and the JSON report
+    (`RunReport`), not for the control logic (carried by `SpendingCap.verifie`).
     """
-    controles: list[str] = []
-    if plafond_tokens is not None:
-        # Ce que le plafond compte, dit avec le chiffre (#1398) : un « tokens
-        # (175438/500000) » à côté d'un total de 1,8 M se lirait comme une erreur.
-        controles.append(
-            f"tokens hors cache relu ({usage.tokens_hors_cache_lu}/{plafond_tokens})"
+    controls: list[str] = []
+    if max_tokens is not None:
+        # What the cap counts, stated with the figure (#1398): a "tokens
+        # (175438/500000)" next to a total of 1.8 M would read as an error.
+        controls.append(
+            f"tokens hors cache relu ({usage.tokens_hors_cache_lu}/{max_tokens})"
         )
-    if plafond_cout_usd is not None:
+    if max_cost_usd is not None:
         if usage.cout_usd is not None:
-            controles.append(f"coût réel ({usage.cout_usd:.4f}/{plafond_cout_usd:.4f} $)")
-        elif plafond_tokens is None:
-            # Le seul plafond posé est sans prise : la dépense n'est bornée par rien.
+            controls.append(f"coût réel ({usage.cout_usd:.4f}/{max_cost_usd:.4f} $)")
+        elif max_tokens is None:
+            # The only cap set has no grip: spending is bounded by nothing.
             return (
-                f"plafond de coût de {plafond_cout_usd:.4f} $ armé mais SANS PRISE — "
+                f"plafond de coût de {max_cost_usd:.4f} $ armé mais SANS PRISE — "
                 "le fournisseur ne rapporte pas de coût ; armez un plafond en tokens "
                 "(--plafond-tokens) pour plafonner ce run."
             )
         else:
-            controles.append(
-                f"coût inopérant ({plafond_cout_usd:.4f} $ — fournisseur sans coût rapporté)"
+            controls.append(
+                f"coût inopérant ({max_cost_usd:.4f} $ — fournisseur sans coût rapporté)"
             )
-    if not controles:
+    if not controls:
         return "aucun plafond armé"
-    return "plafond actif — " + ", ".join(controles)
+    return "plafond actif — " + ", ".join(controls)

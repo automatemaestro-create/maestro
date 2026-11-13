@@ -240,8 +240,8 @@ def test_les_usages_restent_par_tache_en_multi_instances(tmp_path):
         assert r.usage.cout_usd == pytest.approx(0.01)
 
     # Le grand livre (#55) attribue chaque dépense à sa tâche, une seule fois.
-    livre = RunCost.depuis_journal(journal)
-    entrees = {t.tache_id: t for t in livre.taches}
+    livre = RunCost.from_journal(journal)
+    entrees = {t.task_id: t for t in livre.tasks}
     assert set(entrees) == {"t1", "t2"}
     for entree in entrees.values():
         assert entree.agent == "bdd"

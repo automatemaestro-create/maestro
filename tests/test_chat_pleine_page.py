@@ -58,7 +58,7 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.events import InMemoryEventBus
 from maestro.providers.base import ModelProvider
-from maestro.sources import DepotTeleversements
+from maestro.sources import UploadStore
 
 
 def _agent(nom="qa", role="QA / Testeur", modele="claude-opus-4-8"):
@@ -107,7 +107,7 @@ def client_chat_sources(bus, depot_chat, tmp_path, monkeypatch):
         bus=bus,
         chat_store=depot_chat,
         chat_repondeur=RepondeurScripte(),
-        televersements=DepotTeleversements(tmp_path / "depot"),
+        televersements=UploadStore(tmp_path / "depot"),
     )
     with TestClient(app) as client:
         yield client

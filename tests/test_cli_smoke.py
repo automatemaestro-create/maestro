@@ -166,10 +166,10 @@ def test_run_restitution_expurgee_des_secrets_servis(monkeypatch, capsys):
     # #115 : un secret servi pendant le run (canal Figma, token…) peut ressurgir
     # dans l'objectif cité ou un livrable — la restitution (--json comme la
     # synthèse) est expurgée, au même titre que la trace.
-    from maestro.telemetry import MARQUEUR_SECRET, enregistre_secret
+    from maestro.telemetry import SECRET_MARKER, register_secret
 
     canal = "canal-cli-smoke-9z8y7x"
-    enregistre_secret(canal)
+    register_secret(canal)
     rapport = _rapport_ok()
     rapport = replace(
         rapport,
@@ -182,7 +182,7 @@ def test_run_restitution_expurgee_des_secrets_servis(monkeypatch, capsys):
     assert engine_cli.main(["--json", "Objectif"]) == 0
     sortie = capsys.readouterr().out
     assert canal not in sortie
-    assert MARQUEUR_SECRET in sortie
+    assert SECRET_MARKER in sortie
 
 
 def test_run_refuse_un_parallele_invalide(capsys):

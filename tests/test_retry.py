@@ -5,7 +5,7 @@ Aucun appel réseau : la planification et l'exécution sont pilotées par des
 critères d'acceptation du ticket #91 :
 
 ① la **classification** : un aléa fournisseur (exception quelconque de la
-   réalisation) est transitoire ; plafond de coût (`PlafondDepenseDepasse`),
+   réalisation) est transitoire ; plafond de coût (`SpendingCapExceeded`),
    plafond de tours (`TurnLimitReached`) et capacité absente
    (`UnsupportedCapability`) ne le sont pas — et time-out d'échéance ferme
    comme refus de validation humaine ne sont **jamais relancés** ;
@@ -40,8 +40,8 @@ from maestro.providers.base import (
     UnsupportedCapability,
 )
 from maestro.telemetry import (
-    PlafondDepenseDepasse,
     RunJournal,
+    SpendingCapExceeded,
     StepUsage,
     report_usage,
 )
@@ -165,7 +165,7 @@ def test_la_classification_distingue_transitoire_et_non_transitoire():
     assert est_transitoire(RuntimeError("error result: success"))
     assert est_transitoire(ConnectionError("coupure réseau"))
     # Causes déterministes : jamais relancées.
-    assert not est_transitoire(PlafondDepenseDepasse("plafond de dépense dépassé"))
+    assert not est_transitoire(SpendingCapExceeded("plafond de dépense dépassé"))
     assert not est_transitoire(TurnLimitReached("plafond de tours atteint"))
     assert not est_transitoire(UnsupportedCapability("pas d'exécution outillée"))
     assert not est_transitoire(PlafondFluxDepasse("plafond du flux fournisseur dépassé"))
@@ -226,7 +226,7 @@ def test_un_depassement_du_plafond_du_flux_n_est_jamais_relance():
 
 def test_un_depassement_du_plafond_de_cout_n_est_jamais_relance():
     # Le fournisseur rapporte une dépense au-delà du plafond : le garde-fou lève
-    # PlafondDepenseDepasse pendant l'appel — échec immédiat, aucune relance.
+    # SpendingCapExceeded pendant l'appel — échec immédiat, aucune relance.
     provider = FlakyProvider(
         pannes=99, usage_par_appel=StepUsage(appels=1, cout_usd=0.5)
     )

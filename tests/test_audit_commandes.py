@@ -10,7 +10,7 @@ cinq semaines). Cette suite est la moitié qui survit.
 **Quatre gardes, une par constat** :
 
 - `TestBudgetClaudeMd` — `CLAUDE.md` est chargé par chaque session et avait quadruplé sans que
-  personne le décide. #965 a fixé un budget au compteur du dépôt (`estimer_tokens`), et le
+  personne le décide. #965 a fixé un budget au compteur du dépôt (`estimate_tokens`), et le
   dépassement **lève** — même contrat que `BUDGET_CARTE_TOKENS` (`tests/test_documentation.py`).
   Relevable, il a laissé le fichier remplir sa marge ; depuis #1523 c'est un **cliquet** (docs/49
   §2.1) : le coût du jour de la livraison, qui ne remonte jamais.
@@ -72,7 +72,7 @@ import pytest
 from cliquet import Cliquet, CliquetRemonte
 from cliquet import verifier_cliquet as verifier_un_cliquet
 
-from maestro.sources.extraction import estimer_tokens
+from maestro.sources.extraction import estimate_tokens
 
 #: La racine du dépôt — les fichiers réels, ceux qu'une session lit.
 RACINE = Path(__file__).resolve().parents[1]
@@ -170,7 +170,7 @@ class BudgetDepasse(AssertionError):
 
 def verifier_budget(texte: str, budget: int = BUDGET_CLAUDE_MD_TOKENS) -> int:
     """Le coût de `texte` s'il tient dans `budget` ; sinon lève, en disant de combien."""
-    cout = estimer_tokens(texte)
+    cout = estimate_tokens(texte)
     if cout > budget:
         raise BudgetDepasse(
             f"CLAUDE.md coûte {cout} tokens pour un budget de {budget} "
@@ -257,7 +257,7 @@ class TestBudgetClaudeMd:
         orientée, ou un budget jamais lu, rendrait les deux appels verts.
         """
         texte = CLAUDE_MD.read_text(encoding="utf-8")
-        cout = estimer_tokens(texte)
+        cout = estimate_tokens(texte)
         assert verifier_budget(texte, budget=cout) == cout
         with pytest.raises(BudgetDepasse):
             verifier_budget(texte, budget=cout - 1)
@@ -1095,7 +1095,7 @@ DOC_DE_LA_DEMONSTRATION: Mapping[str, str] = {
 def verifier_budget_de_cloture(relatif: str, texte: str, budget: int) -> int:
     """Le coût du texte s'il tient dans son budget ; sinon lève, en disant de combien et quoi
     faire."""
-    cout = estimer_tokens(texte)
+    cout = estimate_tokens(texte)
     if cout > budget:
         raise BudgetDepasse(
             f"{relatif} coûte {cout} tokens pour un budget de {budget} "
@@ -1147,7 +1147,7 @@ class TestBudgetDesTextesDeCloture:
     def test_a_un_token_pres_la_garde_leve(self) -> None:
         """La paire qui prouve que la garde n'est pas creuse, sur le texte réel."""
         texte = lire(TICKET_FINISH)
-        cout = estimer_tokens(texte)
+        cout = estimate_tokens(texte)
         assert verifier_budget_de_cloture(TICKET_FINISH, texte, cout) == cout
         with pytest.raises(BudgetDepasse):
             verifier_budget_de_cloture(TICKET_FINISH, texte, cout - 1)

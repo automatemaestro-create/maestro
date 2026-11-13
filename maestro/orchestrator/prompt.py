@@ -290,7 +290,7 @@ def build_user_prompt(
 ) -> str:
     """Compose le message utilisateur transmis au modèle pour un objectif donné.
 
-    `contexte_sources` (#1172) est la sortie de `contexte_markdown`, jamais du
+    `contexte_sources` (#1172) est la sortie de `markdown_context`, jamais du
     Markdown brut — même frontière donnée / consigne qu'au brief (ENF-13). Il n'est
     passé que par un run **sans brief** : le plan est alors le premier à lire
     l'objectif, donc le premier à devoir lire ce qui l'accompagne. Avec un brief,
@@ -339,7 +339,7 @@ def build_brief_user_prompt(
     """Compose le message utilisateur de l'étape **brief** (#318, régénéré en #321).
 
     `contexte_sources` est le contenu extrait **déjà encadré** par
-    `maestro.sources.extraction.contexte_markdown` — jamais du Markdown brut : c'est
+    `maestro.sources.extraction.markdown_context` — jamais du Markdown brut : c'est
     cet encadrement (préambule, noms assainis, clôture calculée) qui tient la
     frontière donnée / consigne (ENF-13). Vide quand aucune source n'a été fournie.
 

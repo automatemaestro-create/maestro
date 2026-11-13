@@ -295,9 +295,9 @@ def test_le_grand_livre_recolle_le_projet_sur_les_lignes_de_tache() -> None:
     )
 
     livre = state.execution("run-1").cout
-    ligne = next(e for e in livre.taches if e.tache_id == "t1")
+    ligne = next(e for e in livre.tasks if e.task_id == "t1")
 
-    assert ligne.projet_id == PROJET
+    assert ligne.project_id == PROJET
 
 
 # --- ④ Le moteur --------------------------------------------------------------

@@ -126,7 +126,7 @@ laisserait le produit sans porte d'entrée du tout, d'où un lot de retrait (#48
 **Ce que ça coûte en travail livré.** Les deux écrans, pas la Phase 8. Mesuré : #319 fait
 **+2 208 / −21** (`3051427`), dont l'écran lui-même — `app/composer/page.tsx` et
 `components/composer/ComposerObjectif.tsx` — **527 lignes**, soit moins d'un quart ; tout le reste
-(le rapport d'extraction, les refus de source, `lib/sources.ts`, les contrats, `maestro/sources/apercu.py`,
+(le rapport d'extraction, les refus de source, `lib/sources.ts`, les contrats, `maestro/sources/preview.py`,
 la route d'aperçu) est **rebranché tel quel** sur le fil. #322 fait **+2 098 / −27** (`943d27c`),
 dont la page et la liste plein format **127 lignes** ; les quatre composants de brief — sections,
 questions, coût, validation, **763 lignes** — déménagent au lieu d'être réécrits. Et rien du socle

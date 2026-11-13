@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from maestro.controltower.routes.communs import _detail_refus
 from maestro.controltower.routes.contexte import Ctx
-from maestro.sources import SourceRefusee, apercu_sources
+from maestro.sources import SourceRejected, preview_sources
 
 router = APIRouter()
 
@@ -35,7 +35,7 @@ async def televerser_sources(
     y resteraient sous des identifiants que personne n'a reçus.
     """
     televersements = ctx.televersements
-    plafond = televersements.garde_fous.nb_max_sources
+    plafond = televersements.guardrails.nb_max_sources
     if plafond is not None and len(fichier) > plafond:
         raise HTTPException(
             status_code=422,
@@ -54,17 +54,17 @@ async def televerser_sources(
             # Dans un fil : la copie des octets est du disque, pas de
             # l'attente réseau — la boucle de l'API ne doit pas la porter.
             televerse = await asyncio.to_thread(
-                televersements.accueillir,
+                televersements.receive,
                 envoi.filename or "",
                 envoi.file,
                 index=index,
-                deja_recu=total,
+                already_received=total,
             )
-            total += televerse.taille
+            total += televerse.size
             recus.append(televerse.to_dict())
-    except SourceRefusee as exc:
+    except SourceRejected as exc:
         for accepte in recus:
-            televersements.oublier(str(accepte["id"]))
+            televersements.forget(str(accepte["id"]))
         raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
     return {"sources": recus, "total_octets": total}
 
@@ -112,7 +112,7 @@ async def apercu_ingestion(
         # Dans un fil : l'extraction ouvre des fichiers et peut récupérer une
         # page (#316), ce que la boucle de l'API ne doit pas porter.
         rapport = await asyncio.to_thread(
-            apercu_sources, declarations, fichiers=envois
+            preview_sources, declarations, files=envois
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc

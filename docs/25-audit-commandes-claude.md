@@ -294,7 +294,7 @@ composant React n'a aucun usage des 4 930 tokens de la boucle d'orchestration.
 
 > **H1 et H2 sont tranchés par #965** (arbitrage du 2026-09-17, chantier #960), après que la question
 > a été laissée ouverte pendant que CLAUDE.md passait de **22 261 à 84 079 tokens** (même compteur,
-> `estimer_tokens`). Le tri se fait **par nature de contenu**, et non par section : CLAUDE.md garde,
+> `estimate_tokens`). Le tri se fait **par nature de contenu**, et non par section : CLAUDE.md garde,
 > pour chaque mécanisme, **la règle et ce qu'il ne faut pas défaire**, en une phrase, avec son
 > pointeur `docs/<n> §x` ; les **mesures**, les **pistes écartées**, l'**historique des renversements**
 > et les **récits d'incidents** vivent dans `docs/` seulement — aucune commande ne grossit, puisque
@@ -324,7 +324,7 @@ bash scripts/gitlab/lib.sh issue-brief <iid> | wc -c               # projection 
 ```
 
 Le rejeu du §9 se refait avec les instruments du dépôt, sans script jetable pour les trois
-premiers. Le compteur est `estimer_tokens` (`maestro/sources/extraction.py`), le même que celui
+premiers. Le compteur est `estimate_tokens` (`maestro/sources/extraction.py`), le même que celui
 de la carte de documentation. Il donne des chiffres qu'on ne peut **pas** comparer à ceux du §2,
 estimés par deux autres heuristiques :
 
@@ -334,7 +334,7 @@ bash scripts/orchestrate/ecart-run.sh               # les listes : code 0 = aucu
 bash scripts/orchestrate/journal.sh refus --tous    # ce qui a réellement été refusé, par famille
 .venv/Scripts/python.exe -m pytest tests/test_audit_commandes.py   # les quatre gardes du §9.4
 git show <rev>:CLAUDE.md > .maestro/session/claude.md              # un fichier à une révision…
-env PYTHONPATH=. .venv/Scripts/python.exe -c "import sys; from maestro.sources.extraction import estimer_tokens; print(estimer_tokens(open(sys.argv[1], encoding='utf-8').read()))" .maestro/session/claude.md
+env PYTHONPATH=. .venv/Scripts/python.exe -c "import sys; from maestro.sources.extraction import estimate_tokens; print(estimate_tokens(open(sys.argv[1], encoding='utf-8').read()))" .maestro/session/claude.md
 ```
 
 ## 9. Rejeu du 2026-09-14 (chantier #960)
@@ -350,7 +350,7 @@ jugeait : **ce qu'un prompt affirme est-il vrai ?**
 
 ### 9.1 Les chiffres, au même compteur
 
-Tout est compté par `estimer_tokens`, aux trois révisions, commandes et skills compris (§8).
+Tout est compté par `estimate_tokens`, aux trois révisions, commandes et skills compris (§8).
 
 | | 2026-08-07 (`7a64a21`) | 2026-09-14 (`1d2426a`) | 2026-09-17 (`dd5855d`) |
 |---|---:|---:|---:|
@@ -415,7 +415,7 @@ semaines : la même dérive était revenue, et rien ne pouvait la voir revenir.
 [`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py) porte une garde par constat
 qui peut revenir :
 
-- **`TestBudgetClaudeMd`** — `estimer_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS`
+- **`TestBudgetClaudeMd`** — `estimate_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS`
   (budget : 19 940 tokens, le coût du fichier à la livraison de #1572). La garde **lève**, en disant de
   combien et où la décision a été prise. Elle est prouvée **à un token près sur le fichier réel** :
   au coût exact elle passe, un token en dessous elle lève. Le budget annoncé par `CLAUDE.md` et par

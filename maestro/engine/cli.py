@@ -146,9 +146,9 @@ from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import (
     LOGGER_NAME,
     RunJournal,
-    activer_export_langfuse,
-    evaluer_run_langfuse,
+    enable_langfuse_export,
     redact_secrets,
+    score_run_langfuse,
 )
 
 if TYPE_CHECKING:
@@ -416,7 +416,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         return 2
 
     # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
-    activer_export_langfuse()
+    enable_langfuse_export()
 
     # Battement de cœur (#348) : ce process est l'**hôte** du run, il le dit tant
     # qu'il vit. Adossé à `--publier` et non à une option à lui : la question
@@ -549,7 +549,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
 
     # Évaluation (#80) : les scores de l'exécution partent sur sa trace Langfuse —
     # même bascule configurative que l'export, no-op sans clés.
-    evaluer_run_langfuse(journal)
+    score_run_langfuse(journal)
 
     # Restitution expurgée (#115, même exigence que la trace) : un secret servi
     # pendant le run (canal Figma, token…) peut ressurgir dans l'objectif cité

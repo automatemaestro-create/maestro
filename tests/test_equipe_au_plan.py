@@ -59,7 +59,7 @@ from maestro.orchestrator.schema import Task
 from maestro.outillage.modele import Constats, Langage
 from maestro.outillage.recommandation import recommander
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import ETAPE_EQUIPE, RunJournal
+from maestro.telemetry import STEP_TEAM, RunJournal
 
 PROJET = "prj-p1"
 
@@ -496,7 +496,7 @@ def _moteur(
 
 def _lignes_equipe(journal: RunJournal) -> list[Any]:
     """Les lignes `equipe` du journal — le manque, puis l'issue de la demande."""
-    return [r for r in journal.records if r.etape == ETAPE_EQUIPE]
+    return [r for r in journal.records if r.etape == STEP_TEAM]
 
 
 def test_la_demande_porte_le_role_sa_raison_et_les_taches_qu_il_prendrait(
@@ -547,7 +547,7 @@ def test_la_confrontation_a_lieu_avant_la_premiere_tache(tmp_path: Path) -> None
 
     etapes = [r.etape for r in journal.records]
     premiere_tache = next(i for i, e in enumerate(etapes) if e.startswith("logo-stylise"))
-    assert etapes.index(ETAPE_EQUIPE) < premiere_tache
+    assert etapes.index(STEP_TEAM) < premiere_tache
     assert vu == ["demande"]
 
 
@@ -954,7 +954,7 @@ def test_les_lignes_de_l_etape_equipe_sont_des_activites_de_run(tmp_path: Path) 
         evenements = evenements_depuis_step(ligne.to_dict())
         assert [e.type for e in evenements] == [EVENEMENT_AGENT_ACTIVITE]
         assert evenements[0].tache_id == ""
-        assert evenements[0].etape_run == ETAPE_EQUIPE
+        assert evenements[0].etape_run == STEP_TEAM
 
 
 def test_l_attente_de_renfort_ne_cree_aucune_entree_au_grand_livre(
@@ -968,7 +968,7 @@ def test_l_attente_de_renfort_ne_cree_aucune_entree_au_grand_livre(
 
     rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
 
-    assert {t.tache_id for t in rapport.grand_livre.taches} == {
+    assert {t.task_id for t in rapport.grand_livre.tasks} == {
         "logo-stylise",
         "script-animation",
         "test-lancement",

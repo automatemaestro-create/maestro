@@ -1,7 +1,7 @@
 """Pourquoi un run s'est arrêté — la cause, nommée (#479).
 
 Le moteur *connaît* les causes d'arrêt : `TurnLimitReached` (#91),
-`PlafondDepenseDepasse` (#9/#56), `DemarrageHoteRate` (#443), l'annulation. Mais
+`SpendingCapExceeded` (#9/#56), `DemarrageHoteRate` (#443), l'annulation. Mais
 tout ce qui atteignait l'écran était le texte que trois appelants recopiaient
 chacun de leur côté :
 
@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 
 from maestro.controltower.hote import DemarrageHoteRate
 from maestro.providers.base import LimiteUsageAtteinte, TurnLimitReached
-from maestro.telemetry import PlafondDepenseDepasse
+from maestro.telemetry import SpendingCapExceeded
 
 if TYPE_CHECKING:
     from maestro.engine.loop import RunReport
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 CAUSE_PLAFOND_TOURS = "plafond_tours"
 
 #: Le plafond de dépense du run a été crevé (#9/#56) — en dollars ou en tokens,
-#: le contrôle étant le même (`PlafondDepense`). Les deux partagent une cause :
+#: le contrôle étant le même (`SpendingCap`). Les deux partagent une cause :
 #: ce qu'on veut savoir est qu'une borne de dépense a stoppé le run, et le
 #: `detail` dit laquelle et de combien.
 CAUSE_PLAFOND_COUT = "plafond_cout"
@@ -125,7 +125,7 @@ def cause_de(erreur: BaseException) -> str:
     """
     if isinstance(erreur, TurnLimitReached):
         return CAUSE_PLAFOND_TOURS
-    if isinstance(erreur, PlafondDepenseDepasse):
+    if isinstance(erreur, SpendingCapExceeded):
         return CAUSE_PLAFOND_COUT
     if isinstance(erreur, DemarrageHoteRate):
         return CAUSE_HOTE

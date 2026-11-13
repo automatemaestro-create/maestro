@@ -805,5 +805,5 @@ async def bilan_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
         # Ce que le bilan a coûté (#1285), compté au run après sa fin : la tête
         # du run l'inclut, la vue du bilan le dit — sans quoi le coût « jusqu'à
         # sa fin » que cite le bilan contredirait la tête. `null` : inconnu.
-        "cout_bilan": execution.cout.bilan.cout_usd,
+        "cout_bilan": execution.cout.assessment.cout_usd,
     }

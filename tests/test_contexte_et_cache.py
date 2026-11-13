@@ -40,15 +40,15 @@ from maestro.providers import ClaudeProvider, Credentials, ModelProvider
 from maestro.providers import claude as claude_mod
 from maestro.providers.openai_compat import _usage_depuis
 from maestro.telemetry import (
-    ETAPE_SONDE,
-    PlafondDepense,
-    PlafondDepenseDepasse,
+    STEP_PROBE,
     RunCost,
     RunJournal,
+    SpendingCap,
+    SpendingCapExceeded,
     StepUsage,
     collect_usage,
     depenses_du_run,
-    resume_controle_depense,
+    spending_control_summary,
 )
 
 
@@ -334,7 +334,7 @@ def test_la_sonde_ne_tombe_pas_dans_la_tache_qui_l_arme(
     # La tâche n'a rien consommé de mesuré : les 19 863 tokens de la sonde ne sont pas à elle.
     assert tache.total.tokens_total == 0
     ((etape, nom, usage),) = du_run
-    assert etape == ETAPE_SONDE and nom
+    assert etape == STEP_PROBE and nom
     assert usage.tokens_total == 19_863
     assert usage.cout_usd == pytest.approx(0.075)
 
@@ -394,12 +394,12 @@ def test_dans_un_run_la_sonde_a_sa_ligne_et_la_premiere_tache_la_perd(
 
     asyncio.run(moteur.run("Objectif", journal=journal))
 
-    (ligne,) = [r for r in journal.records if r.etape == ETAPE_SONDE]
+    (ligne,) = [r for r in journal.records if r.etape == STEP_PROBE]
     assert ligne.usage.tokens_total == 19_863
-    cout = RunCost.depuis_journal(journal)
-    assert cout.sonde.tokens_total == 19_863
-    (tache,) = cout.taches
-    assert tache.tache_id == "socle-nextjs"
+    cout = RunCost.from_journal(journal)
+    assert cout.probe.tokens_total == 19_863
+    (tache,) = cout.tasks
+    assert tache.task_id == "socle-nextjs"
     assert tache.usage.tokens_total == 0
     # Le run, lui, la compte toujours : rien ne se perd en changeant de ligne.
     assert cout.total.tokens_total >= 19_863
@@ -409,7 +409,7 @@ def test_dans_un_run_la_sonde_a_sa_ligne_et_la_premiere_tache_la_perd(
 def test_la_ligne_de_la_sonde_est_une_etape_du_run_cote_control_tower():
     journal = RunJournal(run_id="run-1398")
     journal.consigne(
-        etape=ETAPE_SONDE,
+        etape=STEP_PROBE,
         nom="Sonde du point de contrôle",
         agent="orchestrateur",
         role="Orchestrateur",
@@ -427,13 +427,13 @@ def test_la_ligne_de_la_sonde_est_une_etape_du_run_cote_control_tower():
     etat = ControlTowerState()
     for evenement in evenements:
         etat.appliquer(evenement)
-    assert etat.tache(ETAPE_SONDE) is None
+    assert etat.tache(STEP_PROBE) is None
     run = etat.execution("run-1398")
     assert run is not None
     cout = run.cout
-    assert cout.sonde.tokens_total == 19_863
-    assert cout.planification.tokens_total == 0
-    assert cout.taches == ()
+    assert cout.probe.tokens_total == 19_863
+    assert cout.planning.tokens_total == 0
+    assert cout.tasks == ()
 
 
 # ---------------------------------------------------- ③ Le plafond en tokens, hors cache relu
@@ -466,18 +466,18 @@ def _journal_d_une_tache_servie_par_le_cache() -> RunJournal:
 def test_le_plafond_en_tokens_ne_compte_pas_le_cache_relu():
     journal = _journal_d_une_tache_servie_par_le_cache()
     # 1 875 438 tokens au total, dont 175 438 hors cache relu.
-    plafond = PlafondDepense(journal, plafond_tokens=500_000)
+    plafond = SpendingCap(journal, max_tokens=500_000)
 
     plafond.verifie(StepUsage())  # ne lève pas : la tâche n'a pas consommé 500 k
 
-    with pytest.raises(PlafondDepenseDepasse, match="hors cache relu"):
-        PlafondDepense(journal, plafond_tokens=150_000).verifie(StepUsage())
+    with pytest.raises(SpendingCapExceeded, match="hors cache relu"):
+        SpendingCap(journal, max_tokens=150_000).verifie(StepUsage())
 
 
 def test_le_controle_de_depense_dit_ce_que_le_plafond_en_tokens_compte():
-    usage = RunCost.depuis_journal(_journal_d_une_tache_servie_par_le_cache()).total
+    usage = RunCost.from_journal(_journal_d_une_tache_servie_par_le_cache()).total
 
-    resume = resume_controle_depense(None, 500_000, usage)
+    resume = spending_control_summary(None, 500_000, usage)
 
     assert "175438/500000" in resume
     assert "hors cache relu" in resume

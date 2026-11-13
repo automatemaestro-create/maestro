@@ -165,7 +165,7 @@ from maestro.engine.rattrapage import (
 )
 from maestro.engine.verification import STATUT_VERIFICATION_TENUE
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import ETAPE_BILAN, StepUsage, collect_usage
+from maestro.telemetry import STEP_ASSESSMENT, StepUsage, collect_usage
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -627,10 +627,10 @@ def _syntheses(
     )
     # La sonde du point de contrôle (#1398) a sa ligne au run : nommée quand elle a
     # coûté, tue sinon — un run sans garde-fou n'en joue pas.
-    a_sonde = bool(cout.sonde.appels or cout.sonde.tokens_total)
-    sonde_mots = f" ; sonde du point de contrôle {_usage_en_mots(cout.sonde)}" if a_sonde else ""
+    a_sonde = bool(cout.probe.appels or cout.probe.tokens_total)
+    sonde_mots = f" ; sonde du point de contrôle {_usage_en_mots(cout.probe)}" if a_sonde else ""
     sonde_phrase = (
-        f" ; sonde du point de contrôle : {_usage_en_phrase(cout.sonde)}" if a_sonde else ""
+        f" ; sonde du point de contrôle : {_usage_en_phrase(cout.probe)}" if a_sonde else ""
     )
     pieces.append(
         Piece(
@@ -642,44 +642,44 @@ def _syntheses(
             texte=_borne(
                 f"Coût du run jusqu'à sa fin : {somme}{plancher} ; au total "
                 f"{_usage_en_mots(cout.total)} ; "
-                f"planification {_usage_en_mots(cout.planification)} ; "
+                f"planification {_usage_en_mots(cout.planning)} ; "
                 f"cadrage {_usage_en_mots(cout.brief)}{sonde_mots}"
             ),
             entrees=tuple(issue_du_run),
             synthese=True,
             libelle=_borne(
                 f"Jusqu'à sa fin, le run a consommé {_usage_en_phrase(cout.total)}{plancher}. "
-                f"Planification : {_usage_en_phrase(cout.planification)} ; "
+                f"Planification : {_usage_en_phrase(cout.planning)} ; "
                 f"cadrage : {_usage_en_phrase(cout.brief)}{sonde_phrase}."
             ),
             priorite=PRIORITE_DECISIVE,
         )
     )
     titres = {tache.id: tache.titre for tache in taches}
-    for ligne in cout.taches:
-        entrees = par_tache.get(ligne.tache_id, [])
+    for ligne in cout.tasks:
+        entrees = par_tache.get(ligne.task_id, [])
         issues = tuple(
             e.id for e in entrees
             if e.type == EVENEMENT_TACHE_STATUT and e.statut in STATUTS_TACHE_TERMINAUX
         )
-        sans_resultat = ligne.statut != STATUT_TERMINEE or ligne.usage.tokens_non_tarifes > 0
-        nom = ligne.nom or titres.get(ligne.tache_id, "")
+        sans_resultat = ligne.status != STATUT_TERMINEE or ligne.usage.tokens_non_tarifes > 0
+        nom = ligne.name or titres.get(ligne.task_id, "")
         pieces.append(
             Piece(
                 id="",
                 famille=FAMILLE_USAGE,
-                tache_id=ligne.tache_id,
+                tache_id=ligne.task_id,
                 texte=_borne(
-                    f"Usage de la tâche « {nom} » ({ligne.tache_id}"
+                    f"Usage de la tâche « {nom} » ({ligne.task_id}"
                     f"{_agent_en_mots(ligne.agent)}) : "
-                    f"{_usage_en_mots(ligne.usage)} ; issue : {_issue_en_mots(ligne.statut)}"
+                    f"{_usage_en_mots(ligne.usage)} ; issue : {_issue_en_mots(ligne.status)}"
                 ),
                 entrees=issues,
                 synthese=True,
                 libelle=_borne(
-                    f"« {nom or ligne.tache_id} »{_agent_entre_parentheses(ligne.agent)} "
+                    f"« {nom or ligne.task_id} »{_agent_entre_parentheses(ligne.agent)} "
                     f"a consommé {_usage_en_phrase(ligne.usage)} — "
-                    f"issue : {_issue_en_mots(ligne.statut)}."
+                    f"issue : {_issue_en_mots(ligne.status)}."
                 ),
                 priorite=PRIORITE_DECISIVE if sans_resultat else PRIORITE_ECLAIRANTE,
             )
@@ -1535,7 +1535,7 @@ class ServiceBilan:
         raison = self._non_rendus.get(run_id, "")
         if not raison:
             for event in execution.evenements:
-                if event.etape_run == ETAPE_BILAN and event.statut in _RAISON_DE_LA_TRACE:
+                if event.etape_run == STEP_ASSESSMENT and event.statut in _RAISON_DE_LA_TRACE:
                     raison = _RAISON_DE_LA_TRACE[event.statut]
         return ETAT_ABSENT, raison
 
@@ -1692,7 +1692,7 @@ class ServiceBilan:
                     usage=usage,
                     cout_usd=usage.cout_usd if usage is not None else None,
                     projet_id=execution.projet_id,
-                    etape_run=ETAPE_BILAN,
+                    etape_run=STEP_ASSESSMENT,
                     bilan=bilan.to_dict() if bilan is not None else None,
                 )
             )

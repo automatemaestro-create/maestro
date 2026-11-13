@@ -787,7 +787,7 @@ def test_la_cause_classee_est_dite_en_mots_d_interface() -> None:
     state = ControlTowerState()
     state.appliquer(_lancement("run-cher", "Tout réécrire", PROJET))
     state.appliquer(
-        _issue("run-cher", EXECUTION_ECHEC, "PlafondDepenseDepasse : 12.51 $ > 10 $",
+        _issue("run-cher", EXECUTION_ECHEC, "SpendingCapExceeded : 12.51 $ > 10 $",
                cause=CAUSE_PLAFOND_COUT)
     )
 

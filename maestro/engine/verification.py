@@ -205,7 +205,7 @@ from maestro.portee import PorteeProjet
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import LieuSansTrace, ProducedFile
 from maestro.sandbox import verification as execution
-from maestro.telemetry import PlafondDepenseDepasse
+from maestro.telemetry import SpendingCapExceeded
 
 if TYPE_CHECKING:
     from maestro.engine.retry import PolitiqueRelance
@@ -804,7 +804,7 @@ class VerificateurTaches:
         """
         try:
             return await self._provider.generate(prompt, model=modele, system_prompt=SYSTEME)
-        except PlafondDepenseDepasse:
+        except SpendingCapExceeded:
             raise
         except Exception as exc:
             raise VerificateurEnPanne(exc) from exc

@@ -83,7 +83,7 @@ from maestro.controltower.documentation import (
     fichiers_corpus,
     oublier_carte,
 )
-from maestro.sources.extraction import estimer_tokens
+from maestro.sources.extraction import estimate_tokens
 
 #: La racine du dépôt — le corpus réel, celui que le produit servira.
 RACINE = Path(__file__).resolve().parents[1]
@@ -228,7 +228,7 @@ class TestCarteDuCorpusReel:
         titres seuls, ou le corpus, laisserait le plafond vrai sur une grandeur qui
         n'est pas celle qu'on paie.
         """
-        assert corpus_reel.tokens == estimer_tokens(corpus_reel.markdown)
+        assert corpus_reel.tokens == estimate_tokens(corpus_reel.markdown)
 
     def test_le_corpus_entier_ne_tiendrait_pas_dans_un_prompt(
         self, corpus_reel: CarteDocumentation
@@ -239,7 +239,7 @@ class TestCarteDuCorpusReel:
         de passer la documentation au modèle à chaque question et impose de la lui
         faire choisir sur une carte.
         """
-        corpus = sum(estimer_tokens(texte) for texte in corpus_reel.textes.values())
+        corpus = sum(estimate_tokens(texte) for texte in corpus_reel.textes.values())
         assert corpus > 100_000
         assert corpus > 20 * corpus_reel.tokens
 
@@ -560,7 +560,7 @@ class TestIdentiteStable:
         budget — pour zéro information nouvelle, l'indentation le portant déjà.
         """
         plat = "\n".join(section.chemin for section in corpus_reel.sections)
-        assert estimer_tokens(plat) > 2 * corpus_reel.tokens
+        assert estimate_tokens(plat) > 2 * corpus_reel.tokens
 
     def test_aucun_titre_en_double_dans_un_meme_fichier_du_corpus(
         self, corpus_reel: CarteDocumentation
@@ -744,13 +744,13 @@ class TestDeuxNiveaux:
                 for section in corpus_reel.sections
                 if corpus_reel.sous_sections(section.identifiant)
             ),
-            key=lambda section: estimer_tokens(corpus_reel.detail([section.identifiant])),
+            key=lambda section: estimate_tokens(corpus_reel.detail([section.identifiant])),
             reverse=True,
         )
         pire = corpus_reel.detail([section.identifiant for section in porteurs[:6]])
 
         assert len(porteurs) >= 6
-        assert corpus_reel.tokens + estimer_tokens(pire) < estimer_tokens(
+        assert corpus_reel.tokens + estimate_tokens(pire) < estimate_tokens(
             carte_a_plat(corpus_reel)
         )
 
@@ -824,7 +824,7 @@ class TestCroissanceDUnTrimestre:
         gonfle = self.corpus_gonfle(corpus_reel, tmp_path, 3 * self.SECTIONS_PAR_MOIS)
 
         assert len(gonfle.sections) == len(corpus_reel.sections) + 3 * self.SECTIONS_PAR_MOIS
-        assert estimer_tokens(carte_a_plat(gonfle)) > BUDGET_CARTE_TOKENS
+        assert estimate_tokens(carte_a_plat(gonfle)) > BUDGET_CARTE_TOKENS
 
     def test_un_trimestre_de_croissance_tient_sous_le_budget(
         self, corpus_reel: CarteDocumentation, tmp_path: Path

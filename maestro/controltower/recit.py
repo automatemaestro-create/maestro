@@ -36,7 +36,7 @@ documents (#1264). Elle passe donc par les mêmes plafonds, le même parcours qu
 ne suit aucun lien symbolique, le même respect du **périmètre** du projet (les
 gisements de secrets de docs/24 §2.5 en sont exclus d'office, un porteur de
 secrets se nomme sans se lire) et le même encadrement de données
-(`contexte_markdown`, ENF-13). Aucune seconde chaîne de lecture n'est ouverte
+(`markdown_context`, ENF-13). Aucune seconde chaîne de lecture n'est ouverte
 ici, et aucun nom de fichier n'est privilégié : c'est le modèle qui reconnaît un
 mode d'emploi dans ce qu'il lit.
 
@@ -147,12 +147,12 @@ from maestro.engine.recette import recette_en_texte
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers.base import ModelProvider
 from maestro.sources.extraction import (
-    GardeFousExtraction,
-    RapportLecture,
-    contexte_markdown,
-    extraire_sources,
+    ExtractionGuardrails,
+    ReadingReport,
+    extract_sources,
+    markdown_context,
 )
-from maestro.sources.modele import Source
+from maestro.sources.model import Source
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -181,10 +181,10 @@ TOKENS_LIVRABLE = 12_000
 #: fichier ne privilégie aucun nom (#1169) : le gros fichier entre tronqué, en le
 #: disant, et ce qui le suit est lu. Un tiers laisse encore quelque 300 lignes à
 #: un point d'entrée, de quoi atteindre son `if __name__ == "__main__"`.
-GARDE_FOUS_LIVRABLE = GardeFousExtraction(
-    tokens_max_source=TOKENS_LIVRABLE // 3,
-    tokens_max_total=TOKENS_LIVRABLE,
-    nb_max_fichiers_dossier=30,
+GARDE_FOUS_LIVRABLE = ExtractionGuardrails(
+    max_tokens_per_source=TOKENS_LIVRABLE // 3,
+    max_tokens_total=TOKENS_LIVRABLE,
+    max_files_per_directory=30,
 )
 
 #: Le titre du bloc de données du livrable, dans le prompt. Il dit **d'où**
@@ -265,24 +265,24 @@ class Livrable:
     racine: str
     chemins: tuple[str, ...]
     contexte: str
-    rapport: RapportLecture
+    rapport: ReadingReport
 
     @property
     def vide(self) -> bool:
         """Rien n'a pu être lu — ni contenu, ni fichier à nommer."""
-        return not self.chemins and self.rapport.vide
+        return not self.chemins and self.rapport.empty
 
 
 def lire_le_livrable(
     racine: Path,
     perimetre: Perimetre | None = None,
     *,
-    garde_fous: GardeFousExtraction | None = None,
+    garde_fous: ExtractionGuardrails | None = None,
     fichiers_max: int = FICHIERS_OFFERTS_MAX,
 ) -> Livrable:
     """Lit la racine d'un projet comme une source `dossier` — jamais autrement.
 
-    Passer par `extraire_sources` plutôt que par un parcours à nous est la
+    Passer par `extract_sources` plutôt que par un parcours à nous est la
     décision 2 du module : les plafonds, le refus des liens symboliques, le
     périmètre du projet et l'encadrement du contenu sont écrits **une fois**, là
     où tout le produit les applique déjà. Ce qui reste propre à cet appel tient
@@ -293,26 +293,26 @@ def lire_le_livrable(
     l'appelant dit alors ce qu'il peut dire — un run qui n'a rien laissé est une
     information, pas une panne.
     """
-    source = Source(type="dossier", nom=racine.name or str(racine), chemin=str(racine))
+    source = Source(type="dossier", name=racine.name or str(racine), path=str(racine))
     try:
-        rapport = extraire_sources(
+        rapport = extract_sources(
             [source],
-            garde_fous=garde_fous or GARDE_FOUS_LIVRABLE,
-            perimetre=perimetre or Perimetre(),
+            guardrails=garde_fous or GARDE_FOUS_LIVRABLE,
+            perimeter=perimetre or Perimetre(),
         )
     except Exception:  # noqa: BLE001 — une racine illisible n'est pas une panne
         _LOGGER.exception("Livrable illisible : %s", racine)
-        return Livrable(racine=str(racine), chemins=(), contexte="", rapport=RapportLecture())
+        return Livrable(racine=str(racine), chemins=(), contexte="", rapport=ReadingReport())
     # Les entrées d'une lecture `dossier` portent le chemin **relatif** de chaque
     # fichier parcouru ; le lien, lui, a besoin de l'absolu. On le recompose ici
     # et nulle part ailleurs : la racine et les relatifs sont les deux moitiés du
     # même fait, et les séparer laisserait le front deviner.
     chemins: list[str] = []
-    for lecture in rapport.lectures:
-        for entree in lecture.entrees:
-            if not entree.nom:
+    for lecture in rapport.readings:
+        for entree in lecture.entries:
+            if not entree.name:
                 continue
-            chemins.append(str(racine / entree.nom))
+            chemins.append(str(racine / entree.name))
             if len(chemins) >= fichiers_max:
                 break
         if len(chemins) >= fichiers_max:
@@ -320,7 +320,7 @@ def lire_le_livrable(
     return Livrable(
         racine=str(racine),
         chemins=tuple(chemins),
-        contexte=contexte_markdown(rapport, titre=TITRE_LIVRABLE),
+        contexte=markdown_context(rapport, title=TITRE_LIVRABLE),
         rapport=rapport,
     )
 
@@ -678,7 +678,7 @@ def contexte_du_recit(
     parcourt pas, s'ajoute aux fichiers offerts en lien. Sans recette, rien ne change.
 
     L'encadrement n'est pas refait ici : `Livrable.contexte` est la sortie de
-    `contexte_markdown` et de rien d'autre. Les chemins, eux, sont hors du bloc
+    `markdown_context` et de rien d'autre. Les chemins, eux, sont hors du bloc
     encadré à dessein — le modèle doit pouvoir les recopier dans un lien, ce
     qu'on ne demande d'aucun contenu.
     """

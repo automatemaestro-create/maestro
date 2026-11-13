@@ -54,7 +54,7 @@ def arguments_depuis(donnees: Any) -> dict[str, str]:
     """Les arguments lisibles d'une valeur brute — **dict vide** quand il n'y en a pas.
 
     Même régime que les autres relectures du flux (`etapes_depuis`,
-    `sources_depuis`, `reponses_depuis`) : **relecture, jamais nouvelle saisie**.
+    `sources_from`, `reponses_depuis`) : **relecture, jamais nouvelle saisie**.
     Ce qui arrive vient soit du SDK (le `tool_input` d'un appel d'outil), soit du
     bus après un aller-retour JSON, soit du rejeu d'un journal durable — trois
     producteurs dont aucun n'a à faire échouer une demande d'arbitrage parce
