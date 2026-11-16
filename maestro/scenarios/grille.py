@@ -44,10 +44,33 @@ jouées, et une non jouée compte comme manquée. Les trois lignes jugées le so
 **après**, sur ce que le dépôt porte : un juge injoignable s'abstient (« non
 jugé »), et une abstention ne compte ni pour ni contre.
 
+**La durée d'une commande n'est jamais un verdict** (#1681). Une commande se joue
+dans le délai que **le livrable** lui laisse : la limite de son intégration
+continue, ou ce que ses instructions annoncent, que le lecteur de commandes nomme
+avec son origine. Un livrable qui ne dit rien reçoit celui du banc
+(`DELAI_DU_BANC_S`). Une commande sans retour dans son délai rend « non tranché » :
+le banc s'abstient, et le dit. Une installation qui n'a pas fini ne bloque rien,
+mais un échec derrière elle ne tranche pas non plus, puisque rien ne dit qu'il
+vient du livrable. Un succès, lui, est tenu. Le dépôt de Maestro se met en route par
+`bash scripts/setup.sh`, et sa suite compte des milliers de tests : ni l'une ni
+l'autre ne tient dans un délai fixe, et le temps qu'elles prennent ne dit rien de
+leur justesse.
+
+**Une ligne que la personne a écartée est sans objet** (#1681). « Aucun formateur
+appliqué au dépôt » écarte le formatage : un modèle lit les choix de la personne et
+nomme les lignes qu'un choix exclut en toutes lettres (`lignes_ecartees`). Ces
+lignes ne se jouent ni ne se jugent, et ne comptent ni pour ni contre. L'outillage
+choisi, lui, ne s'écarte pas : ce sont les choix eux-mêmes. Les lignes écartées
+dépendent des choix et non du livrable : le banc comparatif les lit une fois pour
+les deux côtés.
+
 ## Ce que le modèle lit du dépôt
 
 Les pièces sont bornées : la liste des fichiers suivis, le début de ceux de la racine
-et des dossiers de configuration, les sujets des commits. Sur un gros dépôt, la liste
+et des dossiers de configuration, les messages des commits. Un message se lit
+**entier**, sujet, corps et pied : une convention qui exige une mention
+(`Refs #<iid>`) la porte souvent dans le corps, qu'un sujet seul ne montre pas
+(#1681). Un message trop long garde son début et sa fin. Sur un gros dépôt, la liste
 est tronquée et les quotas s'épuisent avant un fichier qui compte (`ci.yml` au rejeu
 de #1505, docs/51 § 3.2). Alors **chaque ligne nomme ce qu'elle doit lire** : avant
 de lire les commandes et de juger, le modèle reçoit les pièces — et, la liste
@@ -77,7 +100,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -99,7 +122,7 @@ from maestro.scenarios.projets import (
     commit_de,
     fichiers_suivis,
     instantaner,
-    sujets_des_commits,
+    messages_des_commits,
 )
 
 AXE_INSTALLATION = "installation"
@@ -153,6 +176,19 @@ NON_JUGE = "non jugé"
 #: Le banc n'a pas pu rejouer la ligne pour une raison du poste (un clone refusé) :
 #: une abstention, comme `NON_JUGE`, jamais un manque du livrable.
 INJOUABLE = "injouable"
+#: La ligne s'est jouée sans trancher : sa commande n'a pas rendu la main dans son
+#: délai, ou elle a échoué derrière une installation qui n'avait pas fini. Une durée
+#: n'est pas un verdict (#1681) : c'est une abstention.
+NON_TRANCHE = "non tranché"
+#: La personne a écarté la ligne par un de ses choix (« aucun formateur ») : elle ne
+#: se joue ni ne se juge, et ne compte ni pour ni contre (#1681).
+SANS_OBJET = "sans objet"
+#: Les états qui ne sont pas un verdict : ils sortent du dénominateur du score.
+ABSTENTIONS: tuple[str, ...] = (NON_JUGE, INJOUABLE, NON_TRANCHE, SANS_OBJET)
+
+#: Le délai d'une commande dont le livrable ne dit rien : ce que le banc lui laisse,
+#: celui de la vérification du produit. Une commande qui le dépasse ne tranche pas.
+DELAI_DU_BANC_S = Delais().commande_s
 
 #: La page que le banc demande sans que le livrable l'ait déclarée : une application
 #: web répond `404` à un chemin qu'elle ne connaît pas. Le bilan l'a vu manquer — une
@@ -178,6 +214,11 @@ FICHIERS_LUS = 12
 FICHIERS_DE_CONFIGURATION_LUS = 8
 OCTETS_LISIBLES = 64_000
 COMMITS_LUS = 60
+#: Un message de commit se lit entier jusqu'à cette longueur. Au-delà, son début et sa
+#: fin : le sujet ouvre le message, et la mention qu'une convention exige le ferme
+#: souvent (`Refs #<iid>`).
+CARACTERES_PAR_MESSAGE = 1200
+DEBUT_DE_MESSAGE = 700
 #: La liste tronquée, les dossiers suivis sont tous nommés, avec leur compte de fichiers :
 #: de quoi nommer un fichier que la liste ne montre pas.
 DOSSIERS_LISTES = 400
@@ -202,12 +243,21 @@ CHAMPS_COMMANDES: Mapping[str, str] = {
 CHAMP_SERVIR = "SERVIR"
 CHAMP_PAGES = "PAGES"
 CHAMP_ABSENTES = "ABSENTES"
+CHAMP_DELAIS = "DELAIS"
 AUCUNE = "aucune"
 
 #: Une ligne `CHAMP: valeur`. Des blancs **de ligne** seulement (`[ \t]`) : `\s`
 #: traverse le saut de ligne, et un champ laissé vide avalerait alors la ligne suivante.
 _LIGNE_CHAMP = re.compile(
     r"^[ \t]*(?P<champ>[A-Z]+)[ \t]*:[ \t]*(?P<valeur>.*?)[ \t]*$", re.MULTILINE
+)
+
+#: Un délai du champ `DELAIS:` : `CHAMP=secondes (d'où il vient)`. L'origine est entre
+#: parenthèses et peut porter des virgules : on lit les délais un à un, sans découper
+#: le champ sur ses virgules.
+_DELAI = re.compile(
+    r"(?P<champ>[A-Z]+)[ \t]*=[ \t]*(?P<secondes>\d+(?:[.,]\d+)?)[ \t]*s?\b"
+    r"(?:[ \t]*\((?P<origine>[^()]*)\))?"
 )
 
 SYSTEME_COMMANDES = (
@@ -223,6 +273,13 @@ SYSTEME_COMMANDES = (
     "après l'autre dans l'ordre ci-dessous, sur le système qu'on te donne. Quand le projet "
     "déclare une même commande en plusieurs variantes selon le système, retiens celle de "
     "ce système. Le serveur reçoit son port dans la variable d'environnement PORT.\n"
+    "Le délai d'une commande est celui que le projet laisse à la vérification qu'elle joue. "
+    "Si son intégration continue joue cette vérification, même par une autre commande que "
+    "celle que tu retiens (les tests avec d'autres options, une installation par un autre "
+    "outil), c'est la limite de temps du job ou de l'étape qui la joue. Quand le projet n'en "
+    "pose aucune, c'est la limite par défaut de cet hébergement. Sinon, c'est la durée que "
+    "ses instructions annoncent pour elle. Une vérification que ni son intégration continue "
+    "ni ses instructions ne bornent n'a pas de délai : ne lui en invente pas.\n"
     "Réponds par exactement ces lignes, et rien d'autre :\n"
     f"{CHAMPS_COMMANDES[AXE_INSTALLATION]}: la commande qui installe les dépendances, ou {AUCUNE}\n"
     f"{CHAMPS_COMMANDES[AXE_LINT]}: la commande du linter, ou {AUCUNE}\n"
@@ -234,7 +291,44 @@ SYSTEME_COMMANDES = (
     f"{CHAMP_PAGES}: les chemins que l'application sert, séparés par des virgules "
     f"(au plus {PAGES_MAX}, un exemple réel par route paramétrée), ou {AUCUNE}\n"
     f"{CHAMP_ABSENTES}: des chemins qui doivent répondre 404, par exemple un contenu "
-    f"inconnu sous une route paramétrée (au plus {ABSENTES_MAX}), ou {AUCUNE}"
+    f"inconnu sous une route paramétrée (au plus {ABSENTES_MAX}), ou {AUCUNE}\n"
+    f"{CHAMP_DELAIS}: pour chaque commande ci-dessus que le projet borne, `CHAMP=secondes "
+    f"(d'où vient ce délai)`, séparés par des virgules, ou {AUCUNE}"
+)
+
+#: Les lignes qu'un choix de la personne peut écarter, sous le champ que le modèle nomme,
+#: et ce que chacune vérifie. L'outillage suivi ne s'écarte pas : il juge les choix
+#: eux-mêmes.
+CHAMPS_ECARTABLES: Mapping[str, str] = {
+    **CHAMPS_COMMANDES,
+    AXE_PAGES: CHAMP_PAGES,
+    AXE_CI: "CI",
+    AXE_COMMITS: "COMMITS",
+}
+VERIFICATIONS_ECARTABLES: Mapping[str, str] = {
+    AXE_INSTALLATION: "installer les dépendances du projet",
+    AXE_LINT: "passer le linter",
+    AXE_FORMATAGE: "vérifier le formatage du code",
+    AXE_TYPES: "vérifier les types",
+    AXE_TESTS: "jouer les tests",
+    AXE_BUILD: "construire le livrable",
+    AXE_PAGES: "servir l'application et en sonder les pages",
+    AXE_CI: "porter une intégration continue écrite",
+    AXE_COMMITS: "écrire ses messages de commit dans une convention",
+}
+CHAMP_ECARTEES = "ECARTEES"
+CHAMP_POURQUOI = "POURQUOI"
+
+SYSTEME_ECARTEES = (
+    "Tu lis les choix d'outillage d'une personne et tu nommes les vérifications qu'elle a "
+    "écartées : celles qu'un de ses choix exclut en toutes lettres. Par exemple, « aucun "
+    "formateur » écarte la vérification du formatage, et « pas d'intégration continue » "
+    "écarte celle de l'intégration continue. Un choix qui ne dit rien d'une vérification ne "
+    "l'écarte pas, et un outil choisi ne l'écarte jamais.\n"
+    "Réponds par exactement ces deux lignes, et rien d'autre :\n"
+    f"{CHAMP_ECARTEES}: les champs des vérifications écartées, séparés par des virgules, "
+    f"ou {AUCUNE}\n"
+    f"{CHAMP_POURQUOI}: une phrase qui cite, pour chacune, le choix qui l'écarte"
 )
 
 #: Les questions pour lesquelles le modèle nomme ce qu'il faut lire, et le champ de sa
@@ -285,9 +379,13 @@ SYSTEME_CI = (
 SYSTEME_COMMITS = (
     "Tu juges une seule chose : les messages de commit qu'on te montre suivent-ils la "
     "convention que la personne a choisie ?\n"
+    "Chaque message est montré entier, avec son sujet, son corps et son pied, et la "
+    "convention se juge sur le message entier. Une mention qu'elle exige (une référence, "
+    "une signature) compte où que le message la porte, et elle manque si le message ne la "
+    "porte nulle part.\n"
     "**Chaque commit compte**, quel qu'en soit l'auteur : une personne, un agent ou un "
     "outil qui écrit ses propres messages. Aucun ne s'écarte du compte. C'est oui si la "
-    "quasi-totalité des sujets suit la convention. C'est non si des commits dans une autre "
+    "quasi-totalité des messages suit la convention. C'est non si des commits dans une autre "
     "forme sont plus que de rares exceptions — y compris ceux qu'un outil a écrits —, si la "
     "convention n'est suivie que par une partie des commits, ou s'il n'y a aucun "
     "commit.\n" + FORME
@@ -362,8 +460,9 @@ class Ligne:
 
     @property
     def jugee(self) -> bool:
-        """A-t-elle un verdict ? Une abstention — du juge ou du poste — n'en est pas un."""
-        return self.etat not in (NON_JUGE, INJOUABLE)
+        """A-t-elle un verdict ? Une abstention — du juge, du poste ou du délai — n'en est pas
+        un, et une ligne écartée par la personne non plus."""
+        return self.etat not in ABSTENTIONS
 
     def to_dict(self) -> dict[str, Any]:
         """La ligne en JSON — la forme du rapport."""
@@ -378,13 +477,26 @@ class Ligne:
 
 
 @dataclass(frozen=True)
+class Delai:
+    """Le délai que le livrable laisse à une commande, et d'où le lecteur le tient."""
+
+    secondes: float
+    origine: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"secondes": self.secondes, "origine": self.origine}
+
+
+@dataclass(frozen=True)
 class Commandes:
-    """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, et ses pages."""
+    """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, ses pages, et
+    le délai que le livrable laisse à celles qu'il borne."""
 
     par_axe: Mapping[str, str] = field(default_factory=dict)
     servir: str = ""
     pages: tuple[str, ...] = ()
     absentes: tuple[str, ...] = ()
+    delais: Mapping[str, Delai] = field(default_factory=dict)
     brut: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -394,8 +506,21 @@ class Commandes:
             "servir": self.servir,
             "pages": list(self.pages),
             "absentes": list(self.absentes),
+            "delais": {axe: delai.to_dict() for axe, delai in self.delais.items()},
             "brut": self.brut,
         }
+
+
+@dataclass(frozen=True)
+class Ecartees:
+    """Les lignes que la personne a écartées par ses choix, et ce qui le dit."""
+
+    axes: frozenset[str] = frozenset()
+    pourquoi: str = ""
+
+    def en_mots(self) -> str:
+        """Ce qu'une ligne écartée dit dans la grille."""
+        return f"écartée par la personne : {self.pourquoi or 'sans raison donnée'}"
 
 
 @dataclass(frozen=True)
@@ -449,6 +574,7 @@ def rejouer(
     trace: Callable[[str, str], None] = lambda _libelle, _detail: None,
     versionne: bool = True,
     base: str = "",
+    ecartees: Ecartees | None = None,
 ) -> Grille:
     """Clone `depot` dans `copie` et y joue la grille — l'état de chaque ligne de `axes`.
 
@@ -456,6 +582,10 @@ def rejouer(
     confronte au livrable. Sans choix, les lignes qui en dépendent (convention de
     commit, outillage suivi) ne se jugent pas. `trace` reçoit chaque étape, pour le
     déroulé du rapport et l'écran du passage.
+
+    `ecartees` sont les lignes que ces choix écartent (`lignes_ecartees`). Sans elles,
+    la grille les lit ici. Le banc comparatif les lit une fois et les passe aux deux
+    côtés, puisqu'elles ne dépendent que des choix.
 
     `versionne` dit si la personne a demandé un dépôt Git. Demandé, un livrable qui
     n'en est pas un manque toutes ses lignes ; non demandé (#1513), il se rejoue comme
@@ -488,35 +618,32 @@ def rejouer(
         "livrable cloné" if sous_git else "dossier livré cloné par instantané",
         f"{depot} → {copie}" + (f", depuis la base {commit_base[:12]}" if commit_base else ""),
     )
+    ecartees = _ecartees_du_rejeu(lecteur, choix, axes, ecartees, trace)
     pieces = _pieces(copie, commit_base)
-    lignes: dict[str, Ligne] = {}
 
     joues = [axe for axe in AXES_JOUES if axe in axes]
-    lit_les_commandes = bool(joues) or AXE_PAGES in axes
-    questions = [
-        question
-        for question, posee in (
-            (LECTURE_COMMANDES, lit_les_commandes),
-            (AXE_CI, AXE_CI in axes),
-            (AXE_OUTILLAGE, AXE_OUTILLAGE in axes and bool(choix)),
-        )
-        if posee
-    ]
+    lit_les_commandes = any(
+        axe in axes and axe not in ecartees.axes for axe in (*AXES_JOUES, AXE_PAGES)
+    )
+    questions = _questions(axes, choix, ecartees, lit_les_commandes)
     nommes, detail = _lectures(copie, lecteur, choix, pieces, questions)
     if questions:
         trace("fichiers nommés pour chaque ligne", detail)
 
+    commandes: Commandes | None = None
+    illisible = ""
     if lit_les_commandes:
         commandes, illisible = _lire_commandes(
             lecteur, choix, pieces, poste.systeme, nommes.get(LECTURE_COMMANDES, ())
         )
         trace("commandes lues dans le livrable", illisible or _commandes_en_mots(commandes))
-        lignes.update(_jouer_les_commandes(copie, commandes, illisible, joues, axes, poste, trace))
-    else:
-        commandes = None
+    # Sans commande à lire, chaque ligne jouée est écartée : elle se range sans se jouer.
+    lignes = _jouer_les_commandes(
+        copie, commandes or Commandes(), illisible, joues, axes, poste, trace, ecartees
+    )
 
     for axe in (a for a in AXES_JUGES if a in axes):
-        lignes[axe] = _juger(axe, lecteur, choix, pieces, nommes.get(axe, ()))
+        lignes[axe] = _juger(axe, lecteur, choix, pieces, nommes.get(axe, ()), ecartees)
         trace(f"ligne jugée : {LIBELLES[axe]}", f"{lignes[axe].etat} — {lignes[axe].detail}")
 
     return Grille(
@@ -526,6 +653,38 @@ def rejouer(
         commandes=commandes,
         base=commit_base,
     )
+
+
+def _ecartees_du_rejeu(
+    lecteur: Lecteur,
+    choix: Sequence[str],
+    axes: Sequence[str],
+    ecartees: Ecartees | None,
+    trace: Callable[[str, str], None],
+) -> Ecartees:
+    """Les lignes écartées que l'appelant a lues, ou lues ici — et dites au déroulé."""
+    if ecartees is None:
+        ecartees = lignes_ecartees(lecteur, choix, axes)
+    if choix:
+        noms = ", ".join(LIBELLES[axe] for axe in AXES if axe in ecartees.axes)
+        trace("lignes écartées par la personne", f"{noms or AUCUNE} — {ecartees.pourquoi}")
+    return ecartees
+
+
+def _questions(
+    axes: Sequence[str], choix: Sequence[str], ecartees: Ecartees, lit_les_commandes: bool
+) -> list[str]:
+    """Les questions pour lesquelles le modèle nomme ce qu'il faut lire — aucune pour une
+    ligne que la personne a écartée."""
+    return [
+        question
+        for question, posee in (
+            (LECTURE_COMMANDES, lit_les_commandes),
+            (AXE_CI, AXE_CI in axes and AXE_CI not in ecartees.axes),
+            (AXE_OUTILLAGE, AXE_OUTILLAGE in axes and bool(choix)),
+        )
+        if posee
+    ]
 
 
 class _BaseInconnue(Exception):
@@ -564,8 +723,9 @@ class Pieces:
     """Ce que le lecteur et le juge voient du clone, déjà borné.
 
     `fichiers` est la liste **entière** des fichiers suivis : seul le texte la tronque, et
-    c'est contre elle que se résout ce qu'une ligne nomme. `base` et `changements` disent
-    ce que le livrable change depuis sa base — vides sans base.
+    c'est contre elle que se résout ce qu'une ligne nomme. `commits` sont les messages
+    entiers des commits, du plus récent au plus ancien. `base` et `changements` disent ce
+    que le livrable change depuis sa base — vides sans base.
     """
 
     fichiers: tuple[str, ...]
@@ -614,7 +774,7 @@ class Pieces:
 
 
 def _pieces(copie: Path, base: str = "") -> Pieces:
-    """Les fichiers suivis du clone, ceux qu'on lit, et les sujets des commits.
+    """Les fichiers suivis du clone, ceux qu'on lit, et les messages des commits.
 
     Lus : ce que le livrable change depuis sa base, s'il en a une — c'est lui qu'on
     juge —, puis les fichiers de la racine, puis ceux des dossiers de configuration qui
@@ -627,7 +787,7 @@ def _pieces(copie: Path, base: str = "") -> Pieces:
     except OSError:
         suivis = ()
     try:
-        commits = sujets_des_commits(copie, nombre=COMMITS_LUS, depuis=base)
+        commits = messages_des_commits(copie, nombre=COMMITS_LUS, depuis=base)
     except OSError:
         commits = ()
     try:
@@ -807,8 +967,54 @@ def commandes_depuis(brut: str) -> Commandes:
         servir=valeur(CHAMP_SERVIR),
         pages=chemins(CHAMP_PAGES, PAGES_MAX),
         absentes=chemins(CHAMP_ABSENTES, ABSENTES_MAX),
+        delais=_delais(valeur(CHAMP_DELAIS)),
         brut=brut or "",
     )
+
+
+def _delais(texte: str) -> dict[str, Delai]:
+    """Les délais du champ `DELAIS:`, par ligne jouée — un délai nul ou hors des lignes jouées
+    ne s'applique à rien, et le premier de chaque ligne fait foi."""
+    axes = {champ: axe for axe, champ in CHAMPS_COMMANDES.items()}
+    delais: dict[str, Delai] = {}
+    for trouve in _DELAI.finditer(texte):
+        axe = axes.get(trouve.group("champ"))
+        secondes = float(trouve.group("secondes").replace(",", "."))
+        if axe is None or secondes <= 0 or axe in delais:
+            continue
+        delais[axe] = Delai(secondes, (trouve.group("origine") or "").strip())
+    return delais
+
+
+def lignes_ecartees(lecteur: Lecteur, choix: Sequence[str], axes: Sequence[str] = AXES) -> Ecartees:
+    """Les lignes de `axes` que les choix de la personne écartent en toutes lettres (#1681).
+
+    Un modèle lit les choix, jamais une liste de mots (#746) : « aucun formateur appliqué
+    au dépôt » écarte le formatage. Une lecture qui n'a pas eu lieu, ou hors contrat,
+    n'écarte rien : chaque ligne se joue alors comme si la personne n'avait rien écarté.
+    """
+    candidates = [axe for axe in axes if axe in CHAMPS_ECARTABLES]
+    if not choix or not candidates:
+        return Ecartees()
+    verifications = "\n".join(
+        f"{CHAMPS_ECARTABLES[axe]}: {VERIFICATIONS_ECARTABLES[axe]}" for axe in candidates
+    )
+    prompt = (
+        f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
+        f"Les vérifications, chacune sous son champ :\n<verifications>\n{verifications}\n"
+        "</verifications>\nLaquelle de ces vérifications ses choix écartent-ils ?"
+    )
+    try:
+        brut = lecteur.rediger(SYSTEME_ECARTEES, prompt)
+    except Exception as exc:  # fournisseur injoignable, quota : rien n'est écarté
+        return Ecartees(pourquoi=f"les lignes écartées n'ont pas pu être lues : {exc}")
+    champs = _champs(brut)
+    if CHAMP_ECARTEES not in champs:
+        return Ecartees(pourquoi=f"réponse hors contrat : {' '.join((brut or '').split())[:200]}")
+    par_champ = {CHAMPS_ECARTABLES[axe]: axe for axe in candidates}
+    nommes = (morceau.strip().strip("`").upper() for morceau in champs[CHAMP_ECARTEES].split(","))
+    nommees = frozenset(par_champ[champ] for champ in nommes if champ in par_champ)
+    return Ecartees(nommees, champs.get(CHAMP_POURQUOI, "") or "sans raison donnée")
 
 
 def _jouer_les_commandes(
@@ -819,13 +1025,22 @@ def _jouer_les_commandes(
     axes: Sequence[str],
     poste: PosteDuBanc,
     trace: Callable[[str, str], None],
+    ecartees: Ecartees,
 ) -> dict[str, Ligne]:
-    """Les lignes jouées, dans l'ordre — une installation ratée laisse les suivantes non jouées."""
+    """Les lignes jouées, dans l'ordre — une installation ratée laisse les suivantes non jouées.
+
+    Une commande sans retour dans son délai ne tranche pas (#1681), et une installation
+    qui n'a pas fini laisse les suivantes se jouer : un succès est tenu, un échec ne
+    tranche pas. Une ligne écartée par la personne ne se joue pas.
+    """
     lignes: dict[str, Ligne] = {}
-    delai = Delais().commande_s
     bloquee = illisible
+    inachevee = ""
     for axe in joues:
         commande = commandes.par_axe.get(axe, "")
+        if axe in ecartees.axes:
+            lignes[axe] = Ligne(axe, SANS_OBJET, ecartees.en_mots(), commande=commande)
+            continue
         if bloquee:
             lignes[axe] = Ligne(axe, NON_JOUE, bloquee, commande=commande)
             continue
@@ -836,18 +1051,48 @@ def _jouer_les_commandes(
             if axe == AXE_INSTALLATION:
                 bloquee = "l'installation n'a pas de commande : rien n'a de quoi passer"
             continue
-        fait = poste.jouer(f"{SANS_TERMINAL} {commande}", copie, delai)
-        mots = _execution_en_mots(fait, delai)
-        trace(f"ligne jouée : {LIBELLES[axe]}", f"`{commande}` — {mots}")
-        tenue = not fait.expiree and fait.code == 0
-        lignes[axe] = Ligne(
-            axe, TENU if tenue else MANQUE, mots, commande=commande, duree_s=fait.duree_s
+        lignes[axe], expiree = _jouer_la_ligne(
+            axe, commande, commandes.delais.get(axe), copie, poste, trace, inachevee
         )
-        if not tenue and axe == AXE_INSTALLATION:
+        if axe == AXE_INSTALLATION and lignes[axe].etat == MANQUE:
             bloquee = "l'installation a échoué : rien n'a de quoi passer"
+        if axe == AXE_INSTALLATION and expiree:
+            inachevee = (
+                "derrière une installation qui n'a pas fini dans son délai, un échec ne dit "
+                "rien du livrable"
+            )
     if AXE_PAGES in axes:
-        lignes[AXE_PAGES] = _pages(copie, commandes, illisible, lignes, poste, trace)
+        lignes[AXE_PAGES] = _pages(copie, commandes, illisible, lignes, poste, trace, ecartees)
     return lignes
+
+
+def _jouer_la_ligne(
+    axe: str,
+    commande: str,
+    delai: Delai | None,
+    copie: Path,
+    poste: PosteDuBanc,
+    trace: Callable[[str, str], None],
+    inachevee: str,
+) -> tuple[Ligne, bool]:
+    """La commande d'une ligne jouée dans son délai — la ligne, et si la commande a expiré.
+
+    Une commande sans retour ne tranche pas. Derrière une installation inachevée
+    (`inachevee` dit pourquoi), un échec ne tranche pas non plus.
+    """
+    delai_s = DELAI_DU_BANC_S if delai is None else delai.secondes
+    fait = poste.jouer(f"{SANS_TERMINAL} {commande}", copie, delai_s)
+    mots = _execution_en_mots(fait, delai_s, delai)
+    trace(f"ligne jouée : {LIBELLES[axe]}", f"`{commande}` — {mots}")
+    if fait.expiree:
+        etat = NON_TRANCHE
+    elif fait.code == 0:
+        etat = TENU
+    elif inachevee:
+        etat, mots = NON_TRANCHE, f"{mots} — {inachevee}"
+    else:
+        etat = MANQUE
+    return Ligne(axe, etat, mots, commande=commande, duree_s=fait.duree_s), fait.expiree
 
 
 def _pages(
@@ -857,21 +1102,20 @@ def _pages(
     lignes: Mapping[str, Ligne],
     poste: PosteDuBanc,
     trace: Callable[[str, str], None],
+    ecartees: Ecartees,
 ) -> Ligne:
-    """Le livrable servi : ses pages en `200`, les pages absentes en `404`."""
+    """Le livrable servi : ses pages en `200`, les pages absentes en `404`.
+
+    Derrière une installation ou un build qui n'a pas tranché, le livrable se sert quand
+    même, et un écart ne tranche pas non plus : rien ne dit qu'il vient du livrable.
+    """
+    if AXE_PAGES in ecartees.axes:
+        return Ligne(AXE_PAGES, SANS_OBJET, ecartees.en_mots(), commande=commandes.servir)
     if illisible:
         return Ligne(AXE_PAGES, NON_JOUE, illisible, commande=commandes.servir)
-    for prealable, echec in (
-        (AXE_INSTALLATION, "l'installation a échoué : rien à servir"),
-        (AXE_BUILD, "le build a échoué : rien à servir"),
-    ):
-        ligne = lignes.get(prealable)
-        if ligne is not None and ligne.etat == NON_JOUE:
-            return Ligne(AXE_PAGES, NON_JOUE, ligne.detail, commande=commandes.servir)
-        # Un build que le livrable ne déclare pas n'empêche pas de servir : certaines
-        # piles servent sans construire. Un build déclaré qui échoue, lui, l'empêche.
-        if ligne is not None and ligne.etat == MANQUE and ligne.commande:
-            return Ligne(AXE_PAGES, NON_JOUE, echec, commande=commandes.servir)
+    inachevee = _avant_de_servir(lignes)
+    if isinstance(inachevee, Ligne):
+        return replace(inachevee, commande=commandes.servir)
     if not commandes.servir:
         return Ligne(AXE_PAGES, MANQUE, "le livrable ne déclare aucune commande pour se servir")
     attendus: dict[str, int] = dict.fromkeys(commandes.pages or ("/",), PAGE_SERVIE)
@@ -887,16 +1131,55 @@ def _pages(
     ]
     if ecarts:
         fin = f" — {sortie}" if sortie else ""
+        if inachevee:
+            fin += f" — {inachevee}"
         return Ligne(
-            AXE_PAGES, MANQUE, f"{', '.join(ecarts)}{fin}", commande=commandes.servir
+            AXE_PAGES,
+            NON_TRANCHE if inachevee else MANQUE,
+            f"{', '.join(ecarts)}{fin}",
+            commande=commandes.servir,
         )
     return Ligne(AXE_PAGES, TENU, rendu, commande=commandes.servir)
 
 
-def _execution_en_mots(fait: execution.Execution, delai_s: float) -> str:
-    """Ce qu'une commande a rendu, en une ligne."""
+def _avant_de_servir(lignes: Mapping[str, Ligne]) -> Ligne | str:
+    """Ce que l'installation et le build laissent aux pages : une ligne non jouée s'ils
+    l'empêchent, sinon pourquoi un écart ne tranchera pas (`""` s'il tranchera)."""
+    inachevee = ""
+    for prealable, echec in (
+        (AXE_INSTALLATION, "l'installation a échoué : rien à servir"),
+        (AXE_BUILD, "le build a échoué : rien à servir"),
+    ):
+        ligne = lignes.get(prealable)
+        if ligne is None:
+            continue
+        if ligne.etat == NON_JOUE:
+            return Ligne(AXE_PAGES, NON_JOUE, ligne.detail)
+        # Un build que le livrable ne déclare pas n'empêche pas de servir : certaines
+        # piles servent sans construire. Un build déclaré qui échoue, lui, l'empêche.
+        if ligne.etat == MANQUE and ligne.commande:
+            return Ligne(AXE_PAGES, NON_JOUE, echec)
+        if ligne.etat == NON_TRANCHE and not inachevee:
+            inachevee = (
+                f"derrière une ligne qui n'a pas tranché ({LIBELLES[prealable]}), un écart ne "
+                "dit rien du livrable"
+            )
+    return inachevee
+
+
+def _execution_en_mots(fait: execution.Execution, delai_s: float, delai: Delai | None) -> str:
+    """Ce qu'une commande a rendu, en une ligne — et, sans retour, quel délai elle avait."""
     if fait.expiree:
-        return f"aucun retour en {delai_s:g} s"
+        if delai is None:
+            return (
+                f"aucun retour en {delai_s:g} s, et le livrable ne dit pas combien de temps "
+                "lui laisser : une durée n'est pas un verdict"
+            )
+        origine = delai.origine or "sans origine dite"
+        return (
+            f"aucun retour dans les {delai_s:g} s que le livrable lui laisse ({origine}) : "
+            "une durée n'est pas un verdict"
+        )
     fin = " ".join(fait.sortie.split())[-300:] or "aucune sortie"
     return f"code {fait.code} en {fait.duree_s:.1f} s — {fin}"
 
@@ -909,6 +1192,11 @@ def _commandes_en_mots(commandes: Commandes) -> str:
     ]
     morceaux.append(f"servir : `{commandes.servir}`" if commandes.servir else "servir : aucune")
     morceaux.append(f"pages : {', '.join(commandes.pages) or 'aucune'}")
+    delais = ", ".join(
+        f"{LIBELLES[axe]} {delai.secondes:g} s" + (f" ({delai.origine})" if delai.origine else "")
+        for axe, delai in commandes.delais.items()
+    )
+    morceaux.append(f"délais du livrable : {delais or f'aucun, {DELAI_DU_BANC_S:g} s du banc'}")
     return " ; ".join(morceaux)
 
 
@@ -921,26 +1209,33 @@ def _juger(
     choix: Sequence[str],
     pieces: Pieces,
     nommes: Sequence[tuple[str, str]] = (),
+    ecartees: Ecartees | None = None,
 ) -> Ligne:
     """Une ligne jugée sur pièces : tenue, manquée, ou non jugée si le juge s'abstient.
 
-    `nommes` sont les fichiers que la ligne a nommés, lus pour elle (`_lectures`).
+    `nommes` sont les fichiers que la ligne a nommés, lus pour elle (`_lectures`). Une
+    ligne que la personne a écartée ne se juge pas : elle est sans objet.
     """
+    if ecartees is not None and axe in ecartees.axes:
+        return Ligne(axe, SANS_OBJET, ecartees.en_mots())
     if axe in (AXE_COMMITS, AXE_OUTILLAGE) and not choix:
         return Ligne(axe, NON_JUGE, "aucun choix d'outillage n'est déclaré pour ce livrable")
     choisi = f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
     depot = f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte(nommes)}</depot>\n"
     if axe == AXE_COMMITS:
-        sujets = "\n".join(pieces.commits) or "(aucun commit)"
+        messages = "\n".join(
+            f"<commit>\n{_message_borne(message)}\n</commit>" for message in pieces.commits
+        )
         lesquels = (
-            f"Les sujets des commits du livrable depuis sa base `{pieces.base[:12]}`"
+            f"Les messages entiers des commits du livrable depuis sa base `{pieces.base[:12]}`"
             if pieces.base
-            else "Les sujets des derniers commits"
+            else "Les messages entiers des derniers commits"
         )
         systeme, prompt = (
             SYSTEME_COMMITS,
             f"{choisi}{lesquels}, du plus récent au plus ancien :\n"
-            f"<commits>{sujets}</commits>\nCes commits suivent-ils la convention choisie ?",
+            f"<commits>\n{messages or '(aucun commit)'}\n</commits>\n"
+            "Ces commits suivent-ils la convention choisie ?",
         )
     elif axe == AXE_CI:
         systeme, prompt = (
@@ -956,6 +1251,14 @@ def _juger(
     if not avis.lisible:
         return Ligne(axe, NON_JUGE, avis.pourquoi)
     return Ligne(axe, TENU if avis.nomme else MANQUE, avis.pourquoi)
+
+
+def _message_borne(message: str) -> str:
+    """Un message de commit entier, ou son début et sa fin s'il dépasse la longueur lue."""
+    if len(message) <= CARACTERES_PAR_MESSAGE:
+        return message
+    fin = CARACTERES_PAR_MESSAGE - DEBUT_DE_MESSAGE
+    return f"{message[:DEBUT_DE_MESSAGE]}\n[…]\n{message[-fin:]}"
 
 
 def _choix_en_texte(choix: Sequence[str]) -> str:

@@ -574,20 +574,24 @@ ABSENTES: /recettes/inconnue
 
 
 class LecteurFactice:
-    """Le modèle de la grille : les commandes qu'il lit, le verdict de chaque ligne jugée."""
+    """Le modèle de la grille : les commandes qu'il lit, les lignes que la personne écarte, le
+    verdict de chaque ligne jugée."""
 
     def __init__(
         self,
         *,
         commandes: str = _COMMANDES,
         nommes: str = "",
+        ecartees: str = "ECARTEES: aucune\nPOURQUOI: aucun choix n'écarte de vérification",
         verdicts: Mapping[str, Avis] | None = None,
         injoignable: bool = False,
     ) -> None:
         self._commandes, self._nommes, self._injoignable = commandes, nommes, injoignable
+        self._ecartees = ecartees
         self._verdicts = dict(verdicts or {})
         self.lus: list[str] = []
         self.nominations: list[str] = []
+        self.ecartements: list[str] = []
         self.juges: list[str] = []
 
     def rediger(self, systeme: str, prompt: str) -> str:
@@ -596,6 +600,9 @@ class LecteurFactice:
         if systeme == gr.SYSTEME_LECTURES:
             self.nominations.append(prompt)
             return self._nommes
+        if systeme == gr.SYSTEME_ECARTEES:
+            self.ecartements.append(prompt)
+            return self._ecartees
         self.lus.append(prompt)
         return self._commandes
 
@@ -614,18 +621,32 @@ class Joueur:
 
     `serveur_s` fait **tenir** le serveur (`PORT=…`) ce temps réel avant de rendre la main,
     comme un vrai serveur tient sa fenêtre : la sonde a alors le temps de repasser.
+    `expirees` sont les commandes qui ne rendent pas la main dans leur délai, et `delais`
+    retient le délai donné à chacune.
     """
 
-    def __init__(self, codes: Mapping[str, int] | None = None, *, serveur_s: float = 0.0) -> None:
+    def __init__(
+        self,
+        codes: Mapping[str, int] | None = None,
+        *,
+        serveur_s: float = 0.0,
+        expirees: Sequence[str] = (),
+    ) -> None:
         self.codes = dict(codes or {})
         self.serveur_s = serveur_s
+        self.expirees = tuple(expirees)
         self.joues: list[tuple[str, Path]] = []
+        self.delais: dict[str, float] = {}
 
     def __call__(self, commande: str, dossier: Path, delai_s: float) -> Execution:
         self.joues.append((commande, dossier))
         if commande.startswith("PORT=") and self.serveur_s:
             time.sleep(self.serveur_s)
-        code = self.codes.get(re.sub(r"^(CI=1|PORT=\d+) ", "", commande), 0)
+        nue = re.sub(r"^(CI=1|PORT=\d+) ", "", commande)
+        self.delais[nue] = delai_s
+        if nue in self.expirees:
+            return Execution(code=None, sortie="", duree_s=delai_s, expiree=True)
+        code = self.codes.get(nue, 0)
         return Execution(code=code, sortie="ok" if code == 0 else "échec", duree_s=0.5)
 
 
@@ -838,6 +859,133 @@ def test_une_installation_ratee_laisse_les_lignes_suivantes_non_jouees(tmp_path:
 
 
 @AVEC_GIT
+def test_une_commande_sans_retour_dans_son_delai_ne_vaut_aucun_verdict(tmp_path: Path) -> None:
+    """#1681 : coupée à 300 s, l'installation du dépôt de Maestro était un manque et laissait le
+    lint, les types et les tests non joués ; la suite entière, sans retour, manquait aussi."""
+    joueur = Joueur({"npm run lint": 1}, expirees=("npm ci", "npm test"))
+    grille = _rejouer(tmp_path, LecteurFactice(), joueur)
+
+    installation = grille.ligne(gr.AXE_INSTALLATION)
+    assert installation is not None and installation.etat == gr.NON_TRANCHE
+    assert "ne dit pas combien de temps" in installation.detail
+    # Les lignes suivantes se jouent quand même : un succès est tenu, et un échec derrière une
+    # installation inachevée ne dit rien du livrable.
+    assert [commande for commande, _ in joueur.joues][:6] == [
+        "CI=1 npm ci",
+        "CI=1 npm run lint",
+        "CI=1 npx prettier --check .",
+        "CI=1 npm run typecheck",
+        "CI=1 npm test",
+        "CI=1 npm run build",
+    ]
+    etats = {ligne.axe: ligne.etat for ligne in grille.lignes}
+    assert etats[gr.AXE_LINT] == gr.NON_TRANCHE
+    assert "installation" in grille.ligne(gr.AXE_LINT).detail
+    assert etats[gr.AXE_FORMATAGE] == etats[gr.AXE_TYPES] == etats[gr.AXE_BUILD] == gr.TENU
+    assert etats[gr.AXE_TESTS] == gr.NON_TRANCHE
+    assert etats[gr.AXE_PAGES] == gr.TENU
+    # Aucune durée n'est un verdict : ni manque, ni ligne non jouée, et le score ne les compte pas.
+    assert gr.MANQUE not in etats.values() and gr.NON_JOUE not in etats.values()
+    assert grille.jugees == grille.tenues == len(gr.AXES) - 3
+
+
+@AVEC_GIT
+def test_le_delai_d_une_commande_se_prend_du_livrable(tmp_path: Path) -> None:
+    """#1681 : le délai d'une commande est celui que le livrable lui laisse (sa CI, ses
+    instructions) ; sans rien de déclaré, le banc lui laisse le sien, et le dit."""
+    commandes = _COMMANDES + (
+        "DELAIS: INSTALLATION=1800 (ci.yml, timeout-minutes: 30 du job), "
+        "TESTS=21600 (ci.yml, aucune limite posée : 360 min par défaut chez GitHub Actions), "
+        "LINT=0 (rien), PAGES=60\n"
+    )
+    joueur = Joueur(expirees=("npm test",))
+    grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), joueur)
+
+    assert joueur.delais["npm ci"] == 1800
+    assert joueur.delais["npm test"] == 21600
+    # Un délai nul n'en est pas un, et un champ hors des lignes jouées ne s'applique à rien.
+    assert joueur.delais["npm run lint"] == gr.DELAI_DU_BANC_S
+    assert joueur.delais["npm run typecheck"] == gr.DELAI_DU_BANC_S
+    tests = grille.ligne(gr.AXE_TESTS)
+    assert tests is not None and tests.etat == gr.NON_TRANCHE
+    assert "21600 s" in tests.detail and "360 min par défaut chez GitHub Actions" in tests.detail
+    assert grille.ligne(gr.AXE_INSTALLATION).etat == gr.TENU
+
+
+@AVEC_GIT
+def test_une_ligne_que_la_personne_a_ecartee_est_sans_objet(tmp_path: Path) -> None:
+    """#1681 : « aucun formateur appliqué au dépôt », et la ligne du formatage manquait des deux
+    côtés. Une ligne écartée ne se joue ni ne se juge : elle ne compte ni pour ni contre."""
+    commandes = _COMMANDES.replace("FORMATAGE: `npx prettier --check .`", "FORMATAGE: aucune")
+    lecteur = LecteurFactice(
+        commandes=commandes,
+        ecartees=(
+            "ECARTEES: FORMATAGE, CI, OUTILLAGE, VITESSE\n"
+            "POURQUOI: « aucun formateur appliqué » écarte le formatage, « pas d'intégration "
+            "continue » la CI."
+        ),
+    )
+    joueur = Joueur()
+    choix = ("formatage : aucun formateur appliqué au dépôt", "pas d'intégration continue")
+    grille = _rejouer(tmp_path, lecteur, joueur, choix=choix)
+
+    (demande,) = lecteur.ecartements
+    assert all(un in demande for un in choix)
+    formatage, ci = grille.ligne(gr.AXE_FORMATAGE), grille.ligne(gr.AXE_CI)
+    assert formatage is not None and formatage.etat == gr.SANS_OBJET
+    assert "aucun formateur appliqué" in formatage.detail
+    assert ci is not None and ci.etat == gr.SANS_OBJET
+    assert not any("intégration continue écrite ?" in prompt for prompt in lecteur.juges)
+    # L'outillage choisi ne s'écarte pas : ce sont les choix eux-mêmes.
+    assert grille.ligne(gr.AXE_OUTILLAGE).etat == gr.TENU
+    assert grille.jugees == grille.tenues == len(gr.AXES) - 2
+
+
+@AVEC_GIT
+def test_sans_lecture_des_choix_aucune_ligne_n_est_ecartee(tmp_path: Path) -> None:
+    """Une réponse hors contrat n'écarte rien : chaque ligne se joue, comme avant."""
+    lecteur = LecteurFactice(ecartees="Je pense que le formatage n'est pas demandé.")
+    grille = _rejouer(tmp_path, lecteur, Joueur())
+    assert gr.SANS_OBJET not in {ligne.etat for ligne in grille.lignes}
+    assert grille.tenues == len(gr.AXES)
+
+
+@AVEC_GIT
+def test_la_convention_de_commit_se_juge_sur_les_messages_entiers(tmp_path: Path) -> None:
+    """#1681 : le dépôt exige `Refs #<iid>` dans le message, et le juge ne voyait que les sujets
+    (« seul le sujet est fourni, donc on ne peut pas vérifier la mention »)."""
+    depot = _depot(tmp_path / "depot", "chore: socle")
+    base = _git(depot, "rev-parse", "HEAD")
+    _depot(
+        depot,
+        "fix(fil): une seule ponctuation\n\nLa cause est ponctuée une fois.\n\nRefs #1592",
+        **{"a.py": "x = 1\n"},
+    )
+    long = "docs: un long corps\n\n" + "détail. " * 800 + "\n\nRefs #7"
+    _depot(depot, long, **{"b.py": "y = 1\n"})
+    _depot(depot, "Maestro : intégrer la tâche", **{"c.py": "z = 1\n"})
+    lecteur = LecteurFactice()
+
+    gr.rejouer(
+        depot,
+        tmp_path / "clone",
+        choix=("messages de commit : Conventional Commits, avec Refs #<iid> ou Closes #<iid>",),
+        lecteur=lecteur,
+        poste=_poste(Joueur()),
+        axes=(gr.AXE_COMMITS,),
+        base=base,
+    )
+
+    (commits,) = [prompt for prompt in lecteur.juges if "<commits>" in prompt]
+    assert commits.count("<commit>") == 3 and "chore: socle" not in commits
+    assert "La cause est ponctuée une fois.\n\nRefs #1592" in commits
+    assert "Maestro : intégrer la tâche" in commits
+    # Un message trop long garde son début et sa fin : la référence vit dans le pied.
+    assert "docs: un long corps" in commits and "Refs #7" in commits
+    assert len(commits) < len(long) + 2000
+
+
+@AVEC_GIT
 def test_un_build_rate_laisse_les_pages_non_jouees(tmp_path: Path) -> None:
     grille = _rejouer(tmp_path, LecteurFactice(), Joueur({"npm run build": 2}))
     assert grille.ligne(gr.AXE_BUILD).etat == gr.MANQUE
@@ -904,7 +1052,9 @@ def test_un_juge_qui_s_abstient_ne_compte_ni_pour_ni_contre(tmp_path: Path) -> N
 
 @AVEC_GIT
 def test_sans_choix_les_lignes_qui_en_dependent_ne_se_jugent_pas(tmp_path: Path) -> None:
-    grille = _rejouer(tmp_path, LecteurFactice(), Joueur(), choix=())
+    lecteur = LecteurFactice()
+    grille = _rejouer(tmp_path, lecteur, Joueur(), choix=())
+    assert lecteur.ecartements == []  # sans choix, rien n'est écarté
     assert grille.ligne(gr.AXE_COMMITS).etat == gr.NON_JUGE
     assert grille.ligne(gr.AXE_OUTILLAGE).etat == gr.NON_JUGE
     assert grille.ligne(gr.AXE_CI).etat == gr.TENU
@@ -1245,6 +1395,37 @@ def test_rejouer_met_des_livrables_existants_cote_a_cote(tmp_path: Path) -> None
     ]
     texte = (dossier / cmp.FICHIER_MARKDOWN).read_text("utf-8")
     assert "livrables rejoués seulement" in texte
+
+
+@AVEC_GIT
+def test_les_lignes_ecartees_se_lisent_une_fois_pour_les_deux_cotes(tmp_path: Path) -> None:
+    """Les lignes que la personne écarte dépendent de ses choix, pas du livrable : une seule
+    lecture vaut pour les deux côtés, et le rapport ne les compte pas dans ce qui se tient."""
+    maestro = _depot(tmp_path / "maestro", "feat: socle", **{"package.json": "{}\n"})
+    chaine = _depot(tmp_path / "chaine", "feat: socle", **{"package.json": "{}\n"})
+    lecteur = LecteurFactice(
+        ecartees="ECARTEES: FORMATAGE\nPOURQUOI: la personne n'applique aucun formateur."
+    )
+    code, sortie, erreur, rapports = _main(
+        tmp_path,
+        "--rejouer",
+        f"maestro={maestro}",
+        "--rejouer",
+        f"chaine={chaine}",
+        lecteur=lecteur,
+    )
+    assert code == cmp.CODE_ECRIT, erreur
+    assert len(lecteur.ecartements) == 1
+    assert "lignes écartées par la personne" in sortie
+    dossier = rapports / "20261015-120000"
+    donnees = json.loads((dossier / cmp.FICHIER_JSON).read_text("utf-8"))
+    for passage in donnees["passages"]:
+        etats = {ligne["axe"]: ligne["etat"] for ligne in passage["grille"]["lignes"]}
+        assert etats[gr.AXE_FORMATAGE] == gr.SANS_OBJET
+        assert passage["grille"]["jugees"] == passage["grille"]["tenues"] == len(gr.AXES) - 1
+    texte = (dossier / cmp.FICHIER_MARKDOWN).read_text("utf-8")
+    assert f"| Lignes tenues (sur {len(gr.AXES) - 1}) |" in texte
+    assert "| Formatage | sans objet | sans objet |" in texte
 
 
 @AVEC_GIT
