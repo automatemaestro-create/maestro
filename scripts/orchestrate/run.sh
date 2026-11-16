@@ -2850,6 +2850,83 @@ case "$SONDE_MODELE" in 0 | non | off | false) SONDE_MODELE=0 ;; *) SONDE_MODELE
 SONDE_DELAI_S="${MAESTRO_ORCHESTRATE_SONDE_DELAI:-120}"
 case "$SONDE_DELAI_S" in '' | *[!0-9]*) SONDE_DELAI_S=120 ;; esac
 
+# --- La connexion des sessions : le jeton d'abonnement du .env (#1676) --------------------------------
+# Le CLI `claude` ne lit pas le `.env` (.env.example le dit). La sonde et les sessions d'un run
+# dépendraient donc de la connexion propre du CLI (`claude auth login`), une session OAuth qui expire
+# seule, alors que le produit est servi par le jeton du `.env` (`maestro/config.py`,
+# `ClaudeProvider._auth_env`). Ce jeton, `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`, valable un
+# an), est la connexion de tous les outils qui lancent le CLI.
+#
+# L'ordre est celui du produit : l'environnement l'emporte (la CI, un poste qui l'exporte), puis le
+# `.env` du dépôt ; vide partout, le CLI garde sa propre connexion. Une clé ANTHROPIC_API_KEY ou un
+# bearer ANTHROPIC_AUTH_TOKEN de l'environnement passent avant tout jeton chez le CLI : ils ne sont pas
+# neutralisés, la ligne `connexion :` le dit.
+#
+# Seul le processus qui lance les sessions EXPORTE le jeton (après le détachement, plus bas) : un run
+# détaché relit lui-même le `.env`, et sa ligne dit d'où vient la connexion au lieu de prendre pour
+# « l'environnement » ce que son lanceur lui aurait transmis. La sonde le reçoit dans son seul
+# sous-shell. La valeur n'est jamais imprimée.
+ENV_DU_DEPOT="$RACINE/.env"
+CONNEXION_JETON=''
+CONNEXION_ORIGINE=cli
+
+# jeton_du_env <fichier> : la valeur de CLAUDE_CODE_OAUTH_TOKEN que le produit lirait dans ce fichier
+# (python-dotenv : la dernière affectation l'emporte, vide comprise), sans exécuter le fichier — un
+# `source` exécuterait n'importe quoi. `export `, guillemets et commentaire de fin sont ôtés.
+jeton_du_env() {
+  [ -f "$1" ] || return 0
+  awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=/ {
+      v = $0
+      sub(/^[^=]*=[[:space:]]*/, "", v)
+      if (v ~ /^"/) { sub(/^"/, "", v); sub(/".*$/, "", v) }
+      else if (v ~ /^\047/) { sub(/^\047/, "", v); sub(/\047.*$/, "", v) }
+      else { sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v) }
+      dernier = v
+    }
+    END { if (dernier != "") print dernier }
+  ' "$1" 2>/dev/null
+}
+
+# connexion_resolue : pose CONNEXION_ORIGINE (`environnement`, `env` ou `cli`) et, pour `env` seulement,
+# CONNEXION_JETON — ce qu'il reste à transmettre au CLI.
+connexion_resolue() {
+  CONNEXION_JETON=''
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    CONNEXION_ORIGINE=environnement
+    return 0
+  fi
+  CONNEXION_JETON="$(jeton_du_env "$ENV_DU_DEPOT")"
+  if [ -n "$CONNEXION_JETON" ]; then CONNEXION_ORIGINE='env'; else CONNEXION_ORIGINE='cli'; fi
+}
+
+# connexion_libelle : d'où le CLI tiendra sa connexion, pour la ligne `connexion :`. Jamais la valeur.
+connexion_libelle() {
+  local devant=''
+  if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then devant=ANTHROPIC_AUTH_TOKEN
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then devant=ANTHROPIC_API_KEY; fi
+  if [ -n "$devant" ]; then
+    printf '%s de l'\''environnement — le CLI la fait passer avant tout jeton d'\''abonnement' "$devant"
+    return 0
+  fi
+  case "$CONNEXION_ORIGINE" in
+    environnement) printf 'jeton d'\''abonnement de l'\''environnement (CLAUDE_CODE_OAUTH_TOKEN)' ;;
+    env) printf 'jeton d'\''abonnement du .env (CLAUDE_CODE_OAUTH_TOKEN, %s)' "$ENV_DU_DEPOT" ;;
+    *) printf 'celle du CLI (claude auth login) — aucun CLAUDE_CODE_OAUTH_TOKEN dans l'\''environnement ni dans %s' \
+         "$ENV_DU_DEPOT" ;;
+  esac
+}
+
+# connexion_reparer : le geste qui rend au CLI une connexion, selon celle qu'il tient.
+connexion_reparer() {
+  case "$CONNEXION_ORIGINE" in
+    env) printf 'claude setup-token, puis recopier le jeton dans CLAUDE_CODE_OAUTH_TOKEN de %s' "$ENV_DU_DEPOT" ;;
+    environnement) printf 'claude setup-token, puis remplacer CLAUDE_CODE_OAUTH_TOKEN dans l'\''environnement' ;;
+    *) printf 'claude auth login' ;;
+  esac
+}
+
 # familles_connues : les familles du fichier, séparées par des virgules — pour les messages.
 familles_connues() {
   awk -F'\t' '{ sub(/\r$/, "") } /^#/ || NF < 2 { next } { printf "%s%s", (n++ ? ", " : ""), $1 }' \
@@ -2878,7 +2955,8 @@ sonde_modele() {
   # En flux, comme une session (#1551) : c'est le flux qui porte les événements `rate_limit_event`,
   # donc l'usage du quota AVANT le premier ticket — la garde de quota s'en sert au départ. Le
   # résultat est la ligne `result` du flux, que la suite lit comme elle lisait la sortie `json`.
-  ( cd "$tmp" && ${delai[@]+"${delai[@]}"} "$CLAUDE_BIN" -p 'Réponds seulement : ok' \
+  ( [ -z "$CONNEXION_JETON" ] || export CLAUDE_CODE_OAUTH_TOKEN="$CONNEXION_JETON"
+    cd "$tmp" && ${delai[@]+"${delai[@]}"} "$CLAUDE_BIN" -p 'Réponds seulement : ok' \
       --model "$MODELE" --effort "$EFFORT" \
       --output-format stream-json --verbose --tools '' --no-session-persistence --strict-mcp-config \
       --system-prompt 'Sonde du modèle avant un run : réponds seulement « ok ».' </dev/null ) \
@@ -2924,8 +3002,12 @@ sonde_modele() {
   requise="$(printf '%s\n' "$message" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | grep -vxF "${version:-_}" | head -1)"
   case "$erreur" in
     authentication_failed)
-      tete="le CLI installé n'est pas authentifié"
-      geste='claude auth login — puis relancer (claude auth status le vérifie)' ;;
+      case "$CONNEXION_ORIGINE" in
+        env) tete="le jeton CLAUDE_CODE_OAUTH_TOKEN du .env ne connecte pas le CLI" ;;
+        environnement) tete="le jeton CLAUDE_CODE_OAUTH_TOKEN de l'environnement ne connecte pas le CLI" ;;
+        *) tete="le CLI installé n'est pas authentifié" ;;
+      esac
+      geste="$(connexion_reparer) — puis relancer (claude auth status le vérifie)" ;;
     billing_error)
       tete="le compte du CLI ne peut pas payer la requête"
       geste="l'organisation et les crédits du compte (claude auth status les nomme) — puis relancer" ;;
@@ -2943,13 +3025,16 @@ sonde_modele() {
     printf '  aucune session lancée, aucun run arrêté, aucun lot sauté.\n'
     printf '  réponse du CLI    %s\n' "${message:-(aucune, code $code)}"
     printf '  CLI installé      %s\n' "$([ -n "$version" ] && printf 'Claude Code %s' "$version" || printf '(version illisible)')"
+    printf '  connexion         %s\n' "$(connexion_libelle)"
     [ -n "$requise" ] && printf '  version requise   %s ou plus récente\n' "$requise"
     if [ -n "$geste" ]; then
       printf '  cause établie     champ error du CLI : %s\n' "$erreur"
       printf '  débloquer         %s\n' "$geste"
+      [ "$erreur" = authentication_failed ] && [ "$CONNEXION_ORIGINE" = cli ] &&
+        printf '  durablement       claude setup-token, puis le jeton dans CLAUDE_CODE_OAUTH_TOKEN de %s :\n                    la connexion de tous les outils, sans reconnexion pendant un an\n' "$ENV_DU_DEPOT"
     else
       printf '  débloquer         selon la réponse du CLI, puis relancer :\n'
-      printf '                    · session absente ou expirée : claude auth login\n'
+      printf '                    · connexion absente ou expirée : %s\n' "$(connexion_reparer)"
       printf '                    · CLI trop ancien pour ce modèle : claude update\n'
       printf '                    · modèle indisponible : --modele <famille|claude-…> (familles du dépôt : %s)\n' \
         "$(familles_connues)"
@@ -3017,6 +3102,11 @@ case "$MODELE_DEMANDE" in
 esac
 
 if arret_demande; then exit 0; fi
+
+# La connexion (#1676), dite avant la sonde qui l'éprouve : c'est la première chose à regarder quand
+# elle refuse, et run.log la garde.
+connexion_resolue
+printf 'connexion : %s\n' "$(connexion_libelle)"
 
 # La sonde du modèle (#1269), AVANT la place nette : un run refusé ne doit avoir arrêté personne.
 # Un run détaché la joue ici, dans le processus appelant — c'est lui que regarde celui qui lance, et
@@ -3309,6 +3399,10 @@ if [ "$DETACH" = 1 ]; then
   printf 'déjà livrés étant sautés d'\''eux-mêmes.\n'
   exit 0
 fi
+
+# Le processus courant EST le run : ses sessions héritent du jeton du `.env` (#1676). Plus haut, le
+# processus appelant d'un run détaché ne l'exporte pas — le run détaché relit le `.env` lui-même.
+[ -z "$CONNEXION_JETON" ] || export CLAUDE_CODE_OAUTH_TOKEN="$CONNEXION_JETON"
 
 # --- La carte du pilote (#213) ------------------------------------------------------------------------
 # ICI et pas plus haut : au-dessus, en mode détaché, c'est le processus APPELANT qui passait — sa

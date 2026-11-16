@@ -58,6 +58,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from dotenv import dotenv_values
+
+#: Le `.env` du dépôt, d'où vient la connexion de la session fille (#1676, comme dans
+#: essai-ecriture-claude).
+ENV_DU_DEPOT = Path(__file__).resolve().parents[2] / ".env"
+
 APRES = "APRES-847"
 AVANT = "AVANT-847"
 MODELE = "claude-haiku-4-5-20251001"
@@ -120,12 +126,18 @@ def prepare(racine: Path) -> tuple[Path, Path, Path]:
     return depot, gere, frere
 
 
-def environnement() -> dict[str, str]:
-    """L'env de la session fille, débarrassé de ce que la session mère y a laissé (cf. #238)."""
+def environnement(env_du_depot: Path = ENV_DU_DEPOT) -> dict[str, str]:
+    """L'env de la session fille, débarrassé de ce que la session mère y a laissé (cf. #238),
+    avec la connexion de `run.sh` et du produit : le `CLAUDE_CODE_OAUTH_TOKEN` de
+    l'environnement, sinon celui du `.env` du dépôt (#1676)."""
     env = dict(os.environ)
     for cle in list(env):
         if cle.startswith("CLAUDE_PROJECT") or cle in {"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}:
             del env[cle]
+    if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and env_du_depot.is_file():
+        jeton = dotenv_values(env_du_depot).get("CLAUDE_CODE_OAUTH_TOKEN")
+        if jeton:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = jeton
     return env
 
 

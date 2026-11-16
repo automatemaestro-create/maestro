@@ -41,6 +41,7 @@ from pathlib import Path
 
 import pytest
 from conftest import CLE_COULEUR_ORCHESTRATE  # le conftest du dossier, sur le sys.path de pytest
+from dotenv import dotenv_values
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
@@ -803,6 +804,11 @@ def depot(tmp_path: Path) -> Depot:
         # la feraient échouer comme ils font échouer un ticket. Les tests qui la visent la
         # rallument (voir « Le modèle du run » plus bas).
         "MAESTRO_ORCHESTRATE_SONDE_MODELE": "0",
+        # La connexion du poste n'entre pas (#1676) : un jeton ou une clé exportés sur la machine
+        # changeraient la provenance que `run.sh` annonce et transmet. Vide vaut « absent ».
+        "CLAUDE_CODE_OAUTH_TOKEN": "",
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_AUTH_TOKEN": "",
         "GL_GQL_RETRIES": "1",
         "GL_GQL_RETRY_DELAY": "0",
     }
@@ -1755,6 +1761,8 @@ def test_une_session_expiree_a_la_sonde_n_accuse_pas_le_modele(depot: Depot) -> 
     assert SESSION_EXPIREE in r.stderr, "la réponse du CLI, recopiée pour la personne"
     assert "authentication_failed" in r.stderr, "le champ qui établit la cause"
     assert "claude auth login" in r.stderr, "le geste qui débloque"
+    assert "connexion         celle du CLI (claude auth login)" in r.stderr, r.stderr
+    assert "durablement       claude setup-token" in r.stderr, "la connexion qui n'expire pas"
     assert "claude update" not in r.stderr and "--modele" not in r.stderr, r.stderr
     assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
     assert not (depot.racine / ".maestro/orchestrate/expiree").exists(), "aucun run, aucun lot"
@@ -1812,6 +1820,170 @@ def test_la_cause_d_un_echec_de_sonde_se_lit_dans_le_champ_type_jamais_dans_le_t
     for exclu in absents:
         assert exclu not in r.stderr, (exclu, r.stderr)
     assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
+
+
+# =====================================================================================
+# La connexion des sessions : le jeton d'abonnement du .env (#1676)
+# =====================================================================================
+#
+# Le CLI ne lit pas le `.env`. Sans pont, la sonde et les sessions d'un run tenaient leur connexion
+# du seul `claude auth login`, une session OAuth qui expire seule (run refusé le 2026-11-04, de
+# nouveau le 2026-11-16), alors que le produit restait servi par le jeton du `.env`. Ces tests
+# gardent la provenance (l'environnement, puis le `.env`, puis le CLI), son annonce, et le secret :
+# la valeur n'apparaît ni dans la sortie ni dans le journal du run.
+
+JETON_DU_ENV = "sk-ant-oat01-jeton-du-env-1676"
+
+
+def _claude_note_le_jeton(depot: Depot, journal: Path, sonde: str = SONDE_SERVIE) -> str:
+    """Bouchon qui note, pour la sonde comme pour une session, le jeton reçu dans l'environnement
+    (`absent` sans jeton). La session livre le ticket 130 comme /ticket-ship l'aurait fait."""
+    return _claude_stub(depot, f"""
+        if [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; exit 0; fi
+        if printf '%s\\n' "$@" | grep -qx -- '--no-session-persistence'; then
+          printf 'sonde %s\\n' "${{CLAUDE_CODE_OAUTH_TOKEN:-absent}}" >> "{journal}"
+          {sonde}
+        fi
+        printf 'session %s\\n' "${{CLAUDE_CODE_OAUTH_TOKEN:-absent}}" >> "{journal}"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+
+
+def _ecrit_env(depot: Depot, contenu: str) -> Path:
+    """Le `.env` du dépôt jetable, écrit octet pour octet (un CRLF reste un CRLF)."""
+    chemin = depot.racine / ".env"
+    chemin.write_bytes(contenu.encode("utf-8"))
+    return chemin
+
+
+def _sans_trace_du_jeton(depot: Depot, run_id: str, r: subprocess.CompletedProcess[str],
+                         jeton: str) -> None:
+    assert jeton not in r.stdout and jeton not in r.stderr, "la valeur ne s'imprime jamais"
+    for fichier in (depot.racine / ".maestro/orchestrate" / run_id).rglob("*"):
+        if fichier.is_file():
+            assert jeton.encode("utf-8") not in fichier.read_bytes(), fichier
+
+
+def _run_du_ticket_130(depot: Depot, run_id: str, claude: str,
+                     env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    return depot.lance("run.sh", "--plan", plan, "--run-id", run_id,
+                       env={"MAESTRO_CLAUDE_BIN": claude, **SONDE, **(env or {})})
+
+
+def test_la_sonde_et_les_sessions_recoivent_le_jeton_du_env(depot: Depot) -> None:
+    """Le cas du 2026-11-16 : le CLI n'est plus connecté, le `.env` porte le jeton. La sonde et la
+    session le reçoivent, et la ligne `connexion :` dit d'où il vient."""
+    _ecrit_env(depot, "# [perso] abonnement\nANTHROPIC_API_KEY=\n"
+                      f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\n")
+    journal = depot.racine.parent / "jetons-env"
+    r = _run_du_ticket_130(depot, "jeton-env", _claude_note_le_jeton(depot, journal))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _appels(journal) == [f"sonde {JETON_DU_ENV}", f"session {JETON_DU_ENV}"]
+    assert "connexion : jeton d'abonnement du .env (CLAUDE_CODE_OAUTH_TOKEN, " in r.stdout
+    _sans_trace_du_jeton(depot, "jeton-env", r, JETON_DU_ENV)
+
+
+def test_un_jeton_de_l_environnement_l_emporte_sur_celui_du_env(depot: Depot) -> None:
+    """L'ordre du produit : la CI, ou un poste qui exporte son jeton, gardent le leur."""
+    _ecrit_env(depot, f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\n")
+    journal = depot.racine.parent / "jetons-environnement"
+    r = _run_du_ticket_130(depot, "jeton-environnement", _claude_note_le_jeton(depot, journal),
+                         env={"CLAUDE_CODE_OAUTH_TOKEN": "jeton-de-l-environnement"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    jeton = "jeton-de-l-environnement"
+    assert _appels(journal) == [f"sonde {jeton}", f"session {jeton}"]
+    assert "connexion : jeton d'abonnement de l'environnement (CLAUDE_CODE_OAUTH_TOKEN)" in r.stdout
+    _sans_trace_du_jeton(depot, "jeton-environnement", r, "jeton-de-l-environnement")
+
+
+def test_sans_jeton_le_cli_garde_sa_connexion_et_le_dit(depot: Depot) -> None:
+    """Sans jeton nulle part, rien n'est transmis : le CLI se sert de sa propre connexion, et la
+    ligne le nomme avec son geste, pour qu'une expiration ne soit pas une surprise."""
+    journal = depot.racine.parent / "jetons-cli"
+    r = _run_du_ticket_130(depot, "jeton-cli", _claude_note_le_jeton(depot, journal))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _appels(journal) == ["sonde absent", "session absent"]
+    assert ("connexion : celle du CLI (claude auth login) — aucun CLAUDE_CODE_OAUTH_TOKEN"
+            in r.stdout)
+
+
+def test_une_cle_api_de_l_environnement_est_annoncee_avant_le_jeton(depot: Depot) -> None:
+    """Le CLI fait passer une clé API avant tout jeton : la ligne le dit plutôt que d'annoncer un
+    jeton qui ne servira pas."""
+    _ecrit_env(depot, f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\n")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan,
+                    env={"ANTHROPIC_API_KEY": "sk-ant-api-du-poste"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("connexion : ANTHROPIC_API_KEY de l'environnement — le CLI la fait passer avant tout "
+            "jeton d'abonnement") in r.stdout
+    assert "sk-ant-api-du-poste" not in r.stdout + r.stderr
+
+
+@pytest.mark.parametrize(
+    "contenu, attendu",
+    [
+        (f'export CLAUDE_CODE_OAUTH_TOKEN="{JETON_DU_ENV}"  # claude setup-token\n', JETON_DU_ENV),
+        (f"ANTHROPIC_API_KEY=\r\nCLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\r\n", JETON_DU_ENV),
+        (f"CLAUDE_CODE_OAUTH_TOKEN=ancien\nCLAUDE_CODE_OAUTH_TOKEN='{JETON_DU_ENV}'\n",
+         JETON_DU_ENV),
+        (f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\nCLAUDE_CODE_OAUTH_TOKEN=\n", None),
+        (f"# CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\nCLAUDE_CODE_OAUTH_TOKEN_BIS=autre\n", None),
+    ],
+    ids=["export-guillemets-commentaire", "crlf", "la-derniere-l-emporte", "videe-plus-bas",
+         "commentee-ou-autre-cle"],
+)
+def test_le_jeton_se_lit_comme_le_produit_le_lit(depot: Depot, contenu: str,
+                                                 attendu: str | None) -> None:
+    """`run.sh` ne charge pas le `.env` comme le produit (python-dotenv), il en lit une clé : les
+    deux lectures doivent rendre le même jeton, sans quoi un run et le produit ne parleraient pas
+    au même compte. La sonde, refusée, arrête le run juste après avoir reçu le jeton."""
+    chemin = _ecrit_env(depot, contenu)
+    assert (dotenv_values(chemin).get("CLAUDE_CODE_OAUTH_TOKEN") or None) == attendu, "le produit"
+    journal = depot.racine.parent / "jetons-lecture"
+    claude = _claude_note_le_jeton(depot, journal, SONDE_SESSION_EXPIREE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "lecture",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert _appels(journal) == [f"sonde {attendu or 'absent'}"]
+
+
+def test_un_jeton_du_env_que_le_cli_refuse_nomme_son_renouvellement(depot: Depot) -> None:
+    """Le jeton du `.env` refusé : se reconnecter au CLI ne servirait à rien, puisque le jeton passe
+    devant. Le geste est d'en tirer un neuf et de le recopier là où il a été lu."""
+    _ecrit_env(depot, f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\n")
+    journal = depot.racine.parent / "jetons-refuse"
+    claude = _claude_note_le_jeton(depot, journal, SONDE_SESSION_EXPIREE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "refuse",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "le jeton CLAUDE_CODE_OAUTH_TOKEN du .env ne connecte pas le CLI" in r.stderr, r.stderr
+    assert "débloquer         claude setup-token, puis recopier le jeton dans" in r.stderr
+    assert "claude auth login" not in r.stderr, "le jeton passerait devant une reconnexion"
+    assert JETON_DU_ENV not in r.stdout + r.stderr
+
+
+def test_le_lanceur_d_un_run_detache_ne_porte_pas_le_jeton(depot: Depot) -> None:
+    """Le run détaché relit le `.env` lui-même : ni son lanceur, ni l'environnement qu'on lui passe
+    ne portent le jeton — sa ligne `connexion :` dit donc d'où il vient vraiment, et le secret ne
+    s'écrit pas dans `lancer.sh`."""
+    _ecrit_env(depot, f"CLAUDE_CODE_OAUTH_TOKEN={JETON_DU_ENV}\n")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    note = 'printf "%s\\n" "${CLAUDE_CODE_OAUTH_TOKEN:-absent}"'
+    spawn = _spawn_stub(depot, note + ' > "$MAESTRO_FIXTURES/spawn-jeton.txt"\n')
+    claude = _claude_stub(depot, 'echo "aucune session côté pilote" >&2\nexit 1\n')
+    r = depot.lance("run.sh", "--detach", "--plan", plan, "--run-id", "detache-jeton",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "spawn-jeton.txt").read_text(encoding="utf-8").strip() == "absent"
+    _sans_trace_du_jeton(depot, "detache-jeton", r, JETON_DU_ENV)
 
 
 def test_la_sonde_joue_sous_le_regime_des_sessions(depot: Depot) -> None:
