@@ -88,8 +88,9 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from maestro.outillage.analyse import completer
-from maestro.outillage.detection import ROLE_INSTRUCTIONS, lire_texte
+from maestro.outillage.detection import ROLE_INSTRUCTIONS
 from maestro.outillage.modele import (
+    ORIGINE_PRESCRITE,
     ORIGINES_COMMANDE,
     USAGES,
     Analyse,
@@ -130,11 +131,23 @@ CLES_CONSTAT: tuple[str, ...] = (
     "COMMANDE",
     "CI",
     "INSTRUCTIONS",
+    "EXCLUDED",
+    "GUARDED",
     "POUR",
 )
 
 #: La clé d'un fichier que le projet écrit pour ses agents (#1542).
 INSTRUCTIONS = "INSTRUCTIONS"
+
+#: La clé d'un usage que les **instructions** du projet écartent (#1678) — un formateur
+#: que le dépôt n'applique pas. Seul un fichier d'instructions lu en écarte un : un fichier
+#: de configuration déclare ce qu'il configure, il ne dit pas aux agents de ne pas le jouer.
+#: Clés neuves, donc en anglais (docs/55 §4, règle 3 : ce que le modèle reçoit voyage).
+EXCLU = "EXCLUDED"
+
+#: La clé d'un fichier que le projet **garde** (#1678) — le budget de `CLAUDE.md` qu'un
+#: test vérifie. Une pièce qui y écrirait un bloc le dit avant d'être écrite.
+GARDE = "GUARDED"
 
 #: La clé qui dit ce qu'une commande rendue fait **pour ce projet** (#1350, #1381) — la
 #: description du skill qui la porte. Demandée par la revue d'après un run (`echecs`),
@@ -180,6 +193,8 @@ GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <fi
 COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
 CI: <nom de la CI> | <fichier lu qui la définit>
 INSTRUCTIONS: <fichier lu> | <ce qu'il prescrit aux agents, en quelques mots>
+EXCLUDED: <usage> | <fichier d'instructions lu> | <ce qu'il y dit>
+GUARDED: <fichier du projet> | <fichier lu qui le dit gardé> | <ce qu'il exige>
 FIN
 Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
 quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
@@ -197,12 +212,32 @@ Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « convention » : c'est la commande usuelle de l'outil que le fichier prouve, sans
 que le projet l'écrive. Ne présente jamais une convention comme déclarée.
 
+Les instructions du projet l'emportent sur les indices. Quand un fichier
+d'instructions dit aux agents comment installer, tester ou vérifier leur travail —
+l'interpréteur de l'environnement du projet plutôt que l'outil nu, le périmètre du
+changement plutôt que la suite entière, un script du projet —, rends en COMMANDE la
+commande qu'il prescrit, « declaree », avec ce fichier pour fichier lu : même si les
+indices ont une autre commande pour cet usage, et même s'ils ont la même. Ce qu'il
+prescrit vaut pour chaque usage qu'il couvre : un script de vérification qui joue tests,
+lint et types rend une COMMANDE pour chacun, et une commande que tu en tires — une option
+lue dans le script — cite encore le fichier d'instructions, puisque c'est lui qui la
+prescrit. Quand ses instructions écartent un usage que les indices proposent — un
+formateur que le projet n'applique pas, un outil qu'elles n'exigent pas —, rends EXCLUDED
+pour cet usage. Un
+fichier d'instructions se lit en entier : s'il t'est servi tronqué, redemande-le
+(LIRE du même chemin) pour en avoir la suite.
+
+GUARDED : un fichier existant où Maestro écrirait un bloc — AGENTS.md, CLAUDE.md,
+GEMINI.md — que le projet garde : un budget, un contenu qu'un test vérifie, une règle
+qui interdit d'y ajouter. Le fichier lu est celui qui le dit.
+
 Règles :
-- Chaque GESTIONNAIRE, COMMANDE, CI et INSTRUCTIONS cite un fichier que tu as LU
-  pendant cette lecture ; un LANGAGE peut citer un fichier seulement listé. Un
-  constat qui cite un fichier que tu n'as pas lu sera écarté.
+- Chaque GESTIONNAIRE, COMMANDE, CI, INSTRUCTIONS, EXCLUDED et GUARDED cite un
+  fichier que tu as LU pendant cette lecture ; un LANGAGE peut citer un fichier
+  seulement listé. Un constat qui cite un fichier que tu n'as pas lu sera écarté.
 - Les indices fournis viennent des tables de Maestro : ils sont vrais mais
-  incomplets. Ne les répète pas, complète-les.
+  incomplets. Ne les répète pas, complète-les — sauf la commande que des
+  instructions prescrivent, qui se rend toujours.
 - N'invente rien : aucune commande que ni le fichier ni l'outil qu'il prouve ne
   justifie. S'il n'y a rien à ajouter aux indices, réponds seulement FIN.
 - Lis peu et juste — manifestes, fichiers de construction, de tâches et de CI
@@ -274,6 +309,9 @@ class Explorateur:
         self._ignores = frozenset(self.bornes.ignores)
         self._racine_reelle = self.racine.resolve()
         self._deja: set[tuple[str, str]] = set()
+        # Fichier lu → octets déjà servis, et sa taille (#1678) : un fichier coupé se
+        # relit, et la relecture en sert la suite plutôt que de rendre « déjà servi ».
+        self._servis: dict[str, tuple[int, int]] = {}
 
     @property
     def restantes(self) -> int:
@@ -292,7 +330,10 @@ class Explorateur:
         if relatif is None:
             return self._refuser(demande, motif)
         cle = (demande.verbe, relatif)
-        if cle in self._deja:
+        suite = not dossier and self._a_une_suite(relatif)
+        if cle in self._deja and not suite:
+            if not dossier:
+                return f"{demande.ligne()}\n(déjà servi en entier plus haut : relis-le là)"
             return f"{demande.ligne()}\n(déjà servi plus haut : relis-le au lieu de le redemander)"
         if self.servies >= self.bornes.lectures_max:
             self.noter_troncature("lectures-max")
@@ -405,28 +446,54 @@ class Explorateur:
         corps = "\n".join(lignes) if lignes else "(vide)"
         return f"{demande.ligne()}\n{tete}\n{corps}\n----- fin du dossier {nom} -----"
 
+    def _a_une_suite(self, relatif: str) -> bool:
+        """Ce fichier a-t-il été servi coupé, et lui reste-t-il des octets à servir ?"""
+        servis, taille = self._servis.get(relatif, (0, 0))
+        return 0 < servis < taille
+
     def _lire(self, demande: Demande, relatif: str) -> str:
-        """Le début d'un fichier, plafonné — la coupure dite au modèle comme à l'appelant."""
+        """Une tranche d'un fichier, plafonnée — la coupure dite au modèle comme à l'appelant.
+
+        La première lecture sert le début ; la relecture d'un fichier coupé en sert la
+        suite (#1678) : les instructions d'un dépôt réel dépassent une tranche, et les
+        commandes qu'elles prescrivent peuvent se trouver après la première. Chaque tranche
+        compte pour une lecture. Une tranche coupée s'arrête à une fin de
+        ligne quand il y en a une : la suivante repart au début d'une ligne.
+        """
         chemin = self.racine / relatif
         try:
             taille = chemin.stat().st_size
         except OSError:
             return f"{demande.ligne()}\n(fichier illisible)"
-        plafond = self.bornes.octets_par_lecture_max
-        texte = lire_texte(chemin, plafond)
-        self.lus.append(relatif)
-        self.vus.add(relatif)
+        debut = self._servis.get(relatif, (0, 0))[0]
+        texte, fin = _tranche(chemin, debut, self.bornes.octets_par_lecture_max)
+        if not debut:
+            self.lus.append(relatif)
+            self.vus.add(relatif)
         if "\x00" in texte:
+            self._servis[relatif] = (taille, taille)
             return (
                 f"{demande.ligne()}\n----- {relatif} ({taille} octets) : fichier binaire, "
                 "contenu non servi -----"
             )
-        tete = f"----- début de {relatif} ({taille} octets"
-        pied = f"----- fin de {relatif}"
-        if taille > plafond:
+        self._servis[relatif] = (fin, taille)
+        coupe = fin < taille
+        if coupe:
             self.noter_troncature("fichier-tronque")
-            self.tronques.append(relatif)
-            tete += f" ; tronqué : seuls les {plafond} premiers sont servis"
+            if relatif not in self.tronques:
+                self.tronques.append(relatif)
+        if debut:
+            tete = f"----- suite de {relatif} (octets {debut} à {fin} sur {taille}"
+        else:
+            tete = f"----- début de {relatif} ({taille} octets"
+        pied = f"----- fin de {relatif}"
+        if coupe:
+            servis = fin - debut
+            tete += (
+                f" ; tronqué : seuls les {servis} premiers sont servis — relis-le pour la suite"
+                if not debut
+                else " ; tronqué — relis-le pour la suite"
+            )
             pied += " (tronqué)"
         return f"{demande.ligne()}\n{tete}) -----\n{texte}\n{pied} -----"
 
@@ -459,6 +526,29 @@ def _segments(brut: str) -> list[str] | None:
     if any(segment == ".." for segment in segments):
         return None
     return segments
+
+
+def _tranche(chemin: Path, debut: int, octets_max: int) -> tuple[str, int]:
+    """Le texte de `chemin` à partir de l'octet `debut`, au plus `octets_max`, et où il s'arrête.
+
+    Une tranche qui ne va pas au bout du fichier s'arrête après sa dernière fin de ligne,
+    s'il y en a une : la suivante repart au début d'une ligne, et aucun caractère n'est
+    coupé en deux. Sans fin de ligne, elle prend ses `octets_max`. Jamais une exception :
+    un fichier illisible rend une tranche vide, et la lecture s'arrête là (`fin` = taille
+    lue). Le décodage remplace les octets invalides, comme `detection.lire_texte`.
+    """
+    try:
+        with chemin.open("rb") as flux:
+            flux.seek(debut)
+            brut = flux.read(octets_max + 1)
+    except OSError:
+        return "", debut
+    if len(brut) > octets_max:
+        brut = brut[:octets_max]
+        ligne = brut.rfind(b"\n")
+        if ligne >= 0:
+            brut = brut[: ligne + 1]
+    return brut.decode("utf-8", errors="replace"), debut + len(brut)
 
 
 def _est_dossier(entree: os.DirEntry[str]) -> bool:
@@ -737,7 +827,15 @@ def _decoder(texte: str) -> _Reponse:
         if cle in (LISTER, LIRE):
             demandes.append(Demande(verbe=cle, chemin=reste.strip()))
         elif cle in CLES_CONSTAT:
-            coupes = 4 if cle == "COMMANDE" else 1 if cle in (POUR, INSTRUCTIONS) else -1
+            coupes = (
+                4
+                if cle == "COMMANDE"
+                else 1
+                if cle in (POUR, INSTRUCTIONS)
+                else 2
+                if cle in (EXCLU, GARDE)
+                else -1
+            )
             champs = tuple(_sans_gaine(champ.strip()) for champ in reste.split("|", coupes))
             constats.append(_ConstatBrut(cle=cle, champs=champs, ligne=ligne[:TEXTE_MAX]))
     return _Reponse(demandes=tuple(demandes), constats=tuple(constats), fin=fin)
@@ -781,6 +879,11 @@ class _Confronteur:
         self._commandes = {(c.usage, c.commande): _TABLES for c in indices.commandes}
         self._ci = {cle: _TABLES for p in indices.ci for cle in (p.nom.casefold(), p.chemin)}
         self._conventions = {p.chemin.casefold(): _TABLES for p in indices.conventions}
+        # Les fichiers d'instructions d'agent que les tables ont rangés : les seuls, avec
+        # ceux que cette lecture reconnaît (`_instructions_de`), qui prescrivent (#1678).
+        self._instructions = {
+            p.chemin.casefold() for p in indices.conventions if p.role == ROLE_INSTRUCTIONS
+        }
         self.langages: list[Langage] = []
         self.gestionnaires: list[tuple[str, str, str | None]] = []
         self.commandes: list[Commande] = []
@@ -788,15 +891,22 @@ class _Confronteur:
         self.conventions: list[Piece] = []
         self.ecartes: list[ConstatEcarte] = []
         self._pours: dict[str, tuple[str, str]] = {}
+        # Ce qui ne se tranche qu'une fois **toute** la réponse lue (#1678) : un fichier
+        # d'instructions peut être reconnu par une ligne qui suit celle qui le cite.
+        self._doublons_des_tables: list[tuple[Commande, str]] = []
+        self._exclus: list[tuple[Piece, str]] = []
+        self.gardes: list[Piece] = []
 
     def confronter(self, brut: _ConstatBrut) -> None:
         """Retient `brut`, ou l'écarte avec sa raison."""
         raison = {
             "LANGAGE": self._langage,
             "GESTIONNAIRE": self._gestionnaire,
-            "COMMANDE": self._commande,
+            "COMMANDE": lambda champs: self._commande(champs, brut.ligne),
             "CI": self._ci_de,
             INSTRUCTIONS: self._instructions_de,
+            EXCLU: lambda champs: self._exclu_de(champs, brut.ligne),
+            GARDE: self._garde_de,
             POUR: self._pour_de,
         }[brut.cle](brut.champs)
         if raison:
@@ -853,7 +963,14 @@ class _Confronteur:
         self.gestionnaires.append((nom, chemin, verrou))
         return ""
 
-    def _commande(self, champs: tuple[str, ...]) -> str:
+    def _commande(self, champs: tuple[str, ...], ligne: str = "") -> str:
+        """Une commande lue, retenue avec son fichier — ou écartée avec sa raison.
+
+        Une commande que les tables avaient déjà n'est pas écartée tout de suite (#1678) :
+        des instructions qui la **prescrivent** la reprennent à leur compte, et ce n'est
+        qu'une fois la réponse entière lue qu'on sait si le fichier cité en est un
+        (`resultat`).
+        """
         # L'extrait est le seul champ dont l'absence ne rend pas la ligne ambiguë :
         # à quatre champs, le dernier reste la commande.
         if len(champs) == 4:
@@ -872,22 +989,107 @@ class _Confronteur:
         chemin, raison = self._preuve(chemin_brut, lu=True)
         if chemin is None:
             return raison
-        if (usage, commande) in self._commandes:
-            return _deja(self._commandes[(usage, commande)], feminin=True)
-        self._commandes[(usage, commande)] = _LECTURE
         origine = origine.lower()
-        self.commandes.append(
-            Commande(
-                usage=usage,
-                commande=commande,
-                chemin=chemin,
-                extrait=_court(extrait) or f"lu dans {chemin}",
-                # Une origine illisible se lit « convention » : c'est la lecture
-                # prudente — une supposition ne passe jamais pour une déclaration.
-                origine=origine if origine in ORIGINES_COMMANDE else "convention",
-            )
+        lue = Commande(
+            usage=usage,
+            commande=commande,
+            chemin=chemin,
+            extrait=_court(extrait) or f"lu dans {chemin}",
+            # Une origine illisible se lit « convention » : c'est la lecture
+            # prudente — une supposition ne passe jamais pour une déclaration.
+            origine=origine if origine in ORIGINES_COMMANDE else "convention",
+        )
+        connue = self._commandes.get((usage, commande))
+        if connue == _TABLES:
+            self._doublons_des_tables.append((lue, ligne))
+            return ""
+        if connue:
+            return _deja(connue, feminin=True)
+        self._commandes[(usage, commande)] = _LECTURE
+        self.commandes.append(lue)
+        return ""
+
+    def _exclu_de(self, champs: tuple[str, ...], ligne: str = "") -> str:
+        """Un usage que les instructions écartent (#1678) — tranché à la fin, dans `resultat`."""
+        usage_brut = champs[0] if champs else ""
+        usage = _sans_accents(usage_brut).lower()
+        if usage not in USAGES:
+            return f"usage inconnu « {usage_brut} » (admis : {', '.join(USAGES)})"
+        chemin, raison = self._preuve(champs[1] if len(champs) > 1 else "", lu=True)
+        if chemin is None:
+            return raison
+        extrait = _court(champs[2]) if len(champs) > 2 else ""
+        self._exclus.append(
+            (Piece(nom=usage, chemin=chemin, role=extrait or f"lu dans {chemin}"), ligne)
         )
         return ""
+
+    def _garde_de(self, champs: tuple[str, ...]) -> str:
+        """Un fichier que le projet garde (#1678) : il existe, et un fichier lu le dit."""
+        garde, raison = self._preuve(champs[0] if champs else "", lu=False)
+        if garde is None:
+            return raison
+        preuve, raison = self._preuve(champs[1] if len(champs) > 1 else "", lu=True)
+        if preuve is None:
+            return raison
+        if any(p.nom.casefold() == garde.casefold() for p in self.gardes):
+            return _deja(_LECTURE)
+        exigence = _court(champs[2]) if len(champs) > 2 else ""
+        self.gardes.append(Piece(nom=garde, chemin=preuve, role=exigence or f"lu dans {preuve}"))
+        return ""
+
+    def _est_d_instructions(self, chemin: str) -> bool:
+        """`chemin` est-il l'un des fichiers d'instructions d'agent du projet ?"""
+        return chemin.casefold() in self._instructions
+
+    def _prescrire(self) -> None:
+        """Les commandes qui citent un fichier d'instructions deviennent `prescribed` (#1678).
+
+        Une commande **déclarée** dans un fichier d'instructions est ce que le projet dit
+        à ses agents de jouer : c'est le disque qui le reconnaît, pas le modèle qui le
+        revendique. Un doublon des tables qui n'est pas prescrit est écarté comme avant ;
+        prescrit, il est retenu, et `completer` le met à la place de celui des tables.
+        """
+        def prescrite(commande: Commande) -> Commande:
+            if commande.origine == "declaree" and self._est_d_instructions(commande.chemin):
+                return replace(commande, origine=ORIGINE_PRESCRITE)
+            return commande
+
+        self.commandes = [prescrite(c) for c in self.commandes]
+        for commande, ligne in self._doublons_des_tables:
+            tenue = prescrite(commande)
+            cle = (tenue.usage, tenue.commande)
+            if tenue.origine != ORIGINE_PRESCRITE or self._commandes.get(cle) == _LECTURE:
+                provenance = _TABLES if tenue.origine != ORIGINE_PRESCRITE else _LECTURE
+                self.ecartes.append(
+                    ConstatEcarte(ligne=ligne, raison=_deja(provenance, feminin=True))
+                )
+            else:
+                self._commandes[cle] = _LECTURE
+                self.commandes.append(tenue)
+
+    def _exclure(self) -> list[Piece]:
+        """Les usages écartés que la lecture retient — par des instructions, sans contradiction."""
+        prescrits = {c.usage: c.commande for c in self.commandes if c.origine == ORIGINE_PRESCRITE}
+        retenus: list[Piece] = []
+        for piece, ligne in self._exclus:
+            if not self._est_d_instructions(piece.chemin):
+                raison = (
+                    f"cite {piece.chemin}, qui n'est pas l'un des fichiers d'instructions du "
+                    "projet : seules ses instructions écartent un usage"
+                )
+            elif piece.nom in prescrits:
+                raison = (
+                    f"cette lecture prescrit `{prescrits[piece.nom]}` pour « {piece.nom} » : "
+                    "un usage prescrit n'est pas écarté"
+                )
+            elif any(p.nom == piece.nom for p in retenus):
+                raison = _deja(_LECTURE)
+            else:
+                retenus.append(piece)
+                continue
+            self.ecartes.append(ConstatEcarte(ligne=ligne, raison=raison))
+        return retenus
 
     def _ci_de(self, champs: tuple[str, ...]) -> str:
         nom = champs[0] if champs else ""
@@ -918,6 +1120,7 @@ class _Confronteur:
         if cle in self._conventions:
             return _deja(self._conventions[cle])
         self._conventions[cle] = _LECTURE
+        self._instructions.add(cle)
         self.conventions.append(
             Piece(nom=PurePosixPath(chemin).name, chemin=chemin, role=ROLE_INSTRUCTIONS)
         )
@@ -936,7 +1139,12 @@ class _Confronteur:
         Une phrase `POUR` se rattache à la commande **retenue par cette lecture** qu'elle
         nomme : ce que la commande fait pour le projet devient sa description (`pour`).
         Une phrase dont la commande n'a pas été retenue est écartée, avec sa raison.
+
+        Ce qui dépend des fichiers d'instructions se tranche ici, la réponse entière lue
+        (#1678) : les commandes qu'ils prescrivent, puis les usages qu'ils écartent.
         """
+        self._prescrire()
+        exclus = self._exclure()
         retenues = {c.commande for c in self.commandes}
         for commande, (_phrase, ligne) in self._pours.items():
             if commande not in retenues:
@@ -972,6 +1180,8 @@ class _Confronteur:
             commandes=tuple(self.commandes),
             ci=tuple(self.ci),
             conventions=tuple(self.conventions),
+            usages_exclus=tuple(exclus),
+            fichiers_gardes=tuple(self.gardes),
         )
         return retenus, tuple(self.ecartes)
 
