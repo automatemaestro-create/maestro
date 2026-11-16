@@ -83,6 +83,7 @@ from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
 from maestro.outillage.detection import CHEMIN_MANIFESTE, ROLE_INSTRUCTIONS
 from maestro.outillage.modele import (
     ORIGINE_DITE,
+    ORIGINE_PRESCRITE,
     ORIGINE_PROPOSEE,
     Commande,
     Constats,
@@ -1034,6 +1035,11 @@ def _provenance(commande: Commande, implique: bool = False) -> str:
         endroit = f" dans `{commande.chemin}`" if commande.chemin else " dans le projet construit"
         extrait = f" ({commande.extrait})" if commande.extrait else ""
         return f"proposée par Maestro après un run, lue{endroit}{extrait}"
+    if commande.origine == ORIGINE_PRESCRITE:
+        # Prescrite aux agents par les instructions du projet (#1678) : un fichier lu, qui
+        # ne déclare pas seulement la commande — il dit de la jouer.
+        extrait = f" ({commande.extrait})" if commande.extrait else ""
+        return f"prescrite par `{commande.chemin}`{extrait}"
     if implique:
         precision = f" ({commande.extrait})" if commande.extrait else ""
         endroit = f"`{commande.chemin}`" if commande.chemin else "le manifeste du projet"
@@ -1115,6 +1121,13 @@ def texte_skill(
             phrase = (
                 f"Lue par Maestro après un run dans {endroit}. Si le projet a changé "
                 "depuis, c'est ce fichier qui fait foi, pas celui-ci."
+            )
+        elif entree.justification.nom == ORIGINE_PRESCRITE:
+            # Prescrite par les instructions du projet (#1678) : ce sont elles qui disent
+            # aux agents de la jouer, et elles qui font foi si elles changent.
+            phrase = (
+                f"Prescrite par les instructions du projet, dans {endroit}. Si elles ont "
+                "changé depuis, ce sont elles qui font foi, pas ce fichier."
             )
         elif _depuis_les_reponses(source):
             phrase = (

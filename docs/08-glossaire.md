@@ -254,6 +254,9 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | recommandation | `recommendation` | l'outillage recommandé, avec sa raison |
 | rédaction (écrire) | `drafting` | de l'outillage recommandé au texte écrit dans le projet |
 | correction | `correction` | l'outillage corrigé en langage naturel |
+| commande prescrite | `prescribed` | une commande que les instructions du projet (CLAUDE.md…) disent aux agents de jouer : elle passe avant celles que Maestro déduit |
+| usage écarté | `excluded_usage` | un usage (formater, types…) que les instructions du projet n'appliquent pas : l'outillage n'en écrit aucune commande |
+| fichier gardé | `guarded_file` | un fichier du projet qu'un budget ou un test garde : un bloc que Maestro y ajouterait peut faire rougir ses tests, et la pièce le dit |
 | skill | `skill` | un skill d'agent (SKILL.md) écrit par l'outillage |
 | client (d'agents) | `agent_client` | un client installé sur le poste (Claude Code, Codex…) |
 | source | `source` | un document que la personne joint à un objectif |

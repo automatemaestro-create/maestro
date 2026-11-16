@@ -43,11 +43,13 @@ pour éviter.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 from maestro.outillage.clients import CLIENTS_CONNUS, Client, ClientConnu, par_cle
 from maestro.outillage.detection import DOSSIERS_SKILLS
 from maestro.outillage.modele import (
     ORIGINE_DITE,
+    ORIGINE_PRESCRITE,
     ORIGINE_PROPOSEE,
     Commande,
     Constats,
@@ -129,7 +131,32 @@ def recommander(constats: Constats, clients: Sequence[Client] = ()) -> Recommand
     entrees.extend(_skills(constats))
     ecartes = _ecartes(constats)
     return Recommandation(
-        entrees=tuple(entrees), ecartes=(*ecartes[:1], *ponts_ecartes, *ecartes[1:])
+        entrees=tuple(_prevenue(entree, constats.fichiers_gardes) for entree in entrees),
+        ecartes=(*ecartes[:1], *ponts_ecartes, *ecartes[1:]),
+    )
+
+
+def _prevenue(entree: Entree, gardes: Sequence[Piece]) -> Entree:
+    """L'entrée qui écrirait un bloc dans un fichier que le projet garde, et le dit (#1678).
+
+    Un bloc ajouté à un fichier gardé — un budget qu'un test du projet vérifie, une règle
+    qui interdit d'y ajouter — peut faire rougir ce test, et la personne qui accepte la pièce
+    doit le savoir avant. Ce que le projet garde a été lu (`GUARDED`, confronté à un fichier
+    lu) : la raison de la pièce le dit **en tête**, avec l'endroit qui le dit. Seul un bloc
+    ajouté à un fichier existant est concerné ; une pièce qui crée son fichier ne l'est pas.
+    """
+    if entree.etat != "a-completer":
+        return entree
+    garde = next((g for g in gardes if g.nom.casefold() == entree.chemin.casefold()), None)
+    if garde is None:
+        return entree
+    return replace(
+        entree,
+        raison=(
+            f"⚠ le projet garde {entree.chemin} ({garde.role}, lu dans {garde.chemin}) : le "
+            "bloc que Maestro y ajouterait peut faire rougir ses tests — refuse cette pièce "
+            f"si {entree.chemin} n'a pas la place. {entree.raison}"
+        ),
     )
 
 
@@ -326,9 +353,15 @@ def _skills(constats: Constats) -> list[Entree]:
                 etat="deja-present" if chemin_present else "a-generer",
                 raison=_raison_du_skill(raison, chemin_present, scripts),
                 justification=(scripts[0] if scripts else _justification(commandes[0])),
-                commandes=(
-                    tuple(f"bash {script.chemin}" for script in scripts)
-                    + tuple(commande.commande for commande in commandes)
+                # Chaque commande une fois (#1678) : le script du projet et la commande
+                # qu'un fichier nomme pour lui sont souvent le même texte.
+                commandes=tuple(
+                    dict.fromkeys(
+                        (
+                            *(f"bash {script.chemin}" for script in scripts),
+                            *(commande.commande for commande in commandes),
+                        )
+                    )
                 ),
                 pour=_pour_du_skill(commandes),
             )
@@ -419,8 +452,10 @@ def _justification(commande: Commande) -> Piece:
     """
     if commande.origine == ORIGINE_DITE:
         return Piece(nom="la personne", chemin="", role=commande.extrait)
-    if commande.origine == ORIGINE_PROPOSEE:
-        return Piece(nom=ORIGINE_PROPOSEE, chemin=commande.chemin, role=commande.extrait)
+    if commande.origine in (ORIGINE_PROPOSEE, ORIGINE_PRESCRITE):
+        # Proposée après un run (#1381), ou prescrite par les instructions du projet
+        # (#1678) : la pièce le dit par son nom, et la rédaction l'écrit tel quel.
+        return Piece(nom=commande.origine, chemin=commande.chemin, role=commande.extrait)
     return Piece(nom=commande.chemin, chemin=commande.chemin, role=commande.extrait)
 
 
