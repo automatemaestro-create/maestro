@@ -49,6 +49,7 @@ from maestro.engine.recette import (
     chemin_de_la_recette,
     ecrire_dans_le_projet,
     par_critere,
+    recette_en_texte,
     recetter,
 )
 from maestro.engine.verification import (
@@ -57,6 +58,7 @@ from maestro.engine.verification import (
     CONSTAT_TENU,
     SYSTEME,
     Constat,
+    ConstatAnterieur,
     Livraison,
     VerificateurTaches,
 )
@@ -66,6 +68,7 @@ from maestro.projets import Projet, ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import ATELIERS_RESERVES, chemin_atelier
+from maestro.sandbox.projet import empreinte_du_livrable
 from maestro.telemetry import STEP_ACCEPTANCE, RunJournal, StepUsage
 from maestro.telemetry.costs import RunCost
 from maestro.telemetry.usage import report_usage
@@ -400,6 +403,331 @@ def test_tout_tenu_est_la_seule_recette_tenue() -> None:
     )
 
 
+def test_une_abstention_n_est_jamais_dite_comme_un_critere_non_tenu() -> None:
+    """#1680 : le message de fin annonçait 3/6 sur trois exécutions manquées. Un critère
+    non vérifiable n'est compté ni vert ni rouge (docs/47 § 5), et le résumé le dit."""
+    recette = RecetteDuRun(
+        constats=(
+            Constat(critere="a", etat=CONSTAT_TENU),
+            Constat(critere="b", etat=CONSTAT_NON_JOUE, preuve="coupée — …"),
+        )
+    )
+
+    assert recette.non_tenus == ()
+    assert recette.resume() == (
+        "1/2 critère(s) du brief tenu(s), 1 non vérifiable(s) — aucun constaté non tenu"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# ③ Ce que la vérification vient de tenir ne se rejoue pas (#1680)
+# --------------------------------------------------------------------------- #
+
+
+def _anterieur(
+    numero: str,
+    critere: str,
+    *,
+    commande: str = "",
+    preuve: str = "1448 passed in 55.02s",
+    etat: str = CONSTAT_TENU,
+    meme_arbre: bool = True,
+) -> ConstatAnterieur:
+    return ConstatAnterieur(
+        numero=numero,
+        tache_id="dev-python",
+        titre="Le correctif et ses tests",
+        livraison=3,
+        constat=Constat(
+            critere=critere,
+            etat=etat,
+            preuve=preuve,
+            commande=commande,
+            code=(0 if etat == CONSTAT_TENU else 1) if commande else None,
+        ),
+        meme_arbre=meme_arbre,
+    )
+
+
+class _Recetteur(ModelProvider):
+    """Le vérificateur de la recette seule : `reponse` à l'établissement, `contre` ensuite."""
+
+    name = "recetteur-1680"
+
+    def __init__(self, reponse: dict, contre: dict | None = None) -> None:
+        self._reponse = reponse
+        self._contre = contre if contre is not None else {"commandes": []}
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        assert system_prompt == SYSTEME
+        self.prompts.append(prompt)
+        if "<non_tenues>" in prompt:
+            return json.dumps(self._contre, ensure_ascii=False)
+        return json.dumps(self._reponse, ensure_ascii=False)
+
+
+def _recetter(
+    provider: ModelProvider, joueur: _Joueur, espace: Path, anterieurs, criteres=CRITERES
+):
+    verificateur = VerificateurTaches(
+        provider, modele="double", joueur=joueur, interprete=_INTERPRETE
+    )
+    return asyncio.run(
+        recetter(
+            verificateur,
+            criteres,
+            _livraison(espace),
+            modele="chef",
+            brief=BRIEF,
+            anterieurs=anterieurs,
+        )
+    )
+
+
+def test_la_recette_reprend_sans_le_rejouer_ce_que_la_verification_a_tenu_sur_le_meme_arbre(
+    tmp_path: Path,
+) -> None:
+    """#1680, run `caf51d06c14f` : la recette rejouait sur le même arbre, en 8 min 53 s et pour
+    0,30 $, ce que la vérification venait de tenir, et rendait 3/6 contre 6/6. Un critère
+    qu'une vérification a tenu sur un arbre identique est **repris**, sans être rejoué, et
+    la recette le dit."""
+    anterieurs = (
+        _anterieur("V1", "la suite du module passe", commande="pytest tests/test_module.py"),
+        _anterieur("V2", "le compte rendu nomme la commande", preuve="README : « npm start »"),
+    )
+    reponse = {
+        "controles": [
+            {"critere": "C1 — La page d'accueil existe", "commande": "test -f accueil.md"},
+            {"critere": "C2 — Les tests du projet passent", "verification": "V1"},
+            {"critere": "C3 — Le README dit comment lancer", "verification": "V2"},
+            {"critere": "C4 — L'application répond vite", "commande": "true"},
+        ]
+    }
+    joueur, provider = _Joueur(), _Recetteur(reponse)
+
+    recette = _recetter(provider, joueur, tmp_path, anterieurs)
+
+    accueil, tests, readme, latence = recette.constats
+    # Seuls se rejouent les critères qu'aucune vérification ne tenait sur cet arbre.
+    assert [commande for commande, _ in joueur.joues] == ["test -f accueil.md", "true"]
+    assert (tests.etat, tests.commande, tests.code) == (
+        CONSTAT_TENU,
+        "pytest tests/test_module.py",
+        0,
+    )
+    assert tests.repris_de == "dev-python"
+    assert tests.preuve.startswith(
+        "repris sans être rejoué — la vérification de la tâche « Le correctif et ses tests » "
+        "(livraison n° 3) l'a tenu sur un arbre identique au livrable intégré"
+    )
+    assert "1448 passed" in tests.preuve
+    assert (readme.etat, readme.repris_de) == (CONSTAT_TENU, "dev-python")
+    assert accueil.repris_de == "" and latence.repris_de == ""
+    assert recette.statut == STATUT_RECETTE_TENUE
+    assert recette.resume() == (
+        "4/4 critère(s) du brief tenu(s), dont 2 repris de la vérification des tâches "
+        "sans être rejoués"
+    )
+    # Le vérificateur a lu ce qui était déjà tenu, et sur quel arbre.
+    prompt = provider.prompts[0]
+    assert (
+        "V1 — tâche « Le correctif et ses tests » (livraison n° 3), sur un arbre identique "
+        "au livrable intégré : [tenu] « la suite du module passe » — "
+        "`pytest tests/test_module.py` → code 0"
+    ) in prompt
+    assert '"verification": "V1"' in prompt
+    # Repris, il est dit tel dans le projet comme dans le récit.
+    texte = recette.en_markdown(objectif="o", run_id="r", horodatage="h")
+    assert (
+        "- [x] **C2** — Les tests du projet passent — tenu, repris de la vérification de la "
+        "tâche dev-python"
+    ) in texte
+    assert "C2 [tenu, repris de la vérification de la tâche dev-python]" in recette_en_texte(
+        recette.to_dict()
+    )
+    # Et le repris traverse le journal.
+    assert RecetteDuRun.depuis(json.loads(json.dumps(recette.to_dict()))) == recette
+
+
+def test_ce_qu_une_verification_a_tenu_sur_un_autre_arbre_se_rejoue_et_l_ecart_se_nomme(
+    tmp_path: Path,
+) -> None:
+    """La fusion a changé l'arbre : la recette ne reprend rien, elle rejoue, et quand son
+    verdict sépare d'une vérification, elle nomme ce qui les sépare — l'arbre, le contrôle."""
+    anterieurs = (
+        _anterieur("V1", "la page existe", commande="test -f accueil.md", meme_arbre=False),
+        _anterieur("V2", "les tests passent", commande="npm test -- accueil", meme_arbre=False),
+    )
+    reponse = {
+        "controles": [
+            # Renvoyé à un constat que Maestro ne reprend pas, sans contrôle : rien n'est tenu.
+            {"critere": "C1 — La page d'accueil existe", "verification": "V1"},
+            {
+                "critere": "C2 — Les tests du projet passent",
+                "commande": "npm test",
+                "verification": "V2",
+            },
+        ]
+    }
+    joueur = _Joueur()
+
+    recette = _recetter(_Recetteur(reponse), joueur, tmp_path, anterieurs, CRITERES[:2])
+
+    accueil, tests = recette.constats
+    assert [commande for commande, _ in joueur.joues] == ["npm test"]
+    assert accueil.etat == CONSTAT_NON_JOUE and accueil.repris_de == ""
+    assert "V1" in accueil.preuve
+    assert "un arbre qui n'est plus celui du livrable intégré" in accueil.preuve
+    assert tests.etat == CONSTAT_NON_TENU
+    assert _ECHEC_DES_TESTS.splitlines()[-1] in tests.preuve
+    assert (
+        "Ce qui la sépare de la vérification de la tâche « Le correctif et ses tests » "
+        "(livraison n° 3), qui l'avait tenu par `npm test -- accueil` : l'arbre — le livrable "
+        "intégré n'est plus celui qu'elle a jugé ; le contrôle — la recette a joué `npm test`."
+    ) in tests.preuve
+
+
+def test_un_critere_qu_aucune_verification_ne_constatait_se_dit_juge_par_la_seule_recette(
+    tmp_path: Path,
+) -> None:
+    anterieurs = (_anterieur("V1", "la page existe", commande="test -f accueil.md"),)
+    reponse = {
+        "controles": [
+            {"critere": "C1 — La page d'accueil existe", "verification": "V1"},
+            {"critere": "C2 — Les tests du projet passent", "commande": "npm test"},
+        ]
+    }
+
+    recette = _recetter(_Recetteur(reponse), _Joueur(), tmp_path, anterieurs, CRITERES[:2])
+
+    accueil, tests = recette.constats
+    assert accueil.repris_de == "dev-python"
+    assert tests.etat == CONSTAT_NON_TENU
+    assert tests.preuve.endswith(
+        "Aucune vérification de tâche ne constatait ce critère : la recette est seule à l'avoir "
+        "jugé."
+    )
+
+
+def test_sans_verification_anterieure_le_prompt_de_la_recette_ne_change_pas(
+    tmp_path: Path,
+) -> None:
+    provider = _Recetteur(CONTROLES_DE_RECETTE)
+
+    _recetter(provider, _Joueur(), tmp_path, ())
+
+    assert "<verifications>" not in provider.prompts[0]
+    assert '"verification"' not in provider.prompts[0]
+
+
+def test_l_empreinte_d_un_projet_non_versionne_suit_ce_qu_il_porte(tmp_path: Path) -> None:
+    """Deux relevés du même arbre se confondent ; un fichier qui change les sépare. Le dossier
+    de Maestro dans le projet n'y entre pas : il n'est pas le livrable."""
+    _depot, projet = _projet_nu(tmp_path)
+    racine = Path(projet.racine)
+
+    avant = empreinte_du_livrable(racine, projet)
+    (racine / ".maestro" / "atelier").mkdir(parents=True)
+    (racine / ".maestro" / "atelier" / "brouillon.md").write_text("x", encoding="utf-8")
+
+    assert avant and empreinte_du_livrable(racine, projet) == avant
+    (racine / "README.md").write_text("# Herbier\n\nnpm run dev\n", encoding="utf-8")
+    assert empreinte_du_livrable(racine, projet) != avant
+    assert empreinte_du_livrable(racine, None) == ""
+
+
+def test_l_empreinte_d_une_copie_de_travail_est_celle_de_la_racine_apres_sa_fusion(
+    projet_versionne: Projet, tmp_path: Path
+) -> None:
+    """La vérification juge la copie de travail, la recette la racine après la fusion : sur une
+    base qui n'a pas bougé, c'est le même arbre, commité ou non, et l'empreinte le dit."""
+    racine = Path(projet_versionne.racine)
+    copie = tmp_path / "copie"
+    assert _git(racine, "worktree", "add", "-q", "-b", "maestro/t", str(copie)).returncode == 0
+    (copie / "accueil.md").write_text("Bienvenue\n", encoding="utf-8")
+
+    livree = empreinte_du_livrable(copie, projet_versionne)
+    assert livree and livree != empreinte_du_livrable(racine, projet_versionne)
+
+    assert _git(copie, "add", "-A").returncode == 0
+    assert _git(copie, "commit", "-q", "-m", "accueil").returncode == 0
+    assert _git(racine, "merge", "-q", "--ff-only", "maestro/t").returncode == 0
+    (racine / ".maestro").mkdir()
+    (racine / ".maestro" / "etat.json").write_text("{}", encoding="utf-8")
+
+    assert empreinte_du_livrable(racine, projet_versionne) == livree
+
+
+def test_sur_un_run_d_une_tache_la_recette_concorde_avec_sa_derniere_verification(
+    tmp_path: Path,
+) -> None:
+    """Critère 3 de #1680, sur le chemin d'un vrai run : la tâche est vérifiée, son verdict est
+    consigné avec l'arbre qu'il a jugé, et la recette reprend ce qu'elle a tenu sur ce même
+    arbre — sans rien rejouer, et avec le même verdict."""
+    depot, projet = _projet_nu(tmp_path)
+    verificateur, joueur = _VerificateurQuiReprend(), _Joueur()
+    executeur = LocalExecutor(
+        _Agent(),
+        runtimes={DEVELOPER_PROFILE.nom: AgentRuntime(_Agent(), DEVELOPER_PROFILE)},
+        projets=depot,
+        guardrails=Guardrails(validateur=_Validateur()),
+        verificateur=VerificateurTaches(
+            verificateur, modele="double", joueur=joueur, interprete=_INTERPRETE
+        ),
+    )
+    moteur = OrchestrationEngine(
+        _Agent(),
+        Orchestrator(_Cadrage(_plan("accueil")), model="chef-de-projet"),
+        executor=executeur,
+    )
+    journal = RunJournal(run_id="run-1680")
+
+    rapport = asyncio.run(
+        moteur.run("Un herbier", journal=journal, projet_id=projet.id, mode_brief=MODE_BRIEF_AUTO)
+    )
+
+    assert all(r.ok for r in rapport.resultats), [r.erreur for r in rapport.resultats]
+    (verification,) = [r for r in journal.records if r.etape == "accueil:verification"]
+    assert verification.verification is not None
+    assert verification.verification["fingerprint"]
+    # La recette a lu la vérification de la tâche, sur le même arbre, et n'a rien rejoué.
+    assert (
+        "V1 — tâche « Tâche accueil » (livraison n° 1), sur un arbre identique au livrable "
+        "intégré : [tenu] « le livrable existe » — `ls` → code 0"
+    ) in verificateur.recettes[0]
+    assert [commande for commande, _ in joueur.joues] == ["ls"]
+    recette = rapport.recette
+    assert recette is not None
+    assert recette.statut == STATUT_RECETTE_TENUE
+    assert all(c.repris_de == "accueil" for c in recette.constats)
+    assert recette.resume() == (
+        "4/4 critère(s) du brief tenu(s), dont 4 repris de la vérification des tâches "
+        "sans être rejoués"
+    )
+
+
+class _VerificateurQuiReprend(_Verificateur):
+    """À la recette, renvoie chaque critère du brief au constat V1 de la tâche."""
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if "Recette du run" in prompt and "<non_tenues>" not in prompt:
+            self.recettes.append(prompt)
+            return json.dumps(
+                {
+                    "controles": [
+                        {"critere": f"C{rang} — {critere}", "verification": "V1"}
+                        for rang, critere in enumerate(CRITERES, start=1)
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        return await super().generate(prompt, model=model, system_prompt=system_prompt)
+
+
 # --------------------------------------------------------------------------- #
 # ① La recette s'écrit dans le projet, au régime du projet
 # --------------------------------------------------------------------------- #
@@ -673,6 +1001,13 @@ def test_la_consigne_du_recit_dit_que_la_recette_fait_foi() -> None:
     assert "ne présente jamais comme acquis un critère qu'elle ne dit pas tenu" in " ".join(
         SYSTEME_RECIT.split()
     )
+
+
+def test_la_consigne_du_recit_ne_dit_jamais_une_abstention_comme_un_echec() -> None:
+    """#1680 : le message de fin donnait 3/6 sur trois exécutions manquées."""
+    consigne = " ".join(SYSTEME_RECIT.split())
+    assert "Un critère non vérifiable n'est pas un critère non tenu" in consigne
+    assert "ni tenu ni manqué" in consigne
 
 
 # --------------------------------------------------------------------------- #

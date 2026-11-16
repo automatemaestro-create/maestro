@@ -131,6 +131,7 @@ from maestro.engine.questions import (
 from maestro.engine.recette import (
     RecetteDuRun,
     chemin_de_la_recette,
+    constats_anterieurs,
     ecrire_dans_le_projet,
     recette_non_jouee,
     recetter,
@@ -139,6 +140,7 @@ from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.engine.verification import (
     SUFFIXE_ETAPE_VERIFICATION,
     Amont,
+    ConstatAnterieur,
     Livraison,
     LivraisonNonTenue,
     LivraisonNonVerifiee,
@@ -194,6 +196,7 @@ from maestro.sandbox import (
 )
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
+from maestro.sandbox.projet import empreinte_du_livrable
 from maestro.sandbox.verification import (
     CopieImpossible,
     MiroirDeVerification,
@@ -1659,6 +1662,7 @@ class LocalExecutor(TaskExecutor):
                 "aucune tâche du run n'a abouti : il n'y a pas de livrable intégré à confronter",
             )
         else:
+            anterieurs = await self._constats_des_taches(projet, resultats, journal)
             with collect_usage(spending_cap=self._plafonds.controle(journal)) as recolte:
                 async with self._lieu_de_la_recette(run_id, projet) as (
                     espace,
@@ -1684,6 +1688,7 @@ class LocalExecutor(TaskExecutor):
                         modele=modele,
                         brief=brief,
                         relance=self._relance,
+                        anterieurs=anterieurs,
                     )
             usage = recolte.total
         recette, redaction = await self._ecrit_la_recette(recette, projet, run_id, brief)
@@ -1702,6 +1707,29 @@ class LocalExecutor(TaskExecutor):
             verification=recette.to_dict(),
         )
         return recette
+
+    async def _constats_des_taches(
+        self, projet: Projet | None, resultats: Sequence[TaskResult], journal: RunJournal
+    ) -> tuple[ConstatAnterieur, ...]:
+        """Ce que les vérifications des tâches abouties ont constaté, et sur quel arbre (#1680).
+
+        L'empreinte du livrable intégré se relève sur la racine elle-même, avant que la
+        recette n'en fasse le miroir : c'est l'arbre que la personne reçoit, et celui que
+        l'empreinte de chaque vérification doit égaler pour que son constat se reprenne.
+        """
+        empreinte = ""
+        if projet is not None:
+            try:
+                racine = valider_racine(projet.racine)
+            except RacineRefusee:
+                racine = None
+            if racine is not None:
+                empreinte = await asyncio.to_thread(empreinte_du_livrable, racine, projet)
+        return constats_anterieurs(
+            [(resultat.task_id, resultat.titre) for resultat in resultats if resultat.ok],
+            journal.records,
+            empreinte,
+        )
 
     @asynccontextmanager
     async def _lieu_de_la_recette(
@@ -1929,6 +1957,13 @@ class LocalExecutor(TaskExecutor):
             outillage=outillage.instructions,
             etat_de_la_branche=(
                 (lambda espace: etat_de_la_branche(espace, base)) if branche_a_juger else None
+            ),
+            # L'arbre que chaque verdict juge, pour que la recette sache si c'est le sien
+            # (#1680).
+            empreinte_de=(
+                (lambda espace: empreinte_du_livrable(espace, projet))
+                if projet is not None
+                else None
             ),
         )
 

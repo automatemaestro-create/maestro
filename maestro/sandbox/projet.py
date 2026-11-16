@@ -64,6 +64,7 @@ réutilise pas.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import secrets
@@ -1070,6 +1071,69 @@ def _comptabilite_touchee(espace: Path, base: str) -> list[str]:
         if chemin:
             lignes.append(f"- `{chemin}` ({_STATUTS_GIT.get(statut[:1], statut)})")
     return lignes
+
+
+def empreinte_du_livrable(racine: Path, projet: Projet | None) -> str:
+    """L'empreinte de l'arbre que `racine` livre, ou `""` quand elle ne se relève pas (#1680).
+
+    C'est elle qui dit à la recette du run si l'arbre qu'elle juge est celui qu'une
+    vérification de tâche a jugé — et donc si ce que celle-ci a tenu se reprend sans
+    être rejoué. Une empreinte vide ne vaut aucune autre : sans elle, tout se rejoue.
+
+    - **Projet versionné** : le contenu de ce que la branche porterait — les fichiers
+      que Git voit (`ls-files`, `.gitignore` du projet compris), chacun par son objet
+      Git (`hash-object`, sans l'écrire). L'objet, et non les octets du disque :
+      c'est ce que la fusion applique, et la copie de travail d'une tâche se confond
+      ainsi avec la racine après sa fusion, fins de ligne converties ou non.
+    - **Projet non versionné** : la taille et la date de chaque fichier du périmètre,
+      comme le recensement de l'espace (`maestro.sandbox.workspace.Workspace`) — la
+      vérification et la recette relèvent la même racine, que personne ne recopie.
+
+    Le dossier de Maestro (`.maestro/`) n'y entre jamais : il n'est pas le livrable,
+    et Maestro y écrit entre la vérification et la recette.
+    """
+    if projet is None:
+        return ""
+    lignes: list[str] | None
+    try:
+        if projet.versionne:
+            lignes = _empreintes_git(racine)
+        else:
+            espace = EspaceEnPlace(path=racine, perimetre=projet.perimetre)
+            lignes = []
+            for fichier in espace.fichiers():
+                etat = fichier.stat()
+                relatif = fichier.relative_to(racine).as_posix()
+                lignes.append(f"{relatif}\0{etat.st_size}:{etat.st_mtime_ns}")
+    except (OSError, ValueError, EspaceProjetIndisponible):
+        return ""
+    if lignes is None:
+        return ""
+    sorte = "git" if projet.versionne else "disque"
+    return hashlib.sha256("\n".join([sorte, *lignes]).encode("utf-8")).hexdigest()
+
+
+def _empreintes_git(racine: Path) -> list[str] | None:
+    """`chemin\\0objet` de chaque fichier que la branche de `racine` porterait — `None` sans Git."""
+    liste = _git(racine, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    if liste.returncode != 0:
+        return None
+    relatifs = sorted(
+        relatif
+        for relatif in {champ for champ in liste.stdout.split("\0") if champ}
+        if not relatif.startswith(f"{DOSSIER_ATELIER}/")
+        and (racine / relatif).is_file()
+        and not (racine / relatif).is_symlink()
+    )
+    if not relatifs:
+        return []
+    if any("\n" in relatif for relatif in relatifs):
+        return None  # `--stdin-paths` lit une ligne par chemin
+    objets = _git(racine, "hash-object", "--stdin-paths", entree="\n".join(relatifs) + "\n")
+    shas = objets.stdout.split()
+    if objets.returncode != 0 or len(shas) != len(relatifs):
+        return None
+    return [f"{relatif}\0{sha}" for relatif, sha in zip(relatifs, shas, strict=True)]
 
 
 def branche_de_tache(tache_id: str) -> str:
