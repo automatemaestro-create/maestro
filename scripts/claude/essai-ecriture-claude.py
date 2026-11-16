@@ -130,6 +130,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from dotenv import dotenv_values
+
+#: Le `.env` du dépôt. Le CLI ne le lit pas : le jeton d'abonnement qu'il porte, connexion de tous
+#: les outils qui lancent `claude` comme du produit (#1676), est donc transmis à la session fille.
+ENV_DU_DEPOT = Path(__file__).resolve().parents[2] / ".env"
+
 AVANT = "AVANT-238"
 APRES = "APRES-238"
 
@@ -306,17 +312,25 @@ def prepare(racine: Path) -> Path:
     return projet
 
 
-def environnement() -> dict[str, str]:
+def environnement(env_du_depot: Path = ENV_DU_DEPOT) -> dict[str, str]:
     """L'env de la session fille, débarrassé de ce que la session mère y a laissé.
 
     `CLAUDE_PROJECT_DIR` et consorts pointent le dépôt Maestro : les hériter ferait
     juger la session fille sur un projet qui n'est pas le sien. On garde en revanche
     `ANTHROPIC_*` et le reste du `PATH`, sans quoi elle ne s'authentifierait pas.
+
+    La connexion est celle de `run.sh` et du produit (#1676) : un `CLAUDE_CODE_OAUTH_TOKEN`
+    de l'environnement l'emporte, sinon celui du `.env` du dépôt, lu par python-dotenv
+    comme le produit le lit ; sans l'un ni l'autre, le CLI garde sa propre connexion.
     """
     env = dict(os.environ)
     for cle in list(env):
         if cle.startswith("CLAUDE_PROJECT") or cle in {"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}:
             del env[cle]
+    if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and env_du_depot.is_file():
+        jeton = dotenv_values(env_du_depot).get("CLAUDE_CODE_OAUTH_TOKEN")
+        if jeton:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = jeton
     return env
 
 

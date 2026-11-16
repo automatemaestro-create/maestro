@@ -6485,7 +6485,9 @@ nulle part ailleurs.
     le SDK publie (`AssistantMessageError`). Jamais dans le libellé, qui n'est recopié que pour la
     personne (docs/44).
   - **Trois valeurs ont un geste unique**, et c'est alors le seul nommé :
-    - `authentication_failed` → `claude auth login` ;
+    - `authentication_failed` → rendre au CLI sa connexion, selon celle qu'il tient (point
+      suivant) : un jeton refusé se renouvelle par `claude setup-token`, la connexion propre du CLI
+      par `claude auth login` ;
     - `billing_error` → le compte et ses crédits ;
     - `server_error` → relancer plus tard.
   - **Toute autre issue n'établit rien** : une autre valeur, un champ absent, un délai dépassé, un
@@ -6494,6 +6496,17 @@ nulle part ailleurs.
   - **Le cas fondateur.** Le 2026-11-02, une reprise refusée pour « modèle refusé » renvoyait vers
     `claude update` alors que la session OAuth avait expiré. Le flux de cette panne a été relevé sur
     le réel le 2026-11-05 : `"error":"authentication_failed"`, `api_error_status` nul.
+- **La connexion des sessions est le jeton du `.env`** (#1676). Le CLI ne lit pas le `.env`. Sans
+  pont, la sonde et les sessions tenaient leur connexion du seul `claude auth login`, une session
+  OAuth qui expire seule, alors que le produit restait servi par le `CLAUDE_CODE_OAUTH_TOKEN` du
+  `.env`. Ce jeton (`claude setup-token`, valable un an) est désormais la connexion de tous les
+  outils qui lancent le CLI. L'ordre est celui du produit : un jeton de l'environnement l'emporte (la
+  CI), puis celui du `.env` du dépôt, lu sans exécuter le fichier et comme python-dotenv le lit
+  (la dernière affectation gagne) ; vide partout, le CLI garde sa propre connexion. La ligne
+  `connexion :` dit laquelle sert, et une clé `ANTHROPIC_API_KEY` ou un bearer de l'environnement
+  qui passeraient devant ; la valeur ne s'imprime jamais. Seul le processus qui lance les sessions
+  exporte le jeton : un run détaché relit le `.env` lui-même, et son lanceur ne le porte pas. Les
+  bancs `scripts/claude/essai-*.py` prennent la même connexion.
 
 **Le plafond de dépense, lui, ne s'applique plus par défaut (#286).** `run.sh` passait
 `--max-budget-usd 15` à chaque session — le garde-fou d'une boucle neuve, quand on craignait

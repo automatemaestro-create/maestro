@@ -172,6 +172,24 @@ def test_environnement_ote_le_projet_de_la_session_mere(essai, monkeypatch):
     assert env["PATH"] == "/quelque/part"
 
 
+def test_environnement_prend_le_jeton_du_env_sauf_si_l_environnement_en_porte_un(
+    essai, monkeypatch, tmp_path
+):
+    """La connexion de `run.sh` et du produit (#1676) : le CLI ne lit pas le `.env`."""
+    env_du_depot = tmp_path / ".env"
+    env_du_depot.write_text(
+        'ANTHROPIC_API_KEY=\nexport CLAUDE_CODE_OAUTH_TOKEN="jeton-du-env"  # setup-token\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    assert essai.environnement(env_du_depot)["CLAUDE_CODE_OAUTH_TOKEN"] == "jeton-du-env"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "jeton-de-l-environnement")
+    recu = essai.environnement(env_du_depot)["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert recu == "jeton-de-l-environnement", "l'environnement l'emporte"
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in essai.environnement(tmp_path / "absent.env")
+
+
 def test_lance_tire_le_resultat_et_les_appels_du_flux(essai, tmp_path, monkeypatch):
     """Sans la trace des appels, « rien d'écrit et aucun refus » resterait ambigu."""
     lignes = [

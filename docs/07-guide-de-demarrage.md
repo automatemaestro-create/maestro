@@ -61,7 +61,7 @@ Maestro s'authentifie auprès de Claude de **deux façons**, sélectionnables **
 
 | Mode | Quand l'utiliser | À configurer |
 |------|------------------|--------------|
-| **`subscription`** (défaut du POC) | On démarre sur un **abonnement Claude Code** (Pro/Max/Team) — pas de clé, pas de facturation à l'usage. | Se connecter une fois avec `claude` (login navigateur). En CI, générer un token longue durée : `claude setup-token`, puis le poser dans `CLAUDE_CODE_OAUTH_TOKEN`. |
+| **`subscription`** (défaut du POC) | On démarre sur un **abonnement Claude Code** (Pro/Max/Team) — pas de clé, pas de facturation à l'usage. | Générer une fois un jeton longue durée, `claude setup-token` (valable un an), et le poser dans `CLAUDE_CODE_OAUTH_TOKEN` du `.env` : c'est la connexion du produit, des runs `/orchestrate` et des bancs du CLI (#1676), sans reconnexion à refaire. À défaut, la connexion propre du CLI (`claude auth login`), qui expire. |
 | **`api_key`** | Facturation à l'usage via la **console Anthropic** (ex. prod, quotas séparés). | Renseigner `ANTHROPIC_API_KEY` (à récupérer sur la console Anthropic). |
 
 **Règle de précédence** (comment le mode est choisi) :
