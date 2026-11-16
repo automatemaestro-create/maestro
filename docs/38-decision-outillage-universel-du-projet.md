@@ -1057,10 +1057,13 @@ Trois gestes y répondent.
   même façon.
 - **Le manifeste d'un projet qui ignore `.maestro/` atteint sa racine.** Maestro ne réécrit pas
   le `.gitignore` d'un projet qu'il importe, et un manifeste ignoré ne voyage pas avec la branche
-  d'une pièce : il restait dans le worktree, que le démontage efface, et aucune tâche ne lisait
-  l'outillage écrit. Il entre donc dans le worktree par le texte de la racine, pour que la pièce
+  d'une écriture : il restait dans le worktree, que le démontage efface, et aucune tâche ne lisait
+  l'outillage écrit. Il entre donc dans le worktree par le texte de la racine, pour que l'écriture
   s'ajoute aux entrées déjà déclarées, et il en sort par son texte, posé à la racine **une fois la
-  fusion acceptée**. L'arbre de la personne reste propre : Git ne le voit pas.
+  fusion acceptée**. L'arbre de la personne reste propre : Git ne le voit pas. Les deux écritures
+  sur branche font ce geste, le même : la pièce, et l'outillage entier en un geste (la route
+  `…/outillage/generation`, #1686). Une régénération retrouve donc ce que la précédente a écrit,
+  au lieu de tout reprendre.
 - **La référence au ticket.** Quand l'objectif nomme un ticket, le brief la garde telle qu'elle est
   écrite (`playbook_brief.md`) : c'est dans son cadre que les tâches et Maestro la lisent. La
   consigne de l'agent nomme la convention, les seuls types qu'elle admet, et lui dit de citer dans
@@ -1073,7 +1076,8 @@ Trois gestes y répondent.
 **Limites dites.** Les pièces écrites à l'import n'ont pas de demande, donc pas de ticket à citer.
 Un agent qui ne commite rien laisse un commit « Maestro : travail de la tâche », écrit au démontage
 sans modèle. Et l'écriture de l'outillage entier en un geste (la route `…/outillage/generation`,
-que l'écran n'appelle pas) ne fait pas encore survivre un manifeste ignoré.
+que l'écran n'appelle pas) garde les commits de Maestro, « Maestro : travail de la tâche » et
+« Maestro : application de … » : seule la pièce les rédige dans la convention du projet.
 
 ## 6. Ce qui est écarté, et pourquoi
 

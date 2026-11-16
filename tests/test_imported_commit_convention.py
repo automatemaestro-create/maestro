@@ -621,3 +621,50 @@ def test_an_imported_project_that_ignores_maestro_keeps_its_manifest_and_convent
         second.chemin,
     ]
     assert _git(root, "status", "--porcelain").strip() == ""
+
+
+@with_git
+@pytest.mark.usefixtures("_isolated_git")
+def test_a_whole_generation_on_a_project_that_ignores_maestro_keeps_its_manifest(
+    tmp_path: Path, _home: Path
+) -> None:
+    """The same defect on `…/outillage/generation`, which writes the whole tooling at once (#1686).
+
+    The generation's worktree carried the only manifest, and the teardown erased it with
+    the worktree. It now reaches the root once the merge is accepted, the tree stays clean,
+    and a second generation finds what the first one wrote instead of starting over.
+    """
+    root = _imported_repository(_home, ignores_maestro=True)
+    projets = ServiceProjets(
+        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+    )
+    project_id = str(projets.creer("Dépensio", str(root))["id"])
+    service = ServiceOutillage(
+        projets,
+        provider=_Reader(_reads_claude_md_then_names_its_convention),
+        validateur=_Approves(),
+    )
+
+    response = asyncio.run(service.generer(project_id))
+
+    assert response["regime"] == "branche"
+    assert response["application"]["statut"] == "approuvee", response["application"]
+    assert "AGENTS.md" in response["rapport"]["ecrits"]
+    manifest = _manifest(root)
+    assert "AGENTS.md" in [entry["chemin"] for entry in manifest["entrees"]]
+    assert manifest["source"][CLE_CONVENTION_DE_COMMIT] == CONVENTION
+    assert outillage_du_projet(projets.entite(project_id)).convention_de_commit == CONVENTION
+    # Ignored, it changes nothing Git sees: the person's tree stays clean.
+    assert _git(root, "status", "--porcelain").strip() == ""
+    # `main` carries the merge, whose second parent is the generation's branch.
+    assert _git(root, "rev-parse", "HEAD^2").strip() == (
+        _git(root, "rev-parse", response["branche"]).strip()
+    )
+    assert _git(root, "symbolic-ref", "--short", "HEAD").strip() == "main"
+
+    # The root manifest enters the next worktree: nothing is rewritten, nothing to merge.
+    again = asyncio.run(service.generer(project_id))
+    assert again["rapport"]["ecrits"] == [], again["rapport"]["ecritures"]
+    assert again["application"]["statut"] == "sans_objet"
+    assert _manifest(root)["entrees"] == manifest["entrees"]
+    assert _git(root, "status", "--porcelain").strip() == ""

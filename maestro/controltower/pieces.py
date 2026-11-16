@@ -126,16 +126,19 @@ from maestro.outillage.correction import (
     retenir,
 )
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.outillage.ecriture import REGIME_BRANCHE, REGIME_EN_PLACE, nouvel_id_de_generation
+from maestro.outillage.ecriture import (
+    REGIME_BRANCHE,
+    REGIME_EN_PLACE,
+    ManifesteHorsBranche,
+    nouvel_id_de_generation,
+)
 from maestro.outillage.generation import (
     Prevision,
     corrections_declarees,
     empreinte,
     portees_declarees,
-    poser_le_manifeste,
     poser_piece,
     prevoir,
-    texte_du_manifeste,
     verifications_declarees,
 )
 from maestro.outillage.modele import (
@@ -171,7 +174,6 @@ from maestro.projets import Projet
 from maestro.projets.application import (
     ApplicationRefusee,
     commiter_en_attente,
-    ignore_par_le_projet,
 )
 from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.perimetre import motifs_compiles
@@ -762,28 +764,21 @@ class ServicePieces:
         retient une (`_messages_de_la_piece`), ceux de Maestro sinon.
 
         **Le manifeste d'un projet qui l'ignore** (#1679 — le dépôt de Maestro ignore
-        `.maestro/`) ne voyage pas avec la branche : `git add -A` le laisse dans le
-        worktree, que le démontage efface. Il entre donc dans le worktree par son texte,
-        celui de la racine, pour que la pièce s'ajoute aux entrées déjà déclarées ; et il
-        en sort par son texte, posé à la racine **une fois la fusion acceptée** — refusée,
-        rien n'est écrit. Sans cela, l'outillage écrit et sa convention n'existaient pour
-        aucun lecteur du manifeste, dont l'exécution d'une tâche (`outillage_du_projet`).
+        `.maestro/`) ne voyage pas avec la branche : il entre dans le worktree par le texte
+        de la racine, pour que la pièce s'ajoute aux entrées déjà déclarées, et il est posé
+        à la racine **une fois la fusion acceptée** — refusée, rien n'est écrit. Le geste
+        est celui de l'outillage entier (`ManifesteHorsBranche`). Sans lui, l'outillage
+        écrit et sa convention n'existeraient pour aucun lecteur du manifeste, dont
+        l'exécution d'une tâche (`outillage_du_projet`).
         """
         tache = nouvel_id_de_generation()
         branche = branche_de_tache(tache)
         message_piece, message_fusion = await self._messages_de_la_piece(projet, piece, branche)
-        manifeste = ""
+        manifeste = ManifesteHorsBranche(racine, projet.perimetre)
 
         def preparer() -> PieceEcrite | None:
-            nonlocal manifeste
             with espace_de_travail(projet, tache_id=tache) as espace:
-                ignore = ignore_par_le_projet(espace.path, CHEMIN_MANIFESTE)
-                if ignore:
-                    poser_le_manifeste(
-                        espace.path,
-                        texte_du_manifeste(racine),
-                        FrontiereEcriture.pour(espace.path, projet.perimetre),
-                    )
+                manifeste.entrer(espace.path)
                 rapport = poser_piece(
                     espace.path,
                     fichier,
@@ -794,8 +789,8 @@ class ServicePieces:
                 )
                 ecriture = rapport.ecritures[0] if rapport.ecritures else None
                 ecrite = not rapport.refus and ecriture is not None and ecriture.etat == "ecrit"
-                if ecrite and ignore:
-                    manifeste = texte_du_manifeste(espace.path)
+                if ecrite:
+                    manifeste.relever(espace.path)
                 # Commitée ici, sous son message, plutôt qu'au démontage sous celui de
                 # Maestro : ce qui part sur la branche est le même.
                 if ecrite and message_piece:
@@ -821,13 +816,7 @@ class ServicePieces:
             message=message_fusion,
         )
         if resultat.approuvee:
-            if manifeste:
-                await asyncio.to_thread(
-                    poser_le_manifeste,
-                    racine,
-                    manifeste,
-                    FrontiereEcriture.pour(racine, projet.perimetre),
-                )
+            await asyncio.to_thread(manifeste.poser)
             return _fait(
                 piece,
                 "ecrit",

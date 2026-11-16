@@ -1542,7 +1542,9 @@ class ServiceOutillage:
            l'**accord humain**, diff en pièce jointe — et l'attente est celle du
            mécanisme existant : indéfinie, sans time-out silencieux. Un refus,
            ou un validateur absent, laisse la branche intacte : l'outillage
-           proposé reste consultable et se récupère d'un `git merge`.
+           proposé reste consultable et se récupère d'un `git merge`. Accepté,
+           le manifeste d'un projet qui l'ignore est posé à la racine
+           (`ManifesteHorsBranche`, #1686) : la branche ne l'a pas porté.
 
         `retenus` (#1034) est ce que l'utilisateur a **gardé** à l'étape
         d'outillage : la liste des `chemin` d'entrées. Seules ces entrées sont
@@ -1607,6 +1609,8 @@ class ServiceOutillage:
             titre=f"Écrire l'outillage dans {projet.nom}",
             run_id=run_id,
         )
+        if resultat.approuvee and preparation.manifeste is not None:
+            await asyncio.to_thread(preparation.manifeste.poser)
         reponse["application"] = resultat.to_dict()
         return reponse
 
