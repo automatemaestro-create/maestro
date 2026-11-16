@@ -622,6 +622,21 @@ def _git(cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
         ) from exc
 
 
+def ignore_par_le_projet(espace: Path, relatif: str) -> bool:
+    """Le `.gitignore` du projet ignore-t-il `relatif` ? Git en décide (`check-ignore`).
+
+    Un fichier ignoré ne voyage pas avec une branche : `git add -A` le laisse dans le
+    worktree, et le démontage l'efface (#1679 — le manifeste d'outillage d'un projet
+    qui ignore `.maestro/`). Un fichier suivi n'est jamais « ignoré », même si un motif
+    le désigne. Faux quand Git ne sait pas répondre : rien n'est alors fait de plus
+    qu'avant.
+    """
+    try:
+        return _git(espace, "check-ignore", "-q", "--", relatif).returncode == 0
+    except ApplicationRefusee:
+        return False
+
+
 def _message_git(resultat: subprocess.CompletedProcess[str]) -> str:
     """Le message d'erreur de Git, en une ligne (stderr, à défaut stdout)."""
     brut = (resultat.stderr or resultat.stdout or "").strip()
@@ -743,14 +758,19 @@ def _fusionner(
 
     `message` (#1507), quand il est donné, est le **sujet** du commit de fusion — la
     convention du projet le veut ainsi —, et ce que Maestro en disait passe dans le
-    corps : la branche fusionnée et ses totaux restent lisibles dans `git log`.
+    corps : la branche fusionnée et ses totaux restent lisibles dans `git log`. Le pied
+    que la convention exige (#1679, la référence au ticket) vient **en dernier**, sous ce
+    corps : c'est là qu'une convention et Git lisent un pied.
     """
     if espace is not None and espace.is_dir():
         commiter_en_attente(espace, diff.branche)
     _exige_racine_disponible(racine, diff.base)
     messages = ["-m", _message_fusion(diff)]
-    if message.strip():
-        messages = ["-m", message.strip(), *messages]
+    sujet, _, pied = message.strip().partition("\n")
+    if sujet.strip():
+        messages = ["-m", sujet.strip(), *messages]
+    if pied.strip():
+        messages += ["-m", pied.strip()]
     # `--no-ff` écrit un COMMIT de fusion : il lui faut une identité, exactement comme au commit de
     # rattrapage ci-dessus. Elle manquait ici (#333) — la moitié non couverte de ce que le
     # commentaire d'`AUTEUR_NOM` annonce pourtant : « un user.email absent ferait échouer la

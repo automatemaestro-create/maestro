@@ -108,6 +108,22 @@ ETATS_ENTREE: frozenset[str] = frozenset({"a-generer", "a-completer", "deja-pres
 #: elle ne s'efface pas derrière un appel manqué, et elle le dit.
 ETATS_LECTURE: frozenset[str] = frozenset({"lue", "inachevee", "indisponible"})
 
+#: Le `type` du fragment `source` d'un outillage venu d'une **lecture** du projet (docs/38
+#: §4.1), écrit par `Analyse.source_manifeste`. Son pendant, `"choix"`, est
+#: `maestro.outillage.questionnaire.SOURCE_CHOIX`.
+SOURCE_ANALYSE = "analyse"
+
+#: La clé sous laquelle le fragment `source` d'un projet **lu** garde la convention de
+#: commit que la lecture a relevée (#1679) — écrite par `Analyse.source_manifeste`, relue
+#: par `maestro.outillage.questionnaire.convention_de_la_source`. Écrite une fois : deux
+#: orthographes feraient écrire une convention qu'on ne relirait jamais. Elle s'enregistre
+#: dans le manifeste, donc en anglais (docs/55 §3).
+CLE_CONVENTION_DE_COMMIT = "commit_convention"
+
+#: La longueur d'une convention de commit relevée. Une phrase, qui nomme une forme, des
+#: types et une référence exigée : au-delà, c'est un paragraphe recopié, pas une règle.
+CONVENTION_MAX = 300
+
 
 def nouvel_id() -> str:
     """Un identifiant d'analyse neuf, de la forme `ana-<8 hex>`."""
@@ -374,8 +390,32 @@ class DossierScripts:
 
 
 @dataclass(frozen=True)
+class ConventionDeCommit:
+    """La convention de commit qu'un projet **impose**, et le fichier qui la fixe (#1679).
+
+    `texte` est la règle telle que le modèle l'a lue — forme du sujet, types admis,
+    référence au ticket exigée —, en une ligne ; `chemin` le fichier lu qui la fixe
+    (`CLAUDE.md`, un guide de contribution, le hook `commit-msg`), relatif à la racine.
+    C'est ce que Maestro suit pour écrire ses propres commits dans un projet importé
+    (`maestro.projets.commits`), comme il suit la convention qu'une personne a choisie
+    pour un projet neuf (#1507).
+    """
+
+    texte: str
+    chemin: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """La convention en JSON."""
+        return {"text": self.texte, "path": self.chemin}
+
+
+@dataclass(frozen=True)
 class Constats:
-    """Tout ce que l'analyse a **lu** dans le projet — la matière de la recommandation."""
+    """Tout ce que l'analyse a **lu** dans le projet — la matière de la recommandation.
+
+    `convention_de_commit` (#1679) n'est relevée que par la lecture du modèle : aucune
+    table ne sait lire une règle écrite en mots.
+    """
 
     langages: tuple[Langage, ...] = ()
     gestionnaires: tuple[Gestionnaire, ...] = ()
@@ -386,6 +426,7 @@ class Constats:
     conventions: tuple[Piece, ...] = ()
     dossier_scripts: DossierScripts = field(default_factory=DossierScripts)
     outillage_present: tuple[Piece, ...] = ()
+    convention_de_commit: ConventionDeCommit | None = None
 
     def commande_de(self, usage: str) -> Commande | None:
         """La première commande constatée pour `usage`, `None` s'il n'y en a aucune.
@@ -408,6 +449,11 @@ class Constats:
             "conventions": [piece.to_dict() for piece in self.conventions],
             "dossier_scripts": self.dossier_scripts.to_dict(),
             "outillage_present": [piece.to_dict() for piece in self.outillage_present],
+            "commit_convention": (
+                self.convention_de_commit.to_dict()
+                if self.convention_de_commit is not None
+                else None
+            ),
         }
 
 
@@ -620,13 +666,22 @@ class Analyse:
         `.maestro/outillage/manifeste.json`, et une seconde formulation du même
         fragment finirait par diverger de celle-ci — on lirait alors un
         outillage sans savoir quelle analyse l'a recommandé.
+
+        La convention de commit que la lecture a relevée y entre quand il y en a une
+        (#1679, `CLE_CONVENTION_DE_COMMIT`) : c'est ce que Maestro suit pour écrire ses
+        propres commits dans le projet, comme le fragment d'un projet neuf garde celle
+        que la personne a choisie (#1507). Sans elle, le fragment est celui d'avant.
         """
-        return {
-            "type": "analyse",
+        source: dict[str, Any] = {
+            "type": SOURCE_ANALYSE,
             "projet_id": self.projet_id,
             "reference": self.id,
             "resume": self.resume,
         }
+        convention = self.constats.convention_de_commit
+        if convention is not None:
+            source[CLE_CONVENTION_DE_COMMIT] = convention.texte
+        return source
 
     def to_dict(self) -> dict[str, Any]:
         """L'analyse entière en JSON — la forme servie par l'API."""

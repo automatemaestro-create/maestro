@@ -132,8 +132,10 @@ from maestro.outillage.generation import (
     corrections_declarees,
     empreinte,
     portees_declarees,
+    poser_le_manifeste,
     poser_piece,
     prevoir,
+    texte_du_manifeste,
     verifications_declarees,
 )
 from maestro.outillage.modele import (
@@ -148,10 +150,9 @@ from maestro.outillage.questionnaire import (
     SUJET_INSTRUCTIONS,
     Choix,
     acquis_de,
-    choix_du_manifeste,
     clients_depuis_choix,
     constats_depuis_choix,
-    convention_de_commit,
+    convention_de_la_source,
     schema_en_texte,
     source_manifeste_des_choix,
     sujet_de,
@@ -167,7 +168,11 @@ from maestro.outillage.verification import (
     commandes_ecrites,
 )
 from maestro.projets import Projet
-from maestro.projets.application import ApplicationRefusee, commiter_en_attente
+from maestro.projets.application import (
+    ApplicationRefusee,
+    commiter_en_attente,
+    ignore_par_le_projet,
+)
 from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import valider_racine
@@ -752,16 +757,33 @@ class ServicePieces:
     ) -> PieceEcrite:
         """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte.
 
-        Le commit de la pièce et celui de sa fusion suivent la convention de commit que
-        la personne a choisie (#1507) : rédigés par le modèle quand la source de la
-        pièce en retient une (`_messages_de_la_piece`), ceux de Maestro sinon.
+        Le commit de la pièce et celui de sa fusion suivent la convention de commit du
+        projet (#1507, #1679) : rédigés par le modèle quand la source de la pièce en
+        retient une (`_messages_de_la_piece`), ceux de Maestro sinon.
+
+        **Le manifeste d'un projet qui l'ignore** (#1679 — le dépôt de Maestro ignore
+        `.maestro/`) ne voyage pas avec la branche : `git add -A` le laisse dans le
+        worktree, que le démontage efface. Il entre donc dans le worktree par son texte,
+        celui de la racine, pour que la pièce s'ajoute aux entrées déjà déclarées ; et il
+        en sort par son texte, posé à la racine **une fois la fusion acceptée** — refusée,
+        rien n'est écrit. Sans cela, l'outillage écrit et sa convention n'existaient pour
+        aucun lecteur du manifeste, dont l'exécution d'une tâche (`outillage_du_projet`).
         """
         tache = nouvel_id_de_generation()
         branche = branche_de_tache(tache)
         message_piece, message_fusion = await self._messages_de_la_piece(projet, piece, branche)
+        manifeste = ""
 
         def preparer() -> PieceEcrite | None:
+            nonlocal manifeste
             with espace_de_travail(projet, tache_id=tache) as espace:
+                ignore = ignore_par_le_projet(espace.path, CHEMIN_MANIFESTE)
+                if ignore:
+                    poser_le_manifeste(
+                        espace.path,
+                        texte_du_manifeste(racine),
+                        FrontiereEcriture.pour(espace.path, projet.perimetre),
+                    )
                 rapport = poser_piece(
                     espace.path,
                     fichier,
@@ -772,6 +794,8 @@ class ServicePieces:
                 )
                 ecriture = rapport.ecritures[0] if rapport.ecritures else None
                 ecrite = not rapport.refus and ecriture is not None and ecriture.etat == "ecrit"
+                if ecrite and ignore:
+                    manifeste = texte_du_manifeste(espace.path)
                 # Commitée ici, sous son message, plutôt qu'au démontage sous celui de
                 # Maestro : ce qui part sur la branche est le même.
                 if ecrite and message_piece:
@@ -797,6 +821,13 @@ class ServicePieces:
             message=message_fusion,
         )
         if resultat.approuvee:
+            if manifeste:
+                await asyncio.to_thread(
+                    poser_le_manifeste,
+                    racine,
+                    manifeste,
+                    FrontiereEcriture.pour(racine, projet.perimetre),
+                )
             return _fait(
                 piece,
                 "ecrit",
@@ -818,12 +849,13 @@ class ServicePieces:
         """Le commit de la pièce et celui de sa fusion, dans la convention du projet (#1507).
 
         La convention se lit dans la **source de la pièce** — les réponses dont
-        l'outillage est écrit —, pas dans le manifeste du disque : la première pièce
-        s'écrit avant qu'il existe. `("", "")` sans convention, et le modèle n'est pas
-        appelé ; un message que le rédacteur n'a pas su écrire reste celui de Maestro.
+        l'outillage est écrit, ou la lecture d'un projet importé (#1679) —, pas dans le
+        manifeste du disque : la première pièce s'écrit avant qu'il existe. `("", "")`
+        sans convention, et le modèle n'est pas appelé ; un message que le rédacteur
+        n'a pas su écrire reste celui de Maestro.
         Les deux se rédigent ensemble : la carte attend.
         """
-        convention = convention_de_commit(choix_du_manifeste(piece.source))
+        convention = convention_de_la_source(piece.source)
         if not convention:
             return "", ""
         verbe = _VERBE_DU_SORT.get(piece.sort, "écrit")

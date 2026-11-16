@@ -1756,7 +1756,7 @@ class LocalExecutor(TaskExecutor):
             horodatage=datetime.now(UTC).strftime("%Y-%m-%d à %H:%M UTC"),
         )
         message, cout = (
-            await self._message_de_recette(projet, run_id)
+            await self._message_de_recette(projet, run_id, brief)
             if accorde and projet.versionne
             else ("", StepUsage())
         )
@@ -1766,11 +1766,14 @@ class LocalExecutor(TaskExecutor):
             )
         return replace(recette, fichier=fichier, ecriture=raison), cout
 
-    async def _message_de_recette(self, projet: Projet, run_id: str) -> tuple[str, StepUsage]:
-        """Le sujet du commit de la recette, dans la convention de commit du projet (#1507).
+    async def _message_de_recette(
+        self, projet: Projet, run_id: str, brief: Brief
+    ) -> tuple[str, StepUsage]:
+        """Le message du commit de la recette, dans la convention de commit du projet (#1507).
 
         Même règle que la fusion (`_message_de_fusion`) : `""` — le message de Maestro —
-        quand la personne n'a choisi aucune convention, et le modèle n'est pas appelé.
+        quand le projet n'a aucune convention, et le modèle n'est pas appelé. Le brief du
+        run lui est donné : la référence que la convention exige s'y lit (#1679).
         """
         convention = await asyncio.to_thread(
             lambda: outillage_du_projet(projet).convention_de_commit
@@ -1782,7 +1785,9 @@ class LocalExecutor(TaskExecutor):
             "d'acceptation du brief confronté au livrable intégré, avec son verdict"
         )
         with collect_usage() as recolte:
-            message = await self._redacteur.message(convention=convention, changement=changement)
+            message = await self._redacteur.message(
+                convention=convention, changement=changement, demande=brief.frame()
+            )
         return message, recolte.total
 
     def derive_les_instances(
@@ -2560,7 +2565,9 @@ class LocalExecutor(TaskExecutor):
                     )
                     raise
                 if accord.approuve:
-                    message, depense = await self._message_de_fusion(task, projet, diff)
+                    message, depense = await self._message_de_fusion(
+                        task, projet, diff, self._briefs.get(journal.run_id)
+                    )
                     statut, detail = await asyncio.to_thread(
                         _applique_la_fusion, projet, diff, branche, message
                     )
@@ -2580,14 +2587,15 @@ class LocalExecutor(TaskExecutor):
         )
 
     async def _message_de_fusion(
-        self, task: Task, projet: Projet, diff: DiffProjet
+        self, task: Task, projet: Projet, diff: DiffProjet, brief: Brief | None = None
     ) -> tuple[str, StepUsage]:
-        """Le sujet du commit de fusion, dans la convention de commit du projet (#1507).
+        """Le message du commit de fusion, dans la convention de commit du projet (#1507).
 
-        `""` — le message de Maestro — quand la personne n'a choisi aucune convention :
-        le modèle n'est alors pas appelé, et la fusion est celle d'avant au caractère
-        près. Sinon le rédacteur l'écrit (`maestro.projets.commits`), avec ce que la
-        branche porte des commits de l'agent sous les yeux. Rend aussi ce que l'appel a
+        `""` — le message de Maestro — quand le projet n'a aucune convention : le modèle
+        n'est alors pas appelé, et la fusion est celle d'avant au caractère près. Sinon
+        le rédacteur l'écrit (`maestro.projets.commits`), avec ce que la branche porte
+        des commits de l'agent sous les yeux, et le brief du run (`brief`), où se lit la
+        référence que la convention exige (#1679). Rend aussi ce que l'appel a
         coûté, que l'étape `:fusion` porte : hors du collecteur de la tâche, il serait
         perdu pour le grand livre.
         """
@@ -2604,7 +2612,10 @@ class LocalExecutor(TaskExecutor):
         )
         with collect_usage() as recolte:
             message = await self._redacteur.message(
-                convention=convention, changement=changement, commits=commits
+                convention=convention,
+                changement=changement,
+                commits=commits,
+                demande=brief.frame() if brief is not None else "",
             )
         return message, recolte.total
 

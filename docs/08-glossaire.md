@@ -254,6 +254,7 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | recommandation | `recommendation` | l'outillage recommandé, avec sa raison |
 | rédaction (écrire) | `drafting` | de l'outillage recommandé au texte écrit dans le projet |
 | correction | `correction` | l'outillage corrigé en langage naturel |
+| convention de commit | `commit_convention` | la règle des messages de commit d'un projet, choisie par la personne ou lue dans ses fichiers |
 | skill | `skill` | un skill d'agent (SKILL.md) écrit par l'outillage |
 | client (d'agents) | `agent_client` | un client installé sur le poste (Claude Code, Codex…) |
 | source | `source` | un document que la personne joint à un objectif |

@@ -993,6 +993,26 @@ def _ecrire_fichier(cible: Path, contenu: str, executable: bool = False) -> str:
     return ""
 
 
+def texte_du_manifeste(racine: Path) -> str:
+    """Le manifeste de `racine` tel qu'il est écrit, `""` sans manifeste (#1679)."""
+    return lire_texte(racine / PurePosixPath(CHEMIN_MANIFESTE), OCTETS_MAX)
+
+
+def poser_le_manifeste(racine: Path, texte: str, garde: FrontiereEcriture) -> str:
+    """Pose `texte` comme manifeste de `racine`, tel quel — `""` ou le motif de l'échec.
+
+    Le geste d'un manifeste que le projet ignore (#1679) : il ne voyage pas avec la
+    branche d'une écriture, et c'est son texte qui passe de la racine au worktree, puis
+    du worktree à la racine une fois la fusion acceptée. Un texte vide ne pose rien.
+    """
+    if not texte.strip():
+        return ""
+    refus = garde.refus_chemin(CHEMIN_MANIFESTE, ecriture=True)
+    if refus is not None:
+        return refus
+    return _ecrire_fichier(racine / PurePosixPath(CHEMIN_MANIFESTE), texte)
+
+
 def _lire_manifeste(racine: Path) -> _EtatManifeste:
     """Le manifeste de `racine`, réduit à ce dont la génération a besoin.
 

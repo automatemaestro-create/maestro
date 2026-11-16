@@ -217,8 +217,9 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
     doublon (même langage, même gestionnaire, même commande pour le même usage,
     même CI, même fichier de convention) n'entrant pas deux fois — les fichiers
     d'instructions d'agent que le modèle a reconnus (#1542) rejoignent les
-    conventions que les tables ont lues. Rien de ce que les tables ont lu n'est
-    retiré — elles ont ouvert le fichier qu'elles citent, et un modèle qui ne le
+    conventions que les tables ont lues, et la convention de commit qu'il a relevée
+    (#1679) entre telle quelle — aucune table n'en relève. Rien de ce que les tables
+    ont lu n'est retiré — elles ont ouvert le fichier qu'elles citent, et un modèle qui ne le
     mentionne pas n'en fait pas une erreur.
 
     L'ordre des commandes reste celui de `_ordonner`, **une** règle pour les deux
@@ -255,6 +256,7 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
         + tuple(
             p for p in retenus.conventions if p.chemin.casefold() not in conventions_vues
         ),
+        convention_de_commit=indices.convention_de_commit or retenus.convention_de_commit,
     )
     return replace(
         analyse,

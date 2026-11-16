@@ -90,6 +90,7 @@ from typing import TYPE_CHECKING
 from maestro.outillage.analyse import completer
 from maestro.outillage.detection import ROLE_INSTRUCTIONS, lire_texte
 from maestro.outillage.modele import (
+    CONVENTION_MAX,
     ORIGINES_COMMANDE,
     USAGES,
     Analyse,
@@ -97,6 +98,7 @@ from maestro.outillage.modele import (
     Commande,
     ConstatEcarte,
     Constats,
+    ConventionDeCommit,
     Gestionnaire,
     Langage,
     Lecture,
@@ -130,11 +132,17 @@ CLES_CONSTAT: tuple[str, ...] = (
     "COMMANDE",
     "CI",
     "INSTRUCTIONS",
+    "COMMITS",
     "POUR",
 )
 
 #: La clé d'un fichier que le projet écrit pour ses agents (#1542).
 INSTRUCTIONS = "INSTRUCTIONS"
+
+#: La clé de la convention de message de commit que le projet impose (#1679) : une
+#: règle écrite en mots, qu'aucune table ne sait lire, et que les commits de Maestro et
+#: de ses agents suivent dans ce projet.
+COMMITS = "COMMITS"
 
 #: La clé qui dit ce qu'une commande rendue fait **pour ce projet** (#1350, #1381) — la
 #: description du skill qui la porte. Demandée par la revue d'après un run (`echecs`),
@@ -180,6 +188,7 @@ GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <fi
 COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
 CI: <nom de la CI> | <fichier lu qui la définit>
 INSTRUCTIONS: <fichier lu> | <ce qu'il prescrit aux agents, en quelques mots>
+COMMITS: <fichier lu> | <la convention de message de commit qu'il impose, en une ligne>
 FIN
 Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
 quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
@@ -192,13 +201,21 @@ présente le projet à des personnes, un fichier qui ne fait qu'en importer un a
 la définition d'un agent, d'un rôle ou d'une commande en particulier (le prompt d'un
 sous-agent, d'une commande d'un outil) — elle ne vaut que pour lui.
 
+COMMITS : la convention que le projet IMPOSE aux messages de commit, telle qu'un fichier
+lu la fixe — la forme du sujet, les types ou préfixes qu'elle admet, la référence au
+ticket qu'elle exige, sa langue —, en une ligne, après le fichier. Quand ce qui
+la vérifie (un hook commit-msg, une configuration de commitlint) est écrit dans le
+projet, lis-le : c'est lui qui dit les types admis et la référence exigée, et c'est lui
+que tu cites. Une seule ligne COMMITS ; aucune si rien de ce que tu as lu ne fixe la
+convention — l'historique d'un dépôt ne fixe rien.
+
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
 « convention » : c'est la commande usuelle de l'outil que le fichier prouve, sans
 que le projet l'écrive. Ne présente jamais une convention comme déclarée.
 
 Règles :
-- Chaque GESTIONNAIRE, COMMANDE, CI et INSTRUCTIONS cite un fichier que tu as LU
+- Chaque GESTIONNAIRE, COMMANDE, CI, INSTRUCTIONS et COMMITS cite un fichier que tu as LU
   pendant cette lecture ; un LANGAGE peut citer un fichier seulement listé. Un
   constat qui cite un fichier que tu n'as pas lu sera écarté.
 - Les indices fournis viennent des tables de Maestro : ils sont vrais mais
@@ -737,7 +754,7 @@ def _decoder(texte: str) -> _Reponse:
         if cle in (LISTER, LIRE):
             demandes.append(Demande(verbe=cle, chemin=reste.strip()))
         elif cle in CLES_CONSTAT:
-            coupes = 4 if cle == "COMMANDE" else 1 if cle in (POUR, INSTRUCTIONS) else -1
+            coupes = 4 if cle == "COMMANDE" else 1 if cle in (POUR, INSTRUCTIONS, COMMITS) else -1
             champs = tuple(_sans_gaine(champ.strip()) for champ in reste.split("|", coupes))
             constats.append(_ConstatBrut(cle=cle, champs=champs, ligne=ligne[:TEXTE_MAX]))
     return _Reponse(demandes=tuple(demandes), constats=tuple(constats), fin=fin)
@@ -786,6 +803,7 @@ class _Confronteur:
         self.commandes: list[Commande] = []
         self.ci: list[Piece] = []
         self.conventions: list[Piece] = []
+        self.convention_de_commit: ConventionDeCommit | None = None
         self.ecartes: list[ConstatEcarte] = []
         self._pours: dict[str, tuple[str, str]] = {}
 
@@ -797,6 +815,7 @@ class _Confronteur:
             "COMMANDE": self._commande,
             "CI": self._ci_de,
             INSTRUCTIONS: self._instructions_de,
+            COMMITS: self._commits_de,
             POUR: self._pour_de,
         }[brut.cle](brut.champs)
         if raison:
@@ -923,6 +942,27 @@ class _Confronteur:
         )
         return ""
 
+    def _commits_de(self, champs: tuple[str, ...]) -> str:
+        """La convention de commit que le projet impose (#1679) — lue, une seule, sinon écartée.
+
+        Elle entre avec le fichier lu qui la fixe, comme tout constat. Une convention de
+        plus de `CONVENTION_MAX` caractères est un paragraphe recopié, pas une règle : elle
+        est écartée plutôt que tronquée, car une règle coupée ferait écrire des commits
+        qu'elle refuse. La première rendue l'emporte : un projet n'a qu'une convention.
+        """
+        chemin, raison = self._preuve(champs[0] if champs else "", lu=True)
+        if chemin is None:
+            return raison
+        texte = " ".join((champs[1] if len(champs) > 1 else "").split())
+        if not texte:
+            return "convention de commit vide"
+        if len(texte) > CONVENTION_MAX:
+            return f"convention de plus de {CONVENTION_MAX} caractères : un paragraphe"
+        if self.convention_de_commit is not None:
+            return "une convention de commit est déjà rendue par cette lecture"
+        self.convention_de_commit = ConventionDeCommit(texte=texte, chemin=chemin)
+        return ""
+
     def _pour_de(self, champs: tuple[str, ...]) -> str:
         """Ce qu'une commande fait pour le projet (#1381) — rattaché à la fin, à sa commande."""
         if len(champs) < 2 or not champs[0] or not champs[1].strip():
@@ -972,6 +1012,7 @@ class _Confronteur:
             commandes=tuple(self.commandes),
             ci=tuple(self.ci),
             conventions=tuple(self.conventions),
+            convention_de_commit=self.convention_de_commit,
         )
         return retenus, tuple(self.ecartes)
 

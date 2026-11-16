@@ -105,6 +105,9 @@ BALISE_FIN = "<!-- END:maestro-outillage -->"
 #: encore que l'outillage (#1400).
 TITRE_RACINE_OUTILLEE = "### Ce que ton répertoire de travail porte déjà"
 
+#: Le titre de la section qui dit à l'agent la convention de commit du projet (#1679).
+TITRE_CONVENTION_DE_COMMIT = "### La convention de commit du projet"
+
 #: Le titre du fragment que la consigne pose dans le message de la tâche. Il ne reprend
 #: pas celui de la section d'`AGENTS.md` qu'il transmet (`## L'outillage de ce projet`,
 #: docs/38 §3.1) : sur p5, les deux se lisaient l'un sous l'autre (#1404).
@@ -190,12 +193,12 @@ class OutillageDuProjet:
     rôle et qu'il soit transmis ou non, dans l'ordre du fichier : un pont ou un
     script n'entre pas dans le contexte, mais il est à Maestro, pas au projet.
 
-    `convention_de_commit` (#1507) est la convention de message de commit que la
-    personne a choisie — lue dans la source du manifeste, celle d'un outillage venu
-    de ses réponses (`questionnaire.convention_de_commit`) —, `""` sans réponse ou
-    pour un projet analysé. Ce n'est pas du contexte d'agent (l'agent la lit dans
-    `AGENTS.md`) : c'est ce que **Maestro** suit quand il écrit ses propres commits
-    (`maestro.projets.commits`) et ce que la vérification d'une livraison relit.
+    `convention_de_commit` (#1507) est la convention de message de commit du projet,
+    lue dans la source du manifeste : celle que la personne a choisie pour un projet
+    neuf, ou celle que la lecture d'un projet importé a relevée dans ses fichiers
+    (#1679) — `""` sans l'une ni l'autre. C'est ce que **Maestro** suit quand il écrit
+    ses propres commits (`maestro.projets.commits`), ce que la vérification d'une
+    livraison relit, et ce que la consigne dit à l'agent qui commite (`consigne`).
     """
 
     manifeste: str = ""
@@ -262,6 +265,10 @@ class OutillageDuProjet:
         y lirait « tu as le droit de… » doit savoir d'où vient ce droit — de sa
         politique d'outils, et de nulle part ailleurs.
 
+        La convention de commit du projet (#1679), quand il en a une, a sa section : la
+        règle que Maestro suit pour ses propres commits est celle que l'agent suit pour
+        les siens, référence au ticket comprise (`_section_convention_de_commit`).
+
         `espace` (#1400) est l'énumération de l'espace de travail de l'agent : s'il
         ne porte que l'outillage (`seules_pieces`), une section le dit juste avant
         cette dernière phrase. Vide (le défaut), rien n'en est dit — le fragment
@@ -317,6 +324,8 @@ class OutillageDuProjet:
                         for skill in a_lister
                     ),
                 ]
+        if self.convention_de_commit:
+            lignes += ["", *_section_convention_de_commit(self.convention_de_commit)]
         pieces = self.seules_pieces(espace)
         if pieces:
             lignes += ["", *_section_racine_outillee(pieces)]
@@ -435,6 +444,27 @@ def _ou_sont_les_skills(*, designes: bool, a_lister: bool) -> str:
     if designes:
         return "Les instructions ci-dessus les désignent, chacun avec son chemin. "
     return ""
+
+
+def _section_convention_de_commit(convention: str) -> list[str]:
+    """La convention de commit du projet, et la référence qu'elle exige (#1679).
+
+    Dite à l'agent **telle que Maestro la suit**, et non laissée aux instructions qu'il
+    lira peut-être : un agent qui connaît la forme d'une convention n'en connaît ni les
+    seuls types admis ni la référence exigée tant qu'on ne les lui nomme pas. Aucun
+    ticket n'est nommé ici : c'est sa tâche et le brief du run qui le portent, et l'agent
+    les lit.
+    """
+    return [
+        TITRE_CONVENTION_DE_COMMIT,
+        "",
+        f"Chacun de tes commits suit cette convention, à la lettre : {convention}",
+        "",
+        "N'emploie que les types ou préfixes qu'elle admet. Si elle exige de citer un "
+        "ticket, une issue ou une autre référence et que ta tâche ou le brief du run en "
+        "nomme une, cite-la dans **chacun** de tes commits, comme elle le veut ; n'en "
+        "invente jamais une que rien ne nomme.",
+    ]
 
 
 def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
@@ -563,19 +593,20 @@ def _depuis_entrees(  # noqa: C901
 
 
 def _convention_de_commit(donnees: dict[str, Any]) -> str:
-    """La convention de commit que la source du manifeste retient — `""` sinon (#1507).
+    """La convention de commit que la source du manifeste retient — `""` sinon (#1507, #1679).
 
-    Relue par le lecteur des choix du manifeste (`choix_du_manifeste`), qui ne croit
-    rien de ce qu'un fichier du projet prétend sans le vérifier : le manifeste vit dans
-    le projet, et n'importe qui peut l'avoir touché. Importé ici et pas en tête : le
-    questionnaire dépend de la vérification, qui dépend de ce module.
+    Celle que la personne a choisie pour un projet neuf, ou celle que la lecture a
+    relevée dans un projet importé : `convention_de_la_source` les relit toutes deux, sans
+    rien croire de ce qu'un fichier du projet prétend — le manifeste vit dans le projet,
+    et n'importe qui peut l'avoir touché. Importé ici et pas en tête : le questionnaire
+    dépend de la vérification, qui dépend de ce module.
     """
-    from maestro.outillage.questionnaire import choix_du_manifeste, convention_de_commit
+    from maestro.outillage.questionnaire import convention_de_la_source
 
     source = donnees.get("source")
     if not isinstance(source, dict):
         return ""
-    return convention_de_commit(choix_du_manifeste(source))
+    return convention_de_la_source(source)
 
 
 def _manifeste(racine: Path, bornes: Bornes) -> dict[str, Any] | None:
