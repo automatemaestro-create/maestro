@@ -432,7 +432,16 @@ version antérieure de Maestro. Chaque commande que l'outillage écrit y porte s
 commande absent, commande que la portée « projet » renvoie à une personne, délai sans verdict, poste
 sans bash). Elle est jouée **dans une copie** de l'arbre outillé, jamais dans la racine ni dans le
 worktree qu'on commite ([`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py)), et le
-même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`. Elle ne garde que les
+même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`. Sur un projet
+**versionné**, cette copie est un **clone neuf** de sa branche (#1687) : ce que la personne récupère,
+historique compris, et rien de ce qu'elle n'a pas commité. Une commande prescrite qui lit l'historique,
+comme `bash scripts/ci/local.sh` et son diff avec `origin/main`, y trouve son dépôt, où `origin` désigne
+la copie de travail clonée. Le clone n'a aucune dépendance : la commande d'installation que l'outillage
+écrit s'y joue d'abord, même quand une seule autre commande est jouée (le skill de tests, une correction
+essayée). Un clone impossible ne retombe jamais sur la copie, où cette commande ne trouverait aucun
+dépôt : rien n'est joué, et le verdict le dit. Un projet non versionné garde sa copie. ⚠ Ce que
+l'installation écrit hors du clone (le profil, le dossier personnel) n'y est pas encore borné. C'est
+#1691, qui attend l'intégrité basse de #1515. Elle ne garde que les
 commandes que l'outillage **écrit encore** (#1381) : une commande remplacée — corrigée par la personne,
 proposée par Maestro après un run — garde son verdict tant qu'un fichier de Maestro la porte, et le
 perd quand plus aucun ne l'écrit. Vu sur S9 : le verdict « à vérifier » d'une commande remplacée y

@@ -30,9 +30,13 @@ docs/38 §4.1) et dans le **rapport** montré à la personne, commande par comma
 ## Où l'on joue, et ce qu'on ne joue pas
 
 - **Dans une copie**, jamais dans la racine ni dans le worktree qu'on commite
-  (`maestro.sandbox.verification`, qui en donne la raison) ;
+  (`maestro.sandbox.verification`, qui en donne la raison). Sur un projet versionné,
+  c'est un **clone neuf** de sa branche, historique compris (#1687) : ce que la
+  personne récupère, où une commande qui lit l'historique trouve son dépôt ;
 - **dans l'ordre des usages** (`USAGES`) : l'installation d'abord, parce que tout le
-  reste en dépend sur un arbre frais ;
+  reste en dépend sur un arbre frais. Le clone neuf n'a aucune dépendance : la
+  commande d'installation que l'outillage écrit (`installation_de`) y est jouée
+  d'abord, même quand seule une autre commande est demandée ;
 - **sous l'arbitrage des actes** : une commande que la portée « projet » renvoie à
   une personne (`maestro.portee` — elle sort du dossier du projet : `sudo`, un
   gestionnaire du système, `pip install` hors d'un environnement du projet, une
@@ -78,7 +82,8 @@ from __future__ import annotations
 import re
 import shlex
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -105,6 +110,9 @@ ETATS_VERIFICATION: frozenset[str] = frozenset({VERIFIEE, ECHOUEE, A_VERIFIER})
 
 #: L'usage d'une commande de démarrage : elle ne rend pas la main quand elle marche.
 USAGE_DEMARRER = "demarrer"
+
+#: L'usage de l'installation : sur un arbre frais, tout le reste en dépend (`USAGES`).
+USAGE_INSTALLER = USAGES[0]
 
 #: Nom de skill → usage, dérivé de la table de la recommandation (jamais recopié).
 _USAGE_DU_SKILL: dict[str, str] = {nom: usage for usage, (nom, _) in SKILL_PAR_USAGE.items()}
@@ -370,6 +378,7 @@ class Verificateur:
             perimetre=perimetre,
             portees=portees,
             connues=connues,
+            installation=installation_de(constats),
         )
 
     def verifier_commandes(
@@ -380,12 +389,19 @@ class Verificateur:
         perimetre: Perimetre,
         portees: Mapping[str, str] | None = None,
         connues: Mapping[str, Verification] | None = None,
+        installation: CommandeEcrite | None = None,
     ) -> tuple[Verification, ...]:
         """Les verdicts de `commandes`, jouées comme celles d'un outillage — dans une copie.
 
         Le cœur de `verifier`, pour qui a déjà ses commandes : la revue d'après un run
         (#1381) joue une commande **lue** dans le projet construit avant de la proposer, et
         elle n'est écrite nulle part encore. Mêmes règles, mêmes délais, même portée.
+
+        `installation` est la commande d'installation que l'outillage écrit
+        (`installation_de`). Sur un projet versionné, le clone neuf où l'on joue n'a
+        aucune dépendance : elle y est jouée **d'abord**, même quand on ne demande pas son
+        verdict, pour que la commande demandée trouve le projet installé comme chez la
+        personne (#1687). Son verdict n'est rendu que s'il est demandé.
         """
         if not commandes:
             return ()
@@ -412,7 +428,14 @@ class Verificateur:
             else:
                 a_jouer.append((commande, pas_encore))
         if a_jouer and interprete is not None:
-            verdicts.update(self._jouer(racine, a_jouer, perimetre, interprete))
+            # L'installation ne se prépare que si le projet peut la jouer : un fichier
+            # qu'elle appelle et qui n'existe pas encore ne s'installe pas d'avance.
+            prealable = (
+                installation
+                if installation is not None and not _pas_encore(racine, installation, vide=vide)
+                else None
+            )
+            verdicts.update(self._jouer(racine, a_jouer, perimetre, interprete, prealable))
         return tuple(verdicts[c.commande] for c in commandes)
 
     def sonder(self, noms: Iterable[str]) -> dict[str, bool]:
@@ -452,25 +475,49 @@ class Verificateur:
         commandes: Sequence[tuple[CommandeEcrite, str]],
         perimetre: Perimetre,
         interprete: tuple[str, ...],
+        installation: CommandeEcrite | None = None,
     ) -> dict[str, Verification]:
         """Joue `commandes` dans **une** copie de `racine`, l'une après l'autre.
 
         Une commande que le projet ne peut pas encore jouer (sa raison non vide) n'y est
         pas jouée : ses programmes y sont sondés (`_en_attente`), une fois chacun pour
         toute la vérification.
+
+        Sur un projet versionné, la copie est un **clone neuf** de sa branche
+        (`execution.clone_neuf`, #1687) : ce que la personne récupère, historique compris,
+        et rien de ce qu'elle n'a pas commité. Il se joue comme un arbre frais :
+        `installation` d'abord, demandée ou non. Un clone impossible n'est jamais remplacé
+        par la copie, où une commande qui lit l'historique ne trouverait aucun dépôt : rien
+        n'est joué, et chaque verdict le dit.
         """
         joueur = self.joueur if self.joueur is not None else execution.jouer
         verdicts: dict[str, Verification] = {}
         sondes: dict[str, execution.Execution] = {}
+        versionne = execution.versionnee(racine)
+        a_jouer = list(commandes)
+        prealable: CommandeEcrite | None = None
+        if versionne:
+            # Une installation demandée — celle de l'outillage, ou une autre qu'on essaie à
+            # sa place — passe devant ; elle tient alors lieu de la préparation.
+            installations = [
+                paire
+                for paire in a_jouer
+                if paire[0].usage == USAGE_INSTALLER
+                or (installation is not None and paire[0].commande == installation.commande)
+            ]
+            if installations:
+                a_jouer = installations + [p for p in a_jouer if p not in installations]
+            else:
+                prealable = installation
         try:
-            with execution.copie_de_verification(
-                racine,
-                exclus=motifs_compiles(perimetre.exclus),
-                hors=(DOSSIER_ATELIER,),
-            ) as copie:
+            with _espace_de_jeu(racine, perimetre, versionne=versionne) as copie:
                 portee = PorteeProjet(racine=copie)
                 debut = time.monotonic()
-                for commande, pas_encore in commandes:
+                if prealable is not None:
+                    # Son verdict n'est pas demandé : il prépare le clone, et ce qu'il a
+                    # rendu se lit dans la sortie des commandes qui en dépendent.
+                    self._une(prealable, copie, portee, joueur, interprete, debut)
+                for commande, pas_encore in a_jouer:
                     if pas_encore:
                         verdicts[commande.commande] = self._en_attente(
                             commande, pas_encore, copie, portee, joueur, interprete, debut, sondes
@@ -481,6 +528,10 @@ class Verificateur:
                         )
         except execution.CopieImpossible as exc:
             raison = f"la copie de vérification n'a pas pu être faite — {exc}"
+            for commande, pas_encore in commandes:
+                verdicts.setdefault(commande.commande, _a_verifier(commande, pas_encore or raison))
+        except execution.CloneImpossible as exc:
+            raison = f"le clone neuf de vérification n'a pas pu être fait — {exc}"
             for commande, pas_encore in commandes:
                 verdicts.setdefault(commande.commande, _a_verifier(commande, pas_encore or raison))
         return verdicts
@@ -564,6 +615,31 @@ class Verificateur:
         except OSError as exc:
             return _a_verifier(commande, f"l'interpréteur n'a pas pu la lancer ({exc})")
         return _verdict(commande, resultat, demarrage=demarrage, fenetre=self.delais.demarrage_s)
+
+
+def installation_de(constats: Constats) -> CommandeEcrite | None:
+    """La commande d'installation que l'outillage écrit pour ce projet — `None` s'il n'en a pas.
+
+    Celle qu'`AGENTS.md` écrit (`Constats.commande_de`) : la prescrite d'abord (docs/38
+    §3.5bis), la déclarée ensuite, la convention de son gestionnaire enfin.
+    """
+    commande = constats.commande_de(USAGE_INSTALLER)
+    if commande is None or not commande.commande.strip():
+        return None
+    return CommandeEcrite(USAGE_INSTALLER, commande.commande, commande.chemin)
+
+
+@contextmanager
+def _espace_de_jeu(racine: Path, perimetre: Perimetre, *, versionne: bool) -> Iterator[Path]:
+    """Où les commandes se jouent : le clone neuf d'un projet versionné, sinon la copie."""
+    if versionne:
+        with execution.clone_neuf(racine) as clone:
+            yield clone
+        return
+    with execution.copie_de_verification(
+        racine, exclus=motifs_compiles(perimetre.exclus), hors=(DOSSIER_ATELIER,)
+    ) as copie:
+        yield copie
 
 
 def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -> bool:

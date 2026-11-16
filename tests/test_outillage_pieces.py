@@ -29,7 +29,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +115,14 @@ from maestro.outillage.modele import ORIGINE_DITE, DossierScripts, Piece
 from maestro.outillage.questionnaire import Choix, source_manifeste_des_choix
 from maestro.outillage.recommandation import RAISON_AGENTS
 from maestro.outillage.redaction import Fichier, prescrit, rediger
-from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verificateur, Verification
+from maestro.outillage.verification import (
+    A_VERIFIER,
+    ECHOUEE,
+    VERIFIEE,
+    CommandeEcrite,
+    Verificateur,
+    Verification,
+)
 from maestro.projets import ProjetStore
 from maestro.projets.application import DiffProjet, Modification
 from maestro.projets.commits import RedacteurDeCommits
@@ -282,6 +289,7 @@ def _service(
     *,
     poste: tuple[Client, ...] | None = None,
     equipe: ConfigurationAgents | None = None,
+    verificateur: Verificateur | None = None,
 ) -> ServicePieces:
     """Le service des pièces, commandes jouées par le joueur doublé.
 
@@ -296,7 +304,7 @@ def _service(
             clients=(lambda: poste) if poste is not None else None,
         ),
         projets,
-        verificateur=Verificateur(joueur=joueur, interprete=FAUX_BASH),
+        verificateur=verificateur or Verificateur(joueur=joueur, interprete=FAUX_BASH),
         correction=CorrectionModele(modele or _Modele()),
         equipe=equipe,
     )
@@ -669,6 +677,33 @@ def test_un_projet_importe_propose_sa_premiere_piece_verifiee_sans_rien_ecrire(
     assert all(dossier != racine for dossier in joueur.dossiers)
     assert {v.etat for v in piece.verifications} == {VERIFIEE}
     assert not (racine / "AGENTS.md").exists() and not (racine / ".maestro").exists()
+
+
+@dataclass(frozen=True)
+class _VerificateurQuiRetient(Verificateur):
+    """Le vérificateur doublé, qui retient l'installation que chaque vérification reçoit."""
+
+    installations: list[CommandeEcrite | None] = field(default_factory=list)
+
+    def verifier_commandes(self, racine: Path, commandes: Any, **options: Any) -> Any:
+        self.installations.append(options.get("installation"))
+        return super().verifier_commandes(racine, commandes, **options)
+
+
+def test_la_verification_d_une_piece_recoit_l_installation_que_l_outillage_ecrit(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """#1687 : sur un clone neuf, l'installation se joue d'abord — encore faut-il la recevoir."""
+    projet_id = _importe(projets, _maison)
+    joueur = _Joueur()
+    verificateur = _VerificateurQuiRetient(joueur=joueur, interprete=FAUX_BASH)
+    service = _service(projets, joueur, verificateur=verificateur)
+
+    piece = asyncio.run(service.prochaine(projet_id, []))
+
+    assert piece is not None and piece.chemin == "AGENTS.md"
+    assert verificateur.installations
+    assert {i.commande if i else None for i in verificateur.installations} == {"npm install"}
 
 
 def test_ecrire_une_piece_n_ecrit_qu_elle_et_la_suivante_vient_sans_rien_rejouer(
