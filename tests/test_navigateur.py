@@ -14,17 +14,31 @@ reçoit désormais à sa composition (`maestro.agents.navigateur`) :
    la tâche, dont tout fichier ressortirait en livrable ;
 ④ **le garde-fou du registre** — une entrée retirée de l'allowlist n'équipe personne ;
 ⑤ **une seule fabrique** — la bibliothèque des intégrations pose le même serveur qu'une
-   équipe, complété par le poste et sous le même nom (#1313).
+   équipe, complété par le poste et sous le même nom (#1313) ;
+⑥ **ce qu'il écrit sous un nom que l'agent donne** — posé sous son dossier de sorties
+   par le point de contrôle, jamais dans l'espace de la tâche (#1674).
 
 Aucun navigateur n'est lancé ni cherché sur le poste qui joue la suite : la sonde est
-injectable de bout en bout.
+injectable de bout en bout. Le seul test qui lance le vrai CLI porte `cli_reel`.
 """
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    HookMatcher,
+    TextBlock,
+    create_sdk_mcp_server,
+    query,
+    tool,
+)
 from fastapi.testclient import TestClient
 
 from maestro.agents import navigateur
@@ -37,16 +51,23 @@ from maestro.agents.navigateur import (
     GESTES_DE_L_AGENT,
     ID_INTEGRATION,
     NOM_SERVEUR,
+    OUTILS_QUI_ECRIVENT,
+    PAQUET_ADAPTATEUR,
     NavigateurDuPoste,
+    RedirectionDesSorties,
     dossier_des_sorties,
     integration_navigateur,
     navigateur_du_poste,
     outils_du_navigateur,
+    redirection_des_sorties,
     serveur_navigateur,
 )
+from maestro.agents.permissions import PolitiqueOutils
 from maestro.controltower.app import create_app
 from maestro.controltower.events import InMemoryEventBus
 from maestro.emplacements import racine_jetable
+from maestro.providers import ClaudeProvider, Credentials
+from maestro.providers import claude as claude_mod
 
 # ── ① une version connue ──────────────────────────────────────────────────────
 
@@ -295,3 +316,351 @@ def test_un_autre_serveur_de_la_bibliotheque_n_est_pas_complete_par_le_poste(
     entree = RegistreMcp.curee().get("memory")
     assert entree is not None
     assert integration.serveur == entree.vers_serveur()
+
+
+# ── ⑥ ce qu'il écrit sous un nom que l'agent donne ────────────────────────────
+#
+# Relevé de #1674 : l'adaptateur résout un nom choisi par le modèle contre son espace
+# de travail — la racine que le client annonce, c'est-à-dire la tâche —, et seul un nom
+# qu'il choisit lui-même contre `--output-dir`. Une capture nommée tombait donc dans la
+# tâche, et partait dans le projet de la personne à la fusion.
+
+#: L'outil de capture, sous le nom que le point de contrôle lit.
+_CAPTURE = f"{outils_du_navigateur()}browser_take_screenshot"
+
+
+class _ClientPilote:
+    """`ClaudeSDKClient` factice : serveurs connectés d'emblée, une réponse, options retenues."""
+
+    options: ClaudeAgentOptions | None = None
+
+    def __init__(self, options: ClaudeAgentOptions) -> None:
+        type(self).options = options
+
+    async def __aenter__(self) -> _ClientPilote:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def get_mcp_status(self) -> dict[str, Any]:
+        serveurs = (self.options.mcp_servers if self.options else None) or {}
+        return {"mcpServers": [{"name": nom, "status": "connected"} for nom in serveurs]}
+
+    async def query(self, prompt: str) -> None:
+        return None
+
+    async def receive_response(self):
+        yield AssistantMessage(content=[TextBlock(text="Regardé.")], model="claude-double")
+
+
+def _sortie_redirigee(sortie: object) -> dict[str, Any]:
+    """L'entrée que le point de contrôle rend à l'outil — échoue s'il n'en rend aucune."""
+    assert isinstance(sortie, dict) and sortie, f"l'appel est parti tel quel : {sortie!r}"
+    decision = sortie["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "allow"
+    return dict(decision["updatedInput"])
+
+
+def test_une_session_qui_monte_le_navigateur_pose_ses_captures_nommees_hors_de_la_tache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L'étape de reproduction de #1674, au point où Maestro la tient : une session qui
+    monte le navigateur, sans politique ni frontière, et une capture que l'agent nomme."""
+    monkeypatch.setattr(claude_mod, "ClaudeSDKClient", _ClientPilote)
+    sorties = tmp_path / "sorties"
+    tache = tmp_path / "tache"
+    tache.mkdir()
+
+    reponse = asyncio.run(
+        ClaudeProvider(Credentials()).run_agent(
+            "Regarde la page d'accueil.",
+            model="claude-double",
+            workspace=tache,
+            tools=("Read",),
+            mcp_serveurs=(serveur_navigateur(sonde=lambda: _EDGE, sorties=sorties),),
+        )
+    )
+
+    assert reponse == "Regardé."
+    options = _ClientPilote.options
+    assert options is not None
+    assert options.hooks, "aucun point de contrôle monté : la capture part telle que nommée"
+    (matcher,) = options.hooks["PreToolUse"]
+    (hook,) = matcher.hooks
+    appel = {"tool_name": _CAPTURE, "tool_input": {"filename": "exercice-1313.png"}}
+    sortie = asyncio.run(hook(appel, "tu-1", {"signal": None}))
+    assert _sortie_redirigee(sortie) == {"filename": str(sorties / "exercice-1313.png")}
+    # L'espace que la session reçoit est celui que la redirection connaît : un chemin
+    # absolu sous la tâche tombe hors d'elle, au même chemin relatif.
+    appel = {"tool_name": _CAPTURE, "tool_input": {"filename": str(tache / "accueil-375.png")}}
+    sortie = asyncio.run(hook(appel, "tu-2", {"signal": None}))
+    assert _sortie_redirigee(sortie) == {"filename": str(sorties / "accueil-375.png")}
+
+
+def test_une_redirection_n_arme_aucune_sonde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La sonde éprouve qu'un **refus** tient : une session qui ne pose aucun refus n'en
+    a pas à payer, même quand son point de contrôle est monté pour le navigateur."""
+    monkeypatch.setattr(claude_mod, "ClaudeSDKClient", _ClientPilote)
+    sondes: list[object] = []
+
+    async def sonde(self: ClaudeProvider, **_: object) -> None:
+        sondes.append(self)
+
+    monkeypatch.setattr(ClaudeProvider, "_point_de_controle_verifie", sonde)
+
+    asyncio.run(
+        ClaudeProvider(Credentials()).run_agent(
+            "Regarde.",
+            model="claude-double",
+            workspace=tmp_path,
+            tools=("Read",),
+            mcp_serveurs=(serveur_navigateur(sonde=lambda: _EDGE, sorties=tmp_path / "s"),),
+        )
+    )
+
+    assert sondes == []
+
+
+def _redirection(tmp_path: Path) -> RedirectionDesSorties:
+    serveur = serveur_navigateur(sonde=lambda: _EDGE, sorties=tmp_path / "sorties")
+    redirection = redirection_des_sorties([serveur], espace=tmp_path / "tache")
+    assert redirection is not None
+    return redirection
+
+
+def test_une_capture_que_l_agent_nomme_tombe_sous_le_dossier_de_sorties(tmp_path: Path) -> None:
+    """Le relevé de #1674 : `filename: "exercice-1313.png"` tombait dans la tâche."""
+    entree = _redirection(tmp_path).entree(
+        _CAPTURE, {"filename": "exercice-1313.png", "type": "png"}
+    )
+    assert entree == {"filename": str(tmp_path / "sorties" / "exercice-1313.png"), "type": "png"}
+
+
+@pytest.mark.parametrize("outil", sorted(OUTILS_QUI_ECRIVENT))
+def test_tout_ce_qu_il_ecrit_sous_un_nom_donne_tombe_sous_le_dossier_de_sorties(
+    tmp_path: Path, outil: str
+) -> None:
+    """Captures, instantanés, console, réseau, PDF, état de stockage, vidéo : la consigne
+    promet que tout ce que le navigateur écrit tombe hors du projet."""
+    entree = _redirection(tmp_path).entree(
+        f"{outils_du_navigateur()}{outil}", {"filename": "sortie.txt"}
+    )
+    assert entree == {"filename": str(tmp_path / "sorties" / "sortie.txt")}
+
+
+def test_un_nom_relatif_garde_ses_dossiers_sous_le_dossier_de_sorties(tmp_path: Path) -> None:
+    entree = _redirection(tmp_path).entree(_CAPTURE, {"filename": "accueil/375.png"})
+    assert entree == {"filename": str(tmp_path / "sorties" / "accueil" / "375.png")}
+
+
+def test_un_chemin_absolu_dans_la_tache_tombe_sous_le_dossier_de_sorties(
+    tmp_path: Path,
+) -> None:
+    """Le premier exercice de #1674 : la personne demandait qu'on lui « garde » une
+    capture, et l'agent l'a nommée sous un chemin du projet. Elle tombe hors de la tâche,
+    au même chemin relatif, et la consigne dit comment la remettre."""
+    absolu = str(tmp_path / "tache" / "docs" / "accueil.png")
+    entree = _redirection(tmp_path).entree(_CAPTURE, {"filename": absolu, "fullPage": True})
+    attendu = str(tmp_path / "sorties" / "docs" / "accueil.png")
+    assert entree == {"filename": attendu, "fullPage": True}
+    assert "même sous un chemin du projet" in CONSIGNE_DE_L_AGENT
+    assert "compte rendu" in CONSIGNE_DE_L_AGENT
+
+
+def test_un_chemin_deja_sous_le_dossier_de_sorties_n_est_pas_retouche(tmp_path: Path) -> None:
+    """Un nom que l'adaptateur a lui-même désigné, et que l'agent lui rend."""
+    absolu = str(tmp_path / "sorties" / "page-1.yml")
+    assert _redirection(tmp_path).entree(_CAPTURE, {"filename": absolu}) is None
+
+
+def test_le_dossier_de_sorties_dans_la_tache_reste_le_dossier_de_sorties(tmp_path: Path) -> None:
+    """Un dossier de sorties posé sous l'espace (un réglage, pas le défaut) : un chemin
+    déjà dessous n'y est pas reposé une seconde fois."""
+    serveur = serveur_navigateur(sonde=lambda: _EDGE, sorties=tmp_path / "sorties")
+    redirection = redirection_des_sorties([serveur], espace=tmp_path)
+    assert redirection is not None
+    assert redirection.entree(_CAPTURE, {"filename": str(tmp_path / "sorties" / "a.png")}) is None
+    entree = redirection.entree(_CAPTURE, {"filename": str(tmp_path / "b.png")})
+    assert entree == {"filename": str(tmp_path / "sorties" / "b.png")}
+
+
+def test_un_chemin_absolu_hors_des_deux_racines_part_tel_quel(tmp_path: Path) -> None:
+    """Ni sous la tâche ni sous le dossier de sorties : l'adaptateur le refuse lui-même, et
+    le reposer ailleurs réécrirait en silence un geste qu'il juge."""
+    ailleurs = str(tmp_path / "ailleurs" / "a.png")
+    assert _redirection(tmp_path).entree(_CAPTURE, {"filename": ailleurs}) is None
+
+
+def test_sans_espace_connu_un_chemin_absolu_part_tel_quel(tmp_path: Path) -> None:
+    serveur = serveur_navigateur(sonde=lambda: _EDGE, sorties=tmp_path / "sorties")
+    redirection = redirection_des_sorties([serveur])
+    assert redirection is not None
+    absolu = str(tmp_path / "tache" / "a.png")
+    assert redirection.entree(_CAPTURE, {"filename": absolu}) is None
+
+
+def test_la_tache_elle_meme_n_est_pas_un_nom_de_fichier(tmp_path: Path) -> None:
+    assert _redirection(tmp_path).entree(_CAPTURE, {"filename": str(tmp_path / "tache")}) is None
+
+
+def test_la_consigne_detourne_la_capture_par_du_code() -> None:
+    """Ce que le point de contrôle ne voit pas : un chemin écrit dans un programme passé à
+    `browser_run_code_unsafe`. La consigne nomme l'outil de capture à sa place."""
+    assert "`browser_take_screenshot`" in CONSIGNE_DE_L_AGENT
+    assert "`browser_run_code_unsafe`" in CONSIGNE_DE_L_AGENT
+    assert any("fullPage" in geste for geste in GESTES_DE_L_AGENT)
+
+
+@pytest.mark.parametrize("nom", ["../x.png", "a/../../x.png", "."])
+def test_un_nom_qui_sortirait_du_dossier_de_sorties_n_y_est_pas_pose(
+    tmp_path: Path, nom: str
+) -> None:
+    """Joint au dossier de sorties, il en sortirait : il part tel que l'agent l'a écrit, et
+    l'adaptateur le refuse lui-même, hors de ses racines."""
+    assert _redirection(tmp_path).entree(_CAPTURE, {"filename": nom}) is None
+
+
+@pytest.mark.parametrize(
+    ("outil", "entree"),
+    [
+        ("browser_run_code_unsafe", {"filename": "banc.js"}),
+        ("browser_set_storage_state", {"filename": "etat.json"}),
+        ("browser_file_upload", {"paths": ["fixtures/photo.png"]}),
+    ],
+)
+def test_ce_qu_il_lit_dans_le_projet_reste_lu_dans_le_projet(
+    tmp_path: Path, outil: str, entree: dict[str, Any]
+) -> None:
+    """Ces noms désignent un fichier à **lire** : posés sous le dossier de sorties, l'agent
+    ne pourrait plus donner au navigateur un fichier de son projet."""
+    assert not OUTILS_QUI_ECRIVENT & {outil}
+    assert _redirection(tmp_path).entree(f"{outils_du_navigateur()}{outil}", entree) is None
+
+
+def test_sans_nom_donne_rien_ne_change(tmp_path: Path) -> None:
+    redirection = _redirection(tmp_path)
+    assert redirection.entree(_CAPTURE, {}) is None
+    assert redirection.entree(_CAPTURE, {"filename": ""}) is None
+    assert redirection.entree(_CAPTURE, {"filename": 42}) is None
+    assert redirection.entree("mcp__autre__browser_take_screenshot", {"filename": "a.png"}) is None
+
+
+def test_la_redirection_suit_le_nom_de_la_liaison(tmp_path: Path) -> None:
+    serveur = serveur_navigateur(nom="web", sonde=lambda: _EDGE, sorties=tmp_path)
+    redirection = redirection_des_sorties([serveur])
+    assert redirection is not None
+    entree = redirection.entree("mcp__web__browser_take_screenshot", {"filename": "a.png"})
+    assert entree == {"filename": str(tmp_path / "a.png")}
+
+
+def test_une_session_sans_navigateur_n_a_rien_a_rediriger(tmp_path: Path) -> None:
+    """Rien à rediriger : ni serveur, ni un autre serveur, ni l'adaptateur sans dossier de
+    sorties déclaré — on ne sait alors pas où il écrit, et on ne devine pas."""
+    memoire = RegistreMcp.curee().get("memory")
+    entree = RegistreMcp.curee().get(ID_INTEGRATION)
+    assert memoire is not None and entree is not None
+    nu = replace(serveur_navigateur(sonde=lambda: _EDGE, sorties=tmp_path), args=entree.args)
+
+    assert redirection_des_sorties([]) is None
+    assert redirection_des_sorties([memoire.vers_serveur()]) is None
+    assert redirection_des_sorties([nu]) is None
+
+
+def test_l_adaptateur_reconnu_est_celui_de_l_allowlist() -> None:
+    """Le paquet que la redirection reconnaît est celui que le registre monte : deux
+    orthographes qui divergeraient laisseraient le navigateur sans redirection."""
+    entree = RegistreMcp.curee().get(ID_INTEGRATION)
+    assert entree is not None
+    assert f"{PAQUET_ADAPTATEUR}@{VERSION_PLAYWRIGHT_MCP}" in entree.args
+
+
+def test_le_point_de_controle_pose_la_capture_sans_politique(tmp_path: Path) -> None:
+    hook = claude_mod._hook_permissions(None, None, redirection=_redirection(tmp_path))
+    appel = {"tool_name": _CAPTURE, "tool_input": {"filename": "exercice-1313.png"}}
+    sortie = asyncio.run(hook(appel, "t", None))
+    attendu = {"filename": str(tmp_path / "sorties" / "exercice-1313.png")}
+    assert _sortie_redirigee(sortie) == attendu
+
+
+def test_le_point_de_controle_pose_la_capture_que_la_politique_laisse_passer(
+    tmp_path: Path,
+) -> None:
+    hook = claude_mod._hook_permissions(
+        PolitiqueOutils(deny=("Bash",)), None, redirection=_redirection(tmp_path)
+    )
+    appel = {"tool_name": _CAPTURE, "tool_input": {"filename": "a.png"}}
+    assert _sortie_redirigee(asyncio.run(hook(appel, "t", None))) == {
+        "filename": str(tmp_path / "sorties" / "a.png")
+    }
+
+
+def test_une_capture_refusee_reste_refusee(tmp_path: Path) -> None:
+    """La redirection ne passe qu'après la politique : elle ne rouvre rien."""
+    hook = claude_mod._hook_permissions(
+        PolitiqueOutils(deny=(f"mcp__{NOM_SERVEUR}",)), None, redirection=_redirection(tmp_path)
+    )
+    appel = {"tool_name": _CAPTURE, "tool_input": {"filename": "a.png"}}
+    sortie = asyncio.run(hook(appel, "t", None))
+    assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "updatedInput" not in sortie["hookSpecificOutput"]
+
+
+def test_un_appel_sans_rien_a_poser_passe_comme_avant(tmp_path: Path) -> None:
+    hook = claude_mod._hook_permissions(None, None, redirection=_redirection(tmp_path))
+    appel = {
+        "tool_name": f"{outils_du_navigateur()}browser_navigate",
+        "tool_input": {"url": "http://localhost:3000"},
+    }
+    assert asyncio.run(hook(appel, "t", None)) == {}
+
+
+def _modele_econome() -> str:
+    from maestro.familles_claude import derniere_version
+
+    return derniere_version("haiku")
+
+
+@pytest.mark.cli_reel
+def test_sur_le_vrai_cli_l_outil_recoit_le_nom_que_le_point_de_controle_a_pose(
+    tmp_path: Path,
+) -> None:
+    """Ce que les doubles ne prouvent pas : que le CLI réel remet à l'outil l'entrée que le
+    point de contrôle a réécrite, et non celle que le modèle a écrite."""
+    recu: list[dict[str, Any]] = []
+
+    @tool("browser_take_screenshot", "Capture la page sous le nom donné.", {"filename": str})
+    async def capture(args: dict[str, Any]) -> dict[str, Any]:
+        recu.append(dict(args))
+        return {"content": [{"type": "text", "text": "Capture faite."}]}
+
+    redirection = RedirectionDesSorties({outils_du_navigateur(): tmp_path / "sorties"})
+    point_de_controle = claude_mod._hook_permissions(None, None, redirection=redirection)
+    options = ClaudeAgentOptions(
+        model=_modele_econome(),
+        system_prompt="Tu appelles un outil une fois quand on te le demande, puis tu réponds FIN.",
+        env=ClaudeProvider(Credentials())._auth_env(),
+        cwd=tmp_path,
+        tools=[],
+        permission_mode="bypassPermissions",
+        max_turns=3,
+        mcp_servers={NOM_SERVEUR: create_sdk_mcp_server(name=NOM_SERVEUR, tools=[capture])},
+        strict_mcp_config=True,
+        setting_sources=claude_mod.sans_reglages_du_poste(),
+        skills=claude_mod.sans_skills_du_poste(),
+        hooks={"PreToolUse": [HookMatcher(hooks=[point_de_controle])]},
+    )
+
+    async def joue() -> None:
+        prompt = (
+            "Appelle l'outil browser_take_screenshot une seule fois, avec "
+            'filename="exercice-1674.png", puis réponds FIN.'
+        )
+        async for _ in query(prompt=prompt, options=options):
+            pass
+
+    asyncio.run(joue())
+
+    assert recu == [{"filename": str(tmp_path / "sorties" / "exercice-1674.png")}]
