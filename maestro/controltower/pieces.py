@@ -169,6 +169,7 @@ from maestro.outillage.verification import (
     Verificateur,
     Verification,
     commandes_ecrites,
+    installation_de,
 )
 from maestro.projets import Projet
 from maestro.projets.application import (
@@ -555,6 +556,7 @@ class ServicePieces:
                     (CommandeEcrite(lue_ici.usage, lue_ici.commande, lue_ici.chemin),),
                     perimetre=matiere.projet.perimetre,
                     portees=portees,
+                    installation=installation_de(matiere.constats),
                 )
                 essais[lue_ici.commande] = verdict
                 if verdict.etat == VERIFIEE:
@@ -1006,6 +1008,7 @@ class ServicePieces:
                     perimetre=projet.perimetre,
                     portees=portees,
                     connues=verdicts_connus,
+                    installation=installation_de(matiere.constats),
                 )
             }
             verdicts = tuple(

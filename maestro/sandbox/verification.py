@@ -21,11 +21,16 @@ chacune ferait un dégât différent selon le régime (docs/24 §2.4) :
 La copie tranche les deux d'un coup, et elle vérifie **la bonne chose** : ce qu'un
 agent trouve en arrivant, c'est-à-dire **ce que le périmètre du projet lui laisse
 voir** — ni `.git`, ni `node_modules`, ni `.env`, ni `**/secrets/**` par défaut
-(`Perimetre`), ni l'atelier `.maestro/`. Sur un projet versionné c'est l'arbre frais
-du worktree ; `npm test` n'y passe donc que si l'installation qu'on écrit avant lui
-passe aussi. C'est la leçon des produits comparables : les étapes de mise en route
-de l'agent cloud de GitHub Copilot se vérifient dans l'environnement neuf où
-l'agent travaillera, pas sur le poste de celui qui les écrit.
+(`Perimetre`), ni l'atelier `.maestro/`. `npm test` n'y passe donc que si
+l'installation qu'on écrit avant lui passe aussi. C'est la leçon des produits
+comparables : les étapes de mise en route de l'agent cloud de GitHub Copilot se
+vérifient dans l'environnement neuf où l'agent travaillera, pas sur le poste de
+celui qui les écrit.
+
+Sur un projet **versionné**, la vérification de l'outillage ne joue pas dans cette
+copie mais dans un **clone neuf** de sa branche (`clone_neuf`, #1687) : une commande
+que le projet prescrit peut lire l'historique (`git diff origin/main`), et la copie,
+qui exclut `.git`, ne le lui donnait pas.
 
 ⚠ **Aucun dossier n'est écarté par son nom.** Les dossiers que l'analyse ignore
 (`maestro.outillage.detection.IGNORES_DEFAUT`) sont des indices pour ne pas
@@ -419,6 +424,15 @@ class SondeNonLancee(OSError):
     """
 
 
+def versionnee(espace: Path) -> bool:
+    """`espace` est-il une copie versionnée — la racine d'un dépôt ou un worktree ?
+
+    `.git` est un dossier à la racine d'un dépôt, un fichier dans un worktree : les deux
+    se clonent (`clone_neuf`).
+    """
+    return (Path(espace) / ".git").exists()
+
+
 @contextmanager
 def clone_neuf(espace: Path) -> Iterator[Path]:
     """Un clone de ce que la branche de `espace` a **commité**, le temps du bloc (#1507).
@@ -435,7 +449,7 @@ def clone_neuf(espace: Path) -> Iterator[Path]:
     Lève `CloneImpossible` si `espace` n'est pas une copie versionnée, ou si Git refuse
     le clone : le contrôle est alors « non joué », avec ce que Git a répondu.
     """
-    if not (Path(espace) / ".git").exists():
+    if not versionnee(espace):
         raise CloneImpossible(
             "l'espace de travail n'est pas une copie versionnée du projet : il n'y a pas de "
             "clone neuf à faire"

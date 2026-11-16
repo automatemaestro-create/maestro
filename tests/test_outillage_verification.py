@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,7 @@ from maestro.outillage.verification import (
     ECHOUEE,
     ETATS_VERIFICATION,
     VERIFIEE,
+    CommandeEcrite,
     Delais,
     Verificateur,
     Verification,
@@ -676,6 +678,197 @@ def test_la_branche_d_un_projet_versionne_ne_porte_rien_de_ce_que_les_commandes_
     assert "AGENTS.md" in portes
     assert "produit.txt" not in portes
     assert not (racine / "produit.txt").exists()
+
+
+def _versionner(racine: Path, message: str = "socle") -> str:
+    """Fait de `racine` un dépôt dont la branche `main` porte tout l'arbre — rend son sha."""
+    _git(racine, "init", "--quiet")
+    _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(racine, "add", "-A")
+    _git(racine, "-c", "user.email=t@m", "-c", "user.name=T", "commit", "--quiet", "-m", message)
+    return _git(racine, "rev-parse", "HEAD").strip()
+
+
+@pytest.mark.commandes_jouees
+@besoin_de_bash
+@besoin_de_git
+def test_sur_un_projet_versionne_une_commande_qui_lit_l_historique_trouve_son_depot(
+    tmp_path: Path,
+) -> None:
+    """#1687 : `local.sh` calcule son périmètre sur le diff avec `origin/main`.
+
+    La copie de vérification excluait `.git` : une commande qui lit l'historique n'y
+    trouvait aucun dépôt. Elle se joue sur un clone neuf de la branche commitée, ce que
+    la personne récupère : l'historique, et rien de ce qu'elle n'a pas commité.
+    """
+    racine = _racine(tmp_path, "pyproject.toml")
+    sha = _versionner(racine, "socle du projet")
+    (racine / "brouillon.txt").write_text("pas commité\n", encoding="utf-8")
+    commandes = (
+        CommandeEcrite("tester", "git rev-parse HEAD", "pyproject.toml"),
+        CommandeEcrite("lint", "git log -1 --format=%s origin/main", "pyproject.toml"),
+        CommandeEcrite("verifier", "test ! -e brouillon.txt && git diff --quiet origin/main"),
+    )
+
+    verdicts = Verificateur().verifier_commandes(racine, commandes, perimetre=Perimetre())
+
+    assert [v.etat for v in verdicts] == [VERIFIEE] * 3, verdicts
+    assert verdicts[0].sortie == sha
+    assert verdicts[1].sortie == "socle du projet"
+    assert _git(racine, "status", "--porcelain").split() == ["??", "brouillon.txt"]
+
+
+@pytest.mark.commandes_jouees
+@besoin_de_bash
+@besoin_de_git
+def test_sur_un_projet_versionne_l_installation_se_joue_d_abord_dans_le_meme_clone(
+    tmp_path: Path,
+) -> None:
+    """#1687 : le clone est installé comme le projet le déclare, avant toute autre commande.
+
+    La commande demandée seule — le skill de tests, une correction essayée — y trouve ce
+    que l'installation que l'outillage écrit a posé, et seul son verdict est rendu.
+    """
+    racine = _racine(tmp_path, "pyproject.toml")
+    (racine / "scripts").mkdir()
+    (racine / "scripts" / "installer.sh").write_text(
+        "mkdir -p .venv && echo pret > .venv/installe\n", encoding="utf-8", newline="\n"
+    )
+    _versionner(racine)
+    installation = CommandeEcrite("installer", "bash scripts/installer.sh", "scripts/installer.sh")
+
+    verdicts = Verificateur().verifier_commandes(
+        racine,
+        (CommandeEcrite("tester", "test -f .venv/installe", "pyproject.toml"),),
+        perimetre=Perimetre(),
+        installation=installation,
+    )
+
+    assert [(v.commande, v.etat) for v in verdicts] == [("test -f .venv/installe", VERIFIEE)]
+    assert not (racine / ".venv").exists()
+
+
+def _faux_clones(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Remplace `clone_neuf` par un dossier vide, et rend la liste des espaces clonés."""
+    clones: list[Path] = []
+
+    @contextmanager
+    def clone(espace: Path) -> Iterator[Path]:
+        cible = tmp_path / f"clone-{len(clones)}"
+        cible.mkdir()
+        clones.append(Path(espace))
+        yield cible
+
+    monkeypatch.setattr(execution, "clone_neuf", clone)
+    return clones
+
+
+def _versionnee(tmp_path: Path) -> Path:
+    """Une racine que la vérification prend pour versionnée, sans dépôt réel derrière."""
+    racine = _racine(tmp_path)
+    (racine / ".git").mkdir()
+    return racine
+
+
+UV_SYNC = CommandeEcrite("installer", "uv sync", "pyproject.toml")
+PYTEST = CommandeEcrite("tester", "pytest", "pyproject.toml")
+
+
+def test_l_installation_demandee_apres_une_autre_commande_se_joue_quand_meme_d_abord(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L'ordre de jeu sur un clone neuf est celui d'un arbre frais : l'installation d'abord."""
+    racine = _versionnee(tmp_path)
+    clones = _faux_clones(tmp_path, monkeypatch)
+    joueur = _Joueur()
+
+    verdicts = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
+        racine, (PYTEST, UV_SYNC), perimetre=Perimetre(), installation=UV_SYNC
+    )
+
+    assert clones == [racine]
+    assert [commande for commande, _, _ in joueur.joues] == ["uv sync", "pytest"]
+    assert {cwd for _, cwd, _ in joueur.joues} == {tmp_path / "clone-0"}
+    assert [v.commande for v in verdicts] == ["pytest", "uv sync"]
+
+
+def test_une_installation_deja_verifiee_se_rejoue_dans_chaque_clone_neuf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Son verdict est repris (#1161), mais le clone neuf n'a rien de ce qu'elle a posé."""
+    racine = _versionnee(tmp_path)
+    _faux_clones(tmp_path, monkeypatch)
+    joueur = _Joueur()
+    connue = Verification("installer", "uv sync", VERIFIEE, "elle a rendu la main sans erreur")
+
+    verdicts = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
+        racine,
+        (UV_SYNC, PYTEST),
+        perimetre=Perimetre(),
+        connues={"uv sync": connue},
+        installation=UV_SYNC,
+    )
+
+    assert [commande for commande, _, _ in joueur.joues] == ["uv sync", "pytest"]
+    assert verdicts[0] is connue
+
+
+def test_une_autre_installation_essayee_tient_lieu_de_celle_de_l_outillage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La correction d'une installation échouée (#1381) ne se joue pas derrière elle."""
+    racine = _versionnee(tmp_path)
+    _faux_clones(tmp_path, monkeypatch)
+    joueur = _Joueur()
+
+    Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
+        racine,
+        (CommandeEcrite("installer", "make install", "pyproject.toml"),),
+        perimetre=Perimetre(),
+        installation=UV_SYNC,
+    )
+
+    assert [commande for commande, _, _ in joueur.joues] == ["make install"]
+
+
+def test_un_projet_non_versionne_ne_prepare_aucune_installation(tmp_path: Path) -> None:
+    """Sa copie et son ordre ne bougent pas (#1496) : seule la commande demandée est jouée."""
+    racine = _racine(tmp_path)
+    joueur = _Joueur()
+
+    Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
+        racine, (PYTEST,), perimetre=Perimetre(), installation=UV_SYNC
+    )
+
+    assert [commande for commande, _, _ in joueur.joues] == ["pytest"]
+
+
+def test_un_clone_impossible_rend_chaque_commande_a_verifier_sans_rien_jouer_ailleurs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un projet versionné qui ne se clone pas n'est jamais joué sur une copie sans dépôt."""
+    racine = _versionnee(tmp_path)
+
+    def refuse(espace: Path) -> Any:
+        raise execution.CloneImpossible("Git a refusé le clone de la copie de travail : boom")
+
+    def jamais(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("un projet versionné ne se joue pas sur une copie sans dépôt")
+
+    monkeypatch.setattr(execution, "clone_neuf", refuse)
+    monkeypatch.setattr(execution, "copie_de_verification", jamais)
+    joueur = _Joueur()
+
+    (verdict,) = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
+        racine, (PYTEST,), perimetre=Perimetre()
+    )
+
+    assert joueur.joues == []
+    assert verdict.etat == A_VERIFIER
+    assert verdict.raison == (
+        "le clone neuf de vérification n'a pas pu être fait — Git a refusé le clone de la "
+        "copie de travail : boom"
+    )
 
 
 def _git(racine: Path, *arguments: str) -> str:
