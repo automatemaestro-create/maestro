@@ -30,8 +30,9 @@ service de la Control Tower — qui marie les deux, exactement comme
 
 **Le rapport est le même dans les deux régimes**, et c'est voulu : le manifeste
 lu est celui de l'arbre où l'on écrit, donc un worktree — copie conforme de la
-branche de base — rend les mêmes verdicts que la racine. Une personne qui relit
-« `AGENTS.md` refusé, il a été modifié » n'a pas à savoir dans quel régime son
+branche de base, et qui reçoit le manifeste de la racine quand le projet l'ignore
+(`ManifesteHorsBranche`) — rend les mêmes verdicts que la racine. Une personne qui
+relit « `AGENTS.md` refusé, il a été modifié » n'a pas à savoir dans quel régime son
 projet est.
 
 **Rien n'est jeté nulle part.** Sur un projet versionné, l'accord refusé ou jamais
@@ -55,15 +56,23 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from maestro.outillage.generation import Rapport, generer, portees_declarees
+from maestro.outillage.detection import CHEMIN_MANIFESTE
+from maestro.outillage.generation import (
+    Rapport,
+    generer,
+    portees_declarees,
+    poser_le_manifeste,
+    texte_du_manifeste,
+)
 from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.redaction import rediger
 from maestro.outillage.verification import Verificateur
-from maestro.projets.modele import Projet
+from maestro.projets.application import ignore_par_le_projet
+from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import FrontiereEcriture
 from maestro.sandbox.projet import branche_de_tache, espace_de_travail
@@ -82,6 +91,59 @@ REGIME_BRANCHE = "branche"
 PREFIXE_TACHE = "outillage-"
 
 
+@dataclass
+class ManifesteHorsBranche:
+    """Le manifeste d'un projet qui l'ignore, porté par son texte entre la racine et le worktree.
+
+    Un projet qui ignore `.maestro/` (le dépôt de Maestro, #1679) ne laisse pas son
+    manifeste voyager avec une branche : `git add -A` le laisse dans le worktree, que le
+    démontage efface, et la fusion n'apporte à la racine que l'outillage, sans ce qui dit
+    qu'il vient de Maestro ni la convention de commit que la lecture a relevée. Les deux
+    écritures sur branche — l'outillage entier (`generer_outillage`) et la pièce
+    (`maestro.controltower.pieces`) — le portent donc par son texte, en trois temps :
+
+    1. `entrer`, dans le worktree monté : Git dit si le projet l'ignore ; si oui, le texte
+       de la racine y est posé, pour que l'écriture s'ajoute aux entrées déjà déclarées et
+       ne réécrive pas ce qui est à jour ;
+    2. `relever`, après l'écriture et avant le démontage : le texte du worktree est gardé ;
+    3. `poser`, **une fois la fusion acceptée** : ce texte est posé à la racine. Refusée,
+       l'appelant ne l'appelle pas, et rien n'est écrit.
+
+    Sur un projet qui suit son manifeste, les trois temps ne font rien : il voyage avec la
+    branche. L'arbre de la personne reste propre dans les deux cas, Git ne voyant pas un
+    fichier ignoré.
+    """
+
+    racine: Path
+    perimetre: Perimetre
+    ignore: bool = False
+    texte: str = ""
+
+    def entrer(self, espace: Path) -> None:
+        """Pose dans `espace` le manifeste de la racine si le projet l'ignore — bloquant (Git)."""
+        self.ignore = ignore_par_le_projet(espace, CHEMIN_MANIFESTE)
+        if self.ignore:
+            poser_le_manifeste(
+                espace,
+                texte_du_manifeste(self.racine),
+                FrontiereEcriture.pour(espace, self.perimetre),
+            )
+
+    def relever(self, espace: Path) -> None:
+        """Garde le manifeste que l'écriture laisse dans `espace` — rien s'il voyage seul."""
+        if self.ignore:
+            self.texte = texte_du_manifeste(espace)
+
+    def poser(self) -> str:
+        """Pose à la racine le manifeste relevé — `""`, ou le motif de l'échec.
+
+        Appelée une fois la fusion acceptée, jamais avant. Rien de relevé, rien n'est posé.
+        """
+        return poser_le_manifeste(
+            self.racine, self.texte, FrontiereEcriture.pour(self.racine, self.perimetre)
+        )
+
+
 @dataclass(frozen=True)
 class Preparation:
     """L'outillage écrit — et, s'il attend encore, ce qui le porte.
@@ -91,12 +153,17 @@ class Preparation:
     et c'est elle que l'appelant passe à `appliquer_sous_validation` — jamais
     recalculée ailleurs (`maestro.sandbox.projet.branche_de_tache` en est la
     seule orthographe).
+
+    `manifeste` est renseigné en régime branche : l'appelant le pose
+    (`ManifesteHorsBranche.poser`) une fois la fusion acceptée, pour un projet qui
+    ignore son manifeste. Il n'entre pas dans la réponse.
     """
 
     regime: str
     rapport: Rapport
     branche: str = ""
     tache_id: str = ""
+    manifeste: ManifesteHorsBranche | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         """La préparation en JSON."""
@@ -169,16 +236,21 @@ def generer_outillage(
     # ce qui y a été posé sur `maestro/<tâche>` (`_solder_la_branche`) et retire
     # l'arbre, jamais la branche. C'est elle qui porte l'outillage jusqu'à la
     # fusion — exactement le déroulé d'une tâche soldée (#705), et c'est pourquoi
-    # rien de Git n'est réécrit ici.
+    # rien de Git n'est réécrit ici. Le manifeste qu'un projet ignore ne voyage pas
+    # avec elle : il est relevé avant le démontage (`ManifesteHorsBranche`).
+    manifeste = ManifesteHorsBranche(racine, projet.perimetre)
     with espace_de_travail(projet, tache_id=tache) as espace:
+        manifeste.entrer(espace.path)
         rapport = _ecrire(
             espace.path, projet, constats, recommandation, source, horodatage, verifie
         )
+        manifeste.relever(espace.path)
     return Preparation(
         regime=REGIME_BRANCHE,
         rapport=rapport,
         branche=branche_de_tache(tache),
         tache_id=tache,
+        manifeste=manifeste,
     )
 
 
