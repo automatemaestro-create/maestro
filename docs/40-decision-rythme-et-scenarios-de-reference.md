@@ -275,10 +275,27 @@ run a laissé dans sa racine. La grille a dix lignes :
   juge à sa **première** réponse, celle que voit la personne : une fiche inconnue de C3 rend `200`
   à la première visite, puis `404` une fois en cache. Le port de service est libre en IPv4 comme en
   IPv6, faute de quoi la sonde interrogerait le serveur d'un autre ;
-- **CI écrite, convention de commit, outillage choisi suivi** : un modèle juge sur pièces.
+- **CI écrite, convention de commit, outillage choisi suivi** : un modèle juge sur pièces. La
+  convention se juge sur les **messages entiers** des commits que le livrable ajoute à sa base :
+  une référence au ticket vit souvent dans le corps, que le sujet ne montre pas (#1681).
 
 Une installation ratée laisse les lignes suivantes **non jouées**, comptées comme manquées. Un juge
 qui s'abstient ne compte ni pour ni contre.
+
+**La durée d'une commande n'est jamais un verdict** (#1681). Une commande se joue dans le délai que
+le livrable lui laisse : la limite du job qui joue cette vérification dans son intégration
+continue, même par une autre commande (celle de l'hébergement quand le projet n'en pose aucune), ou
+ce que ses instructions annoncent. Le lecteur de commandes le nomme, avec son origine. Deux
+livrables qui partagent une intégration continue reçoivent donc le même délai. Si le livrable ne dit rien, le banc
+laisse 300 s. Une commande sans retour dans son délai est **non tranchée**, une abstention. Une
+installation qui n'a pas fini laisse les lignes suivantes se jouer : un succès y est tenu, un échec
+n'y tranche pas.
+
+**Une ligne que la personne a écartée est sans objet** (#1681). C'est le cas du formatage quand elle
+dit « aucun formateur appliqué au dépôt ». Un modèle lit ses choix et nomme les lignes qu'un choix
+exclut en toutes lettres. Ces lignes ne se jouent ni ne se jugent, et ne comptent ni pour ni contre.
+L'outillage choisi ne s'écarte pas. La lecture se fait une fois pour les deux côtés, puisqu'elle ne
+dépend que des choix.
 
 Un passage a trois issues. `abouti` veut dire que le run s'est terminé, ou que la session a rendu
 la main. `non abouti` est une perte : le passage est compté avec son coût, et son livrable est

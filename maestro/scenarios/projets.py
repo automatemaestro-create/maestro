@@ -715,21 +715,25 @@ def fichiers_suivis(dossier: Path) -> tuple[str, ...]:
     return tuple(chemin for chemin in resultat.stdout.split("\0") if chemin)
 
 
-def sujets_des_commits(dossier: Path, *, nombre: int, depuis: str = "") -> tuple[str, ...]:
-    """Les sujets des `nombre` derniers commits de `dossier`, du plus récent au plus ancien (#1512).
+def messages_des_commits(dossier: Path, *, nombre: int, depuis: str = "") -> tuple[str, ...]:
+    """Les messages entiers des `nombre` derniers commits de `dossier`, du plus récent au plus
+    ancien — sujet, corps et pied, tels que Git les garde (#1512, #1681).
 
-    `depuis` borne l'histoire à ce que `HEAD` ajoute à ce commit (`depuis..HEAD`) : le
-    livrable d'un ticket sur un dépôt existant, sans l'historique de ceux d'avant (#1544).
-    Vide sur un dépôt sans commit. Lève `OSError` si Git ne répond pas.
+    Le message entier, et pas son sujet : une convention qui exige une mention (`Refs #<iid>`)
+    la veut souvent dans le corps. `depuis` borne l'histoire à ce que `HEAD` ajoute à ce
+    commit (`depuis..HEAD`) : le livrable d'un ticket sur un dépôt existant, sans
+    l'historique de ceux d'avant (#1544). Vide sur un dépôt sans commit. Lève `OSError` si
+    Git ne répond pas.
     """
     plage = (f"{depuis}..HEAD",) if depuis else ()
-    resultat = _git(dossier, "log", f"-n{nombre}", "--format=%s", *plage)
+    # `-z` sépare les commits par un octet nul : un message porte des sauts de ligne.
+    resultat = _git(dossier, "log", f"-n{nombre}", "-z", "--format=%B", *plage)
     if resultat.returncode != 0:
         # Un dépôt sans commit : `git log` le dit en échouant, et il n'y a rien à lire.
         if _git(dossier, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
             return ()
         raise OSError(f"`git log` illisible dans {dossier} : {_message(resultat)}")
-    return tuple(ligne for ligne in resultat.stdout.splitlines() if ligne.strip())
+    return tuple(message.strip() for message in resultat.stdout.split("\0") if message.strip())
 
 
 def commit_de(dossier: Path, reference: str) -> str | None:

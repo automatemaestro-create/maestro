@@ -158,9 +158,12 @@ from maestro.scenarios.gestes import (
 from maestro.scenarios.grille import (
     AXES,
     LIBELLES,
+    SANS_OBJET,
+    Ecartees,
     Grille,
     Lecteur,
     PosteDuBanc,
+    lignes_ecartees,
     rejouer,
 )
 from maestro.scenarios.juge import FORME, Juge, JugeModele
@@ -1186,6 +1189,23 @@ def _grille_du_cote(passages: Sequence[Passage], axes: Sequence[str]) -> dict[st
     return compte
 
 
+def _axes_sans_objet(comparatif: Comparatif) -> set[str]:
+    """Les lignes que la personne a écartées : sans objet dans chaque grille comptée (#1681).
+
+    Elles ne se tiennent pas et ne se manquent pas : le rapport ne les compte pas dans ce
+    qu'un côté pouvait tenir.
+    """
+    grilles = [
+        p.grille for c in comparatif.cotes() for p in comparatif.comptes(c) if p.grille is not None
+    ]
+    sans_objet: set[str] = set()
+    for axe in comparatif.objectif.axes:
+        lignes = [ligne for grille in grilles if (ligne := grille.ligne(axe)) is not None]
+        if lignes and all(ligne.etat == SANS_OBJET for ligne in lignes):
+            sans_objet.add(axe)
+    return sans_objet
+
+
 def _rapports(comparatif: Comparatif) -> dict[str, float | None]:
     """Le rapport des médianes, Maestro sur l'agent seul — quand les deux côtés en ont."""
     if COTE_MAESTRO not in comparatif.cotes() or COTE_SEUL not in comparatif.cotes():
@@ -1242,11 +1262,15 @@ def en_markdown(comparatif: Comparatif) -> str:
         )
         + (" | |" if rapports else " |")
     )
+    sans_objet = _axes_sans_objet(comparatif)
     noms = {
         GRANDEUR_DUREE: ("Durée active" if objectif.jour_s else "Durée", _duree),
         GRANDEUR_COUT: ("Coût", _dollars),
         GRANDEUR_GESTES: ("Gestes de la personne", _nombre),
-        GRANDEUR_TENUES: (f"Lignes tenues (sur {len(objectif.axes)})", _nombre),
+        GRANDEUR_TENUES: (
+            f"Lignes tenues (sur {len(objectif.axes) - len(sans_objet)})",
+            _nombre,
+        ),
     }
     if objectif.criteres:
         noms[GRANDEUR_CRITERES] = (f"Critères tenus (sur {len(objectif.criteres)})", _nombre)
@@ -1272,6 +1296,8 @@ def en_markdown(comparatif: Comparatif) -> str:
         cellules = [
             f"{par_cote[c][axe]['tenues']}/{par_cote[c][axe]['jugees']}"
             if par_cote[c][axe]["jugees"]
+            else "sans objet"
+            if axe in sans_objet
             else "non jugée"
             for c in cotes
         ]
@@ -1544,6 +1570,9 @@ def main(  # noqa: C901
     lecteur = lecteur or juge
     juge_couverture = juge_couverture or JugeCouvertureModele()
     poste = poste or PosteDuBanc(horloge=horloge, dormir=dormir)
+    # Les lignes que la personne écarte ne dépendent que de ses choix : une lecture vaut pour
+    # les deux côtés, qui se jugent ainsi sur la même grille (#1681).
+    ecartees = lignes_ecartees(lecteur, objectif.choix, objectif.axes)
 
     if options.rejouer:
         passages = _rejouer_les_livrables(
@@ -1555,6 +1584,7 @@ def main(  # noqa: C901
             juge_couverture,
             poste,
             sortie,
+            ecartees,
         )
         comparatif = Comparatif(atelier.passage, objectif, passages, rejeu=True)
     else:
@@ -1580,6 +1610,7 @@ def main(  # noqa: C901
             dormir=dormir,
             sortie=sortie,
             consigner=consigner,
+            ecartees=ecartees,
         )
         comparatif = Comparatif(atelier.passage, objectif, passages)
 
@@ -1636,6 +1667,7 @@ def _jouer_les_passages(
     sortie: TextIO,
     consigner: Callable[[tuple[Passage, ...]], None] = lambda _passages: None,
     redemarrer: Callable[[], str] | None = None,
+    ecartees: Ecartees | None = None,
 ) -> tuple[Passage, ...]:
     """Les passages, côtés **alternés** : une dérive du fournisseur pèse sur les deux.
 
@@ -1679,7 +1711,14 @@ def _jouer_les_passages(
             print(f"  {passage.issue} — {passage.motif}", file=sortie)
             if passage.compte:
                 passage = _rejouer_le_livrable(
-                    passage, objectif, atelier, lecteur, juge_couverture, poste, journal
+                    passage,
+                    objectif,
+                    atelier,
+                    lecteur,
+                    juge_couverture,
+                    poste,
+                    journal,
+                    ecartees=ecartees,
                 )
             passages.append(passage)
             consigner(tuple(passages))
@@ -1715,12 +1754,14 @@ def _rejouer_le_livrable(
     poste: PosteDuBanc,
     journal: Journal,
     base: str = "",
+    ecartees: Ecartees | None = None,
 ) -> Passage:
     """Le livrable d'un passage rejoué sur un clone propre, et le déroulé qui l'a fait.
 
     Puis, quand l'objectif a des critères (#1513), leur couverture jugée sur ce même
     clone — ce que le projet a commité, ou son dossier quand personne ne l'a demandé
-    sous Git. `base` est le commit d'où part un livrable rejoué sur un dépôt existant.
+    sous Git. `base` est le commit d'où part un livrable rejoué sur un dépôt existant, et
+    `ecartees` les lignes que la personne a écartées, lues une fois pour tous les côtés.
     """
     grille = rejouer(
         Path(passage.livrable),
@@ -1732,6 +1773,7 @@ def _rejouer_le_livrable(
         trace=journal.note,
         versionne=objectif.versionner,
         base=base,
+        ecartees=ecartees,
     )
     couverture = _couvrir(grille, objectif, juge_couverture, journal) if objectif.criteres else None
     return replace(passage, grille=grille, couverture=couverture, etapes=tuple(journal.etapes))
@@ -1764,6 +1806,7 @@ def _rejouer_les_livrables(
     juge_couverture: JugeCouverture,
     poste: PosteDuBanc,
     sortie: TextIO,
+    ecartees: Ecartees | None = None,
 ) -> tuple[Passage, ...]:
     """`--rejouer` : la grille seule, sur des livrables qui existent déjà — chacun contre la
     base de son côté, s'il en a une (`--base`)."""
@@ -1779,7 +1822,15 @@ def _rejouer_les_livrables(
         )
         passages.append(
             _rejouer_le_livrable(
-                passage, objectif, atelier, lecteur, juge_couverture, poste, journal, base
+                passage,
+                objectif,
+                atelier,
+                lecteur,
+                juge_couverture,
+                poste,
+                journal,
+                base,
+                ecartees=ecartees,
             )
         )
     return tuple(passages)
