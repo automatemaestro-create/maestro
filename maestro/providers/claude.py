@@ -128,6 +128,7 @@ from maestro.sandbox.ramassage import dossier_neutre
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
+    from maestro.agents.navigateur import RedirectionDesSorties
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.projets.modele import Projet
 from maestro.providers.registry import register
@@ -958,6 +959,12 @@ class ClaudeProvider(ModelProvider):
         # il n'y a ni fusion ni diff pour le rattraper. Rendue dans les trois
         # régimes — un cran borné doit être évaluable partout où il est écrit.
         portee = portee_de(workspace, projet)
+        # Ce que le navigateur de Maestro écrirait dans la tâche sous un nom que
+        # l'agent lui donne, posé sous son dossier de sorties (#1674). Import
+        # différé, comme dans `_hook_permissions`.
+        from maestro.agents.navigateur import redirection_des_sorties
+
+        redirection = redirection_des_sorties(mcp_serveurs, espace=workspace)
         # La sonde de démarrage (#1304) : une session qui arme le point de
         # contrôle ne démarre pas tant qu'on ne sait pas qu'un refus y tient.
         # Sans politique ni frontière, Maestro ne pose aucun refus — rien à sonder.
@@ -1021,6 +1028,7 @@ class ClaudeProvider(ModelProvider):
                                     credit_arbitrage,
                                     frontiere=frontiere,
                                     portee=portee,
+                                    redirection=redirection,
                                 )
                             ],
                             # Posée, jamais subie (#583) : la borne par défaut du
@@ -1030,9 +1038,9 @@ class ClaudeProvider(ModelProvider):
                         )
                     ]
                 }
-                # Sans politique ni frontière, pas de hook du tout — le régime
-                # d'avant #110, au bit près.
-                if politique is not None or frontiere is not None
+                # Sans politique, ni frontière, ni navigateur à rediriger, pas de
+                # hook du tout — le régime d'avant #110, au bit près.
+                if politique is not None or frontiere is not None or redirection is not None
                 else None
             ),
         )
@@ -1751,6 +1759,7 @@ def _hook_permissions(  # noqa: C901
     *,
     frontiere: FrontiereEcriture | None = None,
     portee: PorteeProjet | None = None,
+    redirection: RedirectionDesSorties | None = None,
 ) -> Callable[[HookInput, str | None, HookContext], Any]:
     """Le hook PreToolUse : applique la politique de l'agent, et **arme l'arbitrage** (#110, #583).
 
@@ -1858,6 +1867,17 @@ def _hook_permissions(  # noqa: C901
     passer » —, si bien qu'un CLI qui aurait déplacé ces champs ouvrait la
     frontière, la politique et la portée d'un seul coup, sans un mot. Le hook ne
     devine plus rien de ce qu'il ne sait pas lire.
+
+    `redirection` (#1674, `maestro.agents.navigateur.RedirectionDesSorties`) pose
+    sous son dossier de sorties ce que le navigateur de Maestro écrirait sous un nom
+    que l'agent lui donne — l'adaptateur le résoudrait contre la tâche. Elle ne
+    s'applique qu'à un appel **qui passe**, après la frontière, la politique et
+    l'arbitrage : elle ne refuse rien et ne rouvre rien. L'appel passe alors avec
+    `permissionDecision: allow` et son `updatedInput`, la forme par laquelle le CLI
+    remet à l'outil une entrée réécrite ; sous `bypassPermissions`, cet `allow` ne
+    lève rien de plus que la sortie vide. Elle est un motif de plus de monter le
+    hook, jamais de jouer la sonde : celle-ci éprouve qu'un refus tient, et une
+    redirection n'en pose aucun.
 
     Le hook ne lève jamais : un traçage en échec est avalé — l'observation ne
     casse pas l'exécution observée.
@@ -1982,9 +2002,7 @@ def _hook_permissions(  # noqa: C901
             return False
         return lecture_sans_arbitrage(outil, entree)
 
-    async def hook(
-        input_data: HookInput, tool_use_id: str | None, context: HookContext
-    ) -> HookJSONOutput:
+    async def decide(input_data: HookInput) -> HookJSONOutput:
         # Fermé par défaut (#1304) : un appel qu'on ne sait pas nommer, ou dont
         # l'entrée n'est pas un objet, est refusé — jamais laissé au flux normal.
         # Tout ce qui suit repose sur ces deux lectures, et un CLI qui les
@@ -2034,6 +2052,29 @@ def _hook_permissions(  # noqa: C901
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
         return await arbitre(outil, motif, entree, decideur)
+
+    async def hook(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        sortie = await decide(input_data)
+        # Une sortie non vide est un refus : rien à poser. La sortie vide est un
+        # appel qui passe, et c'est le seul que la redirection regarde (#1674).
+        if sortie or redirection is None:
+            return sortie
+        outil = controle.nom_outil(input_data)
+        entree = controle.entree_outil(input_data)
+        if outil is None or entree is None:  # pragma: no cover - `decide` les a refusés
+            return sortie
+        redirigee = redirection.entree(outil, entree)
+        if redirigee is None:
+            return sortie
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": redirigee,
+            }
+        }
 
     return hook
 

@@ -33,6 +33,33 @@ on le pose au pool d'un projet, parce qu'elles ne se savent que sur le poste :
   courant — l'espace de la tâche, dont tout fichier ressort en livrable et part dans
   le projet de la personne à la fusion.
 
+## Ce qu'il écrit sous un nom que l'agent lui donne
+
+`--output-dir` ne couvre que les noms que l'adaptateur choisit lui-même. Un nom que le
+modèle donne (`filename` d'une capture, d'un instantané, d'un journal…), il le résout
+contre son **espace de travail** : la racine que le client MCP annonce, c'est-à-dire
+la tâche. Une capture nommée y tomberait (#1674).
+
+Le point de contrôle des appels d'outil le pose donc sous le dossier de sorties avant
+que l'appel parte (`RedirectionDesSorties`, appliquée par le hook du fournisseur). La
+règle est ici, parce que c'est ici qu'on sait quels outils de l'adaptateur **écrivent**
+sous ce nom (`OUTILS_QUI_ECRIVENT`) et lesquels **lisent** un fichier du projet, qui
+doivent continuer de le lire. L'adaptateur n'écrit que sous deux racines, son dossier de
+sorties et l'espace de la tâche, et refuse le reste :
+
+- un nom **relatif** se pose sous le dossier de sorties, ses dossiers gardés ;
+- un chemin absolu **dans l'espace de la tâche** aussi, au même chemin relatif : une
+  capture que l'agent croit livrer à la personne lui revient par son chemin dans le
+  compte rendu, jamais par un fichier du projet ;
+- un chemin déjà sous le dossier de sorties, un chemin hors des deux racines et un nom
+  relatif qui en sortirait (`..`) partent tels quels — l'adaptateur accepte le premier
+  et refuse les autres.
+
+Ce qui échappe au point de contrôle est nommé : du code Playwright passé à
+`browser_run_code_unsafe` écrit où il veut (`page.screenshot({ path })`), et aucun
+garde-fou ne lit un chemin dans un programme. La consigne de l'agent l'en détourne, et
+le geste de capture lui donne de quoi s'en passer (`fullPage`).
+
 **Une seule fabrique** (`integration_navigateur`) pour les deux chemins qui le posent :
 l'équipe qui le reçoit à sa composition (`maestro.controltower.equipe`) et la personne
 qui l'ajoute depuis la bibliothèque des intégrations (`POST /api/mcp/pool`). Les deux
@@ -57,9 +84,10 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
+from typing import Any
 
 from maestro.agents.mcp import IntegrationMcp, ServeurMcp
 from maestro.agents.mcp_registry import RegistreMcp
@@ -96,7 +124,8 @@ CE_QU_IL_FAIT: tuple[str, ...] = (
 GESTES_DE_L_AGENT: tuple[str, ...] = (
     "ouvrir une page et la parcourir — `browser_navigate`, `browser_snapshot` (l'arbre "
     "d'accessibilité de la page), `browser_click`, `browser_type`, `browser_fill_form` ;",
-    "la capturer à une largeur donnée — `browser_resize`, puis `browser_take_screenshot` ;",
+    "la capturer à une largeur donnée — `browser_resize`, puis `browser_take_screenshot` "
+    "(`fullPage: true` pour la page entière) ;",
     "émuler la réduction des animations — `browser_run_code_unsafe` avec "
     "`async (page) => { await page.emulateMedia({ reducedMotion: 'reduce' }) }`, puis "
     "recharger la page ;",
@@ -105,25 +134,65 @@ GESTES_DE_L_AGENT: tuple[str, ...] = (
 
 #: Ce qui suit les gestes : la consigne que p5 a montrée nécessaire (docs/50 § 4.1).
 #:
-#: ⚠ Sa dernière phrase vient de p5 **rejoué** avec le navigateur (run `6193eadac741`,
-#: 2026-10-22) : le serveur range son journal de console dans un fichier de son dossier
-#: de sorties, hors du projet, et y renvoie après chaque geste (« New console entries :
-#: …log#L5-L11 »). Deux agents l'ont lu au shell (`sed -n`, `cat`), et chaque lecture
-#: hors du projet a attendu qu'une personne tranche. L'outil `Read` le lit sans rien
-#: demander, et `browser_console_messages` rend la console sans fichier.
+#: ⚠ Ses deux dernières phrases viennent de p5 **rejoué** avec le navigateur (run
+#: `6193eadac741`, 2026-10-22) : le serveur range son journal de console dans un fichier
+#: de son dossier de sorties, hors du projet, et y renvoie après chaque geste (« New
+#: console entries : …log#L5-L11 »). Deux agents l'ont lu au shell (`sed -n`, `cat`), et
+#: chaque lecture hors du projet a attendu qu'une personne tranche. L'outil `Read` le lit
+#: sans rien demander, et `browser_console_messages` rend la console sans fichier.
+#:
+#: Ce qu'elle promet des noms tient au point de contrôle (`RedirectionDesSorties`) ; ce
+#: qu'elle dit de `browser_run_code_unsafe` vient de l'exercice de #1674, où un agent a
+#: capturé par du code, sous un chemin du projet, la capture que la personne voulait garder.
 CONSIGNE_DE_L_AGENT = (
     "N'écris pas ton propre banc pour regarder une page : ni Chrome piloté par CDP, ni "
     "puppeteer ou Playwright installés pour l'occasion, ni fichier d'essai posé hors du "
     "projet. Le navigateur est déjà là, sans fenêtre, sous un profil qui ne laisse rien "
     "derrière lui, et il s'arrête avec ta tâche. Lance le serveur du projet, ouvre son "
     "adresse locale, regarde, puis arrête ce que tu as lancé. Ce que le navigateur "
-    "écrit — captures, journal de la console — tombe hors du projet : demande la "
-    "console à `browser_console_messages`, lis un fichier qu'il te désigne avec l'outil "
-    "`Read`, jamais au shell, où une lecture hors du projet attend qu'une personne tranche."
+    "écrit — captures, journal de la console — tombe hors du projet, que tu nommes le "
+    "fichier ou non, même sous un chemin du projet : demande la console à "
+    "`browser_console_messages`, lis un fichier qu'il te désigne avec l'outil `Read`, "
+    "jamais au shell, où une lecture hors du projet attend qu'une personne tranche. Une "
+    "capture qu'on te demande de garder se remet par son chemin dans ton compte rendu. "
+    "Capture par `browser_take_screenshot`, jamais par du code passé à "
+    "`browser_run_code_unsafe` qui écrirait un fichier : ce code écrit où il veut, dans "
+    "le projet compris."
 )
 
 #: Le sous-dossier du jetable où tombent ses captures (voir l'en-tête).
 NOM_SORTIES = "navigateur"
+
+#: L'option qui déclare au serveur son dossier de sorties — posée au montage, relue par
+#: la redirection : c'est le dossier que le serveur accepte, pas un autre.
+OPTION_SORTIES = "--output-dir="
+
+#: Le paquet de l'adaptateur, tel que l'entrée de l'allowlist le monte (`<paquet>@<version>`).
+PAQUET_ADAPTATEUR = "@playwright/mcp"
+
+#: L'argument par lequel l'agent nomme ce qu'un outil de l'adaptateur écrit.
+ARGUMENT_NOM = "filename"
+
+#: Les outils de l'adaptateur qui **écrivent** un fichier sous le nom que l'agent donne
+#: (`ARGUMENT_NOM`) : captures, instantanés, journaux de console et de réseau, résultat
+#: d'une évaluation, PDF, état de stockage, vidéo. Ceux qui **lisent** un fichier sous ce
+#: nom n'y sont pas — `browser_run_code_unsafe`, `browser_set_storage_state`, et
+#: `browser_file_upload` par ses `paths` — : ils doivent pouvoir donner au navigateur un
+#: fichier du projet. Lu sur l'adaptateur que l'allowlist épingle ; une montée de version
+#: se relit ici.
+OUTILS_QUI_ECRIVENT: frozenset[str] = frozenset(
+    {
+        "browser_take_screenshot",
+        "browser_snapshot",
+        "browser_console_messages",
+        "browser_network_requests",
+        "browser_network_request",
+        "browser_evaluate",
+        "browser_pdf_save",
+        "browser_storage_state",
+        "browser_start_video",
+    }
+)
 
 #: Les canaux de l'adaptateur : les navigateurs que Playwright cherche lui-même, aux
 #: emplacements que lit la sonde, et que leur nom suffit à désigner (`--browser=`).
@@ -280,7 +349,7 @@ def serveur_navigateur(
     trouve = (sonde or navigateur_du_poste)()
     poste = (
         *(trouve.arguments() if trouve is not None else ()),
-        f"--output-dir={sorties if sorties is not None else dossier_des_sorties()}",
+        f"{OPTION_SORTIES}{sorties if sorties is not None else dossier_des_sorties()}",
     )
     return replace(serveur, args=(*serveur.args, *poste))
 
@@ -306,3 +375,90 @@ def integration_navigateur(
 def outils_du_navigateur() -> str:
     """Le préfixe des outils que l'agent voit — `mcp__navigateur__`."""
     return f"mcp__{NOM_SERVEUR}__"
+
+
+@dataclass(frozen=True)
+class RedirectionDesSorties:
+    """Ce qui pose sous son dossier de sorties un fichier que l'agent nomme (#1674).
+
+    `dossiers` associe le préfixe d'outils d'un navigateur monté (`mcp__<liaison>__`)
+    au dossier de sorties qu'il déclare ; `espace` est l'espace de la tâche, la racine
+    contre laquelle l'adaptateur résout un nom. Le point de contrôle la consulte sur
+    chaque appel qu'il laisse passer ; elle ne refuse rien, et ne rouvre rien de ce que
+    la politique a refusé.
+    """
+
+    dossiers: Mapping[str, Path]
+    espace: Path | None = None
+
+    def entree(self, outil: str, entree: Mapping[str, Any]) -> dict[str, Any] | None:
+        """L'entrée de l'appel, son nom posé sous le dossier de sorties — None : rien à changer.
+
+        Seuls changent les outils qui écrivent (`OUTILS_QUI_ECRIVENT`), sous un nom qui
+        tomberait dans l'espace de la tâche (voir l'en-tête).
+        """
+        for prefixe, dossier in self.dossiers.items():
+            if not outil.startswith(prefixe):
+                continue
+            if outil.removeprefix(prefixe) not in OUTILS_QUI_ECRIVENT:
+                return None
+            destination = _sous_le_dossier(dossier, entree.get(ARGUMENT_NOM), self.espace)
+            if destination is None:
+                return None
+            return {**entree, ARGUMENT_NOM: str(destination)}
+        return None
+
+
+def _sous_le_dossier(dossier: Path, nom: object, espace: Path | None) -> Path | None:
+    """Où poser `nom` sous `dossier` — None s'il n'a pas à bouger.
+
+    Un nom relatif s'y pose s'il y reste une fois joint ; un chemin absolu dans
+    `espace`, au même chemin relatif. Un ancrage sans lecteur ou sans racine (`/x`,
+    `C:x`) n'est ni l'un ni l'autre : sous Windows, il se résout contre le lecteur ou le
+    répertoire courant du serveur, et l'adaptateur le borne lui-même à ses racines.
+    """
+    if not isinstance(nom, str) or not nom.strip():
+        return None
+    chemin = Path(nom)
+    racine = Path(os.path.normpath(dossier))
+    if chemin.is_absolute():
+        absolu = Path(os.path.normpath(chemin))
+        if espace is None or absolu.is_relative_to(racine):
+            return None
+        tache = Path(os.path.normpath(espace))
+        if not absolu.is_relative_to(tache):
+            return None
+        chemin = absolu.relative_to(tache)
+    elif chemin.anchor:
+        return None
+    destination = Path(os.path.normpath(racine / chemin))
+    if destination == racine or not destination.is_relative_to(racine):
+        return None
+    return destination
+
+
+def redirection_des_sorties(
+    serveurs: Iterable[ServeurMcp], espace: Path | None = None
+) -> RedirectionDesSorties | None:
+    """La redirection d'une session qui monte le navigateur — None si elle n'en monte aucun.
+
+    Un navigateur se reconnaît au paquet de l'adaptateur dans ses arguments, sous
+    n'importe quel nom de liaison ; son dossier est celui qu'il déclare
+    (`OPTION_SORTIES`). Sans dossier déclaré, on ne sait pas où il écrit, et rien
+    n'est redirigé. `espace` est l'espace de travail de la session.
+    """
+    dossiers: dict[str, Path] = {}
+    for serveur in serveurs:
+        if not any(_est_l_adaptateur(argument) for argument in serveur.args):
+            continue
+        sorties = next(
+            (a.removeprefix(OPTION_SORTIES) for a in serveur.args if a.startswith(OPTION_SORTIES)),
+            "",
+        )
+        if sorties:
+            dossiers[f"mcp__{serveur.nom}__"] = Path(sorties)
+    return RedirectionDesSorties(dossiers, espace) if dossiers else None
+
+
+def _est_l_adaptateur(argument: str) -> bool:
+    return argument == PAQUET_ADAPTATEUR or argument.startswith(f"{PAQUET_ADAPTATEUR}@")
