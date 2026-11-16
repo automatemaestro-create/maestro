@@ -133,6 +133,9 @@ from typing import Any
 
 from maestro.outillage.clients import Client, clients_depuis_texte, reunir
 from maestro.outillage.modele import (
+    CLE_CONVENTION_DE_COMMIT,
+    CONVENTION_MAX,
+    SOURCE_ANALYSE,
     USAGES,
     Commande,
     Constats,
@@ -1296,6 +1299,26 @@ def convention_de_commit(choix: Sequence[Choix]) -> str:
     if choisie is None or _est_aucun(choisie.valeur):
         return ""
     return _une_ligne(choisie.valeur, VALEUR_MAX)
+
+
+def convention_de_la_source(source: Mapping[str, Any]) -> str:
+    """La convention de commit que le fragment `source` d'un manifeste retient — `""` sinon.
+
+    Deux provenances, une seule question (#1679) : un outillage **venu des réponses**
+    garde la convention que la personne a dite (`convention_de_commit`, #1507) ; un
+    outillage **venu d'une lecture** garde celle que le modèle a relevée dans le projet
+    (`Analyse.source_manifeste`, `CLE_CONVENTION_DE_COMMIT`). Le manifeste vit dans le
+    projet et n'importe qui peut l'avoir touché : la valeur lue est une chaîne, mise sur
+    une ligne et bornée, et « aucun » n'en est pas une.
+    """
+    if source.get("type") == SOURCE_CHOIX:
+        return convention_de_commit(choix_du_manifeste(source))
+    if source.get("type") != SOURCE_ANALYSE:
+        return ""
+    valeur = source.get(CLE_CONVENTION_DE_COMMIT)
+    if not isinstance(valeur, str) or not valeur.strip() or _est_aucun(valeur):
+        return ""
+    return _une_ligne(valeur, CONVENTION_MAX)
 
 
 def clients_depuis_choix(choix: Sequence[Choix]) -> tuple[Client, ...]:

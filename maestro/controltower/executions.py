@@ -1804,7 +1804,11 @@ class ServiceExecutions:
         en_vol = [(t.id, t.projet_id) for t in taches if t.projet_id]
         if not en_vol:
             return
-        messages = await self._messages_des_sauvegardes(projets, taches)
+        execution = self._state.execution(run_id)
+        brief = execution.brief if execution is not None else None
+        messages = await self._messages_des_sauvegardes(
+            projets, taches, demande=brief.frame() if brief is not None else ""
+        )
         try:
             await asyncio.to_thread(_porter_sur_les_branches, projets, run_id, en_vol, messages)
         except asyncio.CancelledError:
@@ -1817,9 +1821,13 @@ class ServiceExecutions:
             )
 
     async def _messages_des_sauvegardes(
-        self, projets: ProjetStore, taches: Sequence[EtatTache]
+        self, projets: ProjetStore, taches: Sequence[EtatTache], *, demande: str = ""
     ) -> dict[str, str]:
         """Le message de chaque sauvegarde, dans la convention de commit du projet (#1507).
+
+        `demande` est le cadre du brief du run, celui que ses tâches ont lu : la référence
+        que la convention exige s'y lit, et le rédacteur la cite comme pour une fusion
+        (#1679).
 
         Ces commits **ne se réécrivent plus** après coup — le travail sauvé sortirait de
         l'histoire du projet (S12, passage `20261022-075529`) : ils doivent donc naître
@@ -1853,6 +1861,7 @@ class ServiceExecutions:
                                 f"« {t.titre or t.id} », interrompue avant sa fin "
                                 f"(branche `{branche_de_tache(t.id)}`)"
                             ),
+                            demande=demande,
                         )
                         for t in a_rediger
                     )

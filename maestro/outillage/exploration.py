@@ -90,6 +90,7 @@ from typing import TYPE_CHECKING
 from maestro.outillage.analyse import completer
 from maestro.outillage.detection import ROLE_INSTRUCTIONS
 from maestro.outillage.modele import (
+    CONVENTION_MAX,
     ORIGINE_PRESCRITE,
     ORIGINES_COMMANDE,
     USAGES,
@@ -98,6 +99,7 @@ from maestro.outillage.modele import (
     Commande,
     ConstatEcarte,
     Constats,
+    ConventionDeCommit,
     Gestionnaire,
     Langage,
     Lecture,
@@ -131,6 +133,7 @@ CLES_CONSTAT: tuple[str, ...] = (
     "COMMANDE",
     "CI",
     "INSTRUCTIONS",
+    "COMMITS",
     "EXCLUDED",
     "GUARDED",
     "POUR",
@@ -138,6 +141,11 @@ CLES_CONSTAT: tuple[str, ...] = (
 
 #: La clé d'un fichier que le projet écrit pour ses agents (#1542).
 INSTRUCTIONS = "INSTRUCTIONS"
+
+#: La clé de la convention de message de commit que le projet impose (#1679) : une
+#: règle écrite en mots, qu'aucune table ne sait lire, et que les commits de Maestro et
+#: de ses agents suivent dans ce projet.
+COMMITS = "COMMITS"
 
 #: La clé d'un usage que les **instructions** du projet écartent (#1678) — un formateur
 #: que le dépôt n'applique pas. Seul un fichier d'instructions lu en écarte un : un fichier
@@ -193,6 +201,7 @@ GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <fi
 COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
 CI: <nom de la CI> | <fichier lu qui la définit>
 INSTRUCTIONS: <fichier lu> | <ce qu'il prescrit aux agents, en quelques mots>
+COMMITS: <fichier lu> | <la convention de message de commit qu'il impose, en une ligne>
 EXCLUDED: <usage> | <fichier d'instructions lu> | <ce qu'il y dit>
 GUARDED: <fichier du projet> | <fichier lu qui le dit gardé> | <ce qu'il exige>
 FIN
@@ -206,6 +215,14 @@ travailler —, quel que soit son nom ou son dossier. N'en sont pas : un README 
 présente le projet à des personnes, un fichier qui ne fait qu'en importer un autre, ni
 la définition d'un agent, d'un rôle ou d'une commande en particulier (le prompt d'un
 sous-agent, d'une commande d'un outil) — elle ne vaut que pour lui.
+
+COMMITS : la convention que le projet IMPOSE aux messages de commit, telle qu'un fichier
+lu la fixe — la forme du sujet, les types ou préfixes qu'elle admet, la référence au
+ticket qu'elle exige, sa langue —, en une ligne, après le fichier. Quand ce qui
+la vérifie (un hook commit-msg, une configuration de commitlint) est écrit dans le
+projet, lis-le : c'est lui qui dit les types admis et la référence exigée, et c'est lui
+que tu cites. Une seule ligne COMMITS ; aucune si rien de ce que tu as lu ne fixe la
+convention — l'historique d'un dépôt ne fixe rien.
 
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
@@ -232,8 +249,8 @@ GEMINI.md — que le projet garde : un budget, un contenu qu'un test vérifie, u
 qui interdit d'y ajouter. Le fichier lu est celui qui le dit.
 
 Règles :
-- Chaque GESTIONNAIRE, COMMANDE, CI, INSTRUCTIONS, EXCLUDED et GUARDED cite un
-  fichier que tu as LU pendant cette lecture ; un LANGAGE peut citer un fichier
+- Chaque GESTIONNAIRE, COMMANDE, CI, INSTRUCTIONS, COMMITS, EXCLUDED et GUARDED cite
+  un fichier que tu as LU pendant cette lecture ; un LANGAGE peut citer un fichier
   seulement listé. Un constat qui cite un fichier que tu n'as pas lu sera écarté.
 - Les indices fournis viennent des tables de Maestro : ils sont vrais mais
   incomplets. Ne les répète pas, complète-les — sauf la commande que des
@@ -831,7 +848,7 @@ def _decoder(texte: str) -> _Reponse:
                 4
                 if cle == "COMMANDE"
                 else 1
-                if cle in (POUR, INSTRUCTIONS)
+                if cle in (POUR, INSTRUCTIONS, COMMITS)
                 else 2
                 if cle in (EXCLU, GARDE)
                 else -1
@@ -889,6 +906,7 @@ class _Confronteur:
         self.commandes: list[Commande] = []
         self.ci: list[Piece] = []
         self.conventions: list[Piece] = []
+        self.convention_de_commit: ConventionDeCommit | None = None
         self.ecartes: list[ConstatEcarte] = []
         self._pours: dict[str, tuple[str, str]] = {}
         # Ce qui ne se tranche qu'une fois **toute** la réponse lue (#1678) : un fichier
@@ -905,6 +923,7 @@ class _Confronteur:
             "COMMANDE": lambda champs: self._commande(champs, brut.ligne),
             "CI": self._ci_de,
             INSTRUCTIONS: self._instructions_de,
+            COMMITS: self._commits_de,
             EXCLU: lambda champs: self._exclu_de(champs, brut.ligne),
             GARDE: self._garde_de,
             POUR: self._pour_de,
@@ -1126,6 +1145,27 @@ class _Confronteur:
         )
         return ""
 
+    def _commits_de(self, champs: tuple[str, ...]) -> str:
+        """La convention de commit que le projet impose (#1679) — lue, une seule, sinon écartée.
+
+        Elle entre avec le fichier lu qui la fixe, comme tout constat. Une convention de
+        plus de `CONVENTION_MAX` caractères est un paragraphe recopié, pas une règle : elle
+        est écartée plutôt que tronquée, car une règle coupée ferait écrire des commits
+        qu'elle refuse. La première rendue l'emporte : un projet n'a qu'une convention.
+        """
+        chemin, raison = self._preuve(champs[0] if champs else "", lu=True)
+        if chemin is None:
+            return raison
+        texte = " ".join((champs[1] if len(champs) > 1 else "").split())
+        if not texte:
+            return "convention de commit vide"
+        if len(texte) > CONVENTION_MAX:
+            return f"convention de plus de {CONVENTION_MAX} caractères : un paragraphe"
+        if self.convention_de_commit is not None:
+            return "une convention de commit est déjà rendue par cette lecture"
+        self.convention_de_commit = ConventionDeCommit(texte=texte, chemin=chemin)
+        return ""
+
     def _pour_de(self, champs: tuple[str, ...]) -> str:
         """Ce qu'une commande fait pour le projet (#1381) — rattaché à la fin, à sa commande."""
         if len(champs) < 2 or not champs[0] or not champs[1].strip():
@@ -1180,6 +1220,7 @@ class _Confronteur:
             commandes=tuple(self.commandes),
             ci=tuple(self.ci),
             conventions=tuple(self.conventions),
+            convention_de_commit=self.convention_de_commit,
             usages_exclus=tuple(exclus),
             fichiers_gardes=tuple(self.gardes),
         )

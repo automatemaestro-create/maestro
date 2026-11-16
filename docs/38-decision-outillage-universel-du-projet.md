@@ -392,6 +392,7 @@ par quelle version :
     "projet_id": "prj-7f3a",
     "reference": "ana-3c9",                    // l'analyse, ou les réponses données
     "resume": "Python + FastAPI, pytest, ruff ; aucune CI détectée",
+    "commit_convention": "Conventional Commits, Refs #<iid>", // #1679, source « analyse » seulement : lue dans ses fichiers
     "choix": [                                 // #1350, source « choix » seulement : les constats acquis
       { "cle": "tester", "valeur": "python -m unittest", "parce_que": "…",
         "pour": "Vérifier que le carnet est complet" }
@@ -1037,6 +1038,42 @@ Ce qui le constate à chaque livraison est le vérificateur ([docs/45 §2](./45-
 points 9 et 10) : formatage et style joués sur ce que la tâche a écrit, convention de commit et
 comptabilité de Maestro lues sur l'état de la branche, commande jouée sur un clone neuf quand un
 critère le demande.
+
+### 5.12 La convention d'un projet importé, référence au ticket comprise (#1679)
+
+Sur le dépôt de Maestro importé ([docs/56 §4.5](./56-maestro-de-nouveau-face-a-la-chaine.md)),
+aucun des 18 commits ne passait son hook `commit-msg` : 15 commits du moteur « Maestro : … », et
+3 commits de l'agent sans la référence au ticket, dont un sous un type que le hook refuse. Un
+projet importé ne répond à aucune question d'outillage : sa convention est écrite dans ses fichiers.
+Trois gestes y répondent.
+
+- **La lecture relève la convention que le projet impose.** Le modèle qui lit un projet importé
+  rend un constat `COMMITS` : la règle en une ligne (forme du sujet, types admis, référence
+  exigée, langue), et le fichier lu qui la fixe — `CLAUDE.md`, un guide de contribution, le hook
+  lui-même. Comme tout constat, il cite un fichier **lu**, sinon il est écarté ; une règle de plus
+  de 300 caractères et une seconde convention le sont aussi. Elle entre dans la source du manifeste
+  (`commit_convention`), et un seul lecteur la relit, comme celle qu'une personne a choisie
+  (`convention_de_la_source`) : les commits de Maestro et la consigne de l'agent la suivent de la
+  même façon.
+- **Le manifeste d'un projet qui ignore `.maestro/` atteint sa racine.** Maestro ne réécrit pas
+  le `.gitignore` d'un projet qu'il importe, et un manifeste ignoré ne voyage pas avec la branche
+  d'une pièce : il restait dans le worktree, que le démontage efface, et aucune tâche ne lisait
+  l'outillage écrit. Il entre donc dans le worktree par le texte de la racine, pour que la pièce
+  s'ajoute aux entrées déjà déclarées, et il en sort par son texte, posé à la racine **une fois la
+  fusion acceptée**. L'arbre de la personne reste propre : Git ne le voit pas.
+- **La référence au ticket.** Quand l'objectif nomme un ticket, le brief la garde telle qu'elle est
+  écrite (`playbook_brief.md`) : c'est dans son cadre que les tâches et Maestro la lisent. La
+  consigne de l'agent nomme la convention, les seuls types qu'elle admet, et lui dit de citer dans
+  chacun de ses commits la référence qu'elle exige, si sa tâche ou le brief en nomme une. Le
+  rédacteur des commits de Maestro reçoit le cadre du brief (`demande`) et peut rendre, sous le
+  sujet, le **pied** que la convention demande (« Refs #12 ») : au plus trois lignes courtes, sinon
+  le sujet reste seul. Dans une fusion, ce pied vient en dernier, sous ce que Maestro dit de la
+  branche. Le rédacteur n'invente jamais une référence que la demande ne nomme pas.
+
+**Limites dites.** Les pièces écrites à l'import n'ont pas de demande, donc pas de ticket à citer.
+Un agent qui ne commite rien laisse un commit « Maestro : travail de la tâche », écrit au démontage
+sans modèle. Et l'écriture de l'outillage entier en un geste (la route `…/outillage/generation`,
+que l'écran n'appelle pas) ne fait pas encore survivre un manifeste ignoré.
 
 ## 6. Ce qui est écarté, et pourquoi
 
