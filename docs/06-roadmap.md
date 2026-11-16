@@ -100,6 +100,12 @@ gantt
 > tenu par le glossaire de docs/08. Ce que la personne lit reste en français. Le chantier ouvre le
 > jalon « Le code parle anglais », sur le rail outillage, juste après « Outillage de la forge ».
 > Aucun jalon produit ne bouge.
+>
+> Le 2026-11-16, **#1587 ne tient pas le seuil**
+> ([docs/56](./56-maestro-de-nouveau-face-a-la-chaine.md)). Maestro livre cette fois, et tient plus
+> de critères que la chaîne. Mais son livrable rougirait la CI, aucun de ses commits ne passe le
+> hook, et il dure 8,4 fois plus longtemps. La routine reste différée. Quatre écarts entrent au jalon
+> « Maestro fait mieux qu'un agent seul », dont l'échéance ne bouge pas.
 
 ---
 
@@ -1481,6 +1487,16 @@ Le constat, en cinq faits :
 >   - #1543 ∥, la reprise d'une tâche coupée par la limite d'usage.
 > - **La grille de #1512 juge mal un dépôt existant** : c'est #1544.
 
+> ⚠ **Le même étalon, remesuré par #1587 le 2026-11-16** ([docs/56](./56-maestro-de-nouveau-face-a-la-chaine.md)).
+> Le ticket #1592 a été traité deux fois, cinq leviers livrés.
+> - **La chaîne livre en 19 min, sur un geste**, pour 6,74 $, pipeline compris.
+> - **Maestro termine en 2 h 37 sur 13 gestes**, sans aucune correction, pour 6,06 $.
+> - **Son livrable tient 3 critères sur 4**, contre 2 pour la chaîne. Mais son outillage fait rougir
+>   un test du dépôt, et 0 commit sur 18 passe le hook.
+> - **Les leviers** : #1531 tient, #1542, #1530 et #1507 gagnent en partie, et #1543 n'a pas été
+>   exercé.
+> - **Quatre écarts deviennent des tickets du jalon** : #1678 et #1679 (`haute`), #1680 et #1681.
+
 **Le go/no-go.** Le terrain est un projet qui **dépasse une session**, confié comme le dirait une
 personne **qui ne code pas**, et **repris le lendemain**. C'est la promesse de
 [docs/00 §1.1](./00-cahier-des-charges.md), et c'est là qu'une session seule casse par
@@ -1852,7 +1868,7 @@ Il n'ouvre **aucun jalon** et n'en déplace aucun.
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
 | *Maestro fait mieux qu'un agent seul* (jalon existant, rail produit) | Maestro livre de nouveau un vrai ticket de son propre dépôt, en face de la chaîne. L'écart de #1522 est remesuré levier par levier, et un seuil décide de la routine | 2028-01-31 | **#1587** (né assigné, après #1544) |
-| *aucun, différé* | La routine : une part des tickets du dépôt confiée à Maestro | — | se rouvre par `/idee` quand #1587 tient son seuil **et** que #1515 est livré |
+| *aucun, différé* | La routine : une part des tickets du dépôt confiée à Maestro | — | se rouvre par `/idee` quand une mesure tient le seuil de #1587 **et** que #1515 est livré. #1587 ne l'a pas tenu (2026-11-16) |
 
 **Le constat** : le premier essai a échoué, et cinq des six causes sont corrigées depuis.
 - **Le premier essai**, #1522, a eu lieu le 2026-10-15 ([docs/51](./51-maestro-face-a-la-chaine-du-depot.md)).
@@ -1908,6 +1924,25 @@ se rouvre alors par `/idee`, sur trois pièces :
 
 Elle ne naît pas en ticket aujourd'hui : un tel ticket ne pourrait pas démarrer, puisqu'il
 attendrait une mesure à venir et un lot de la Phase 9. Cette section la garde, avec son déclencheur.
+
+**Le verdict, le 2026-11-16 : le seuil n'est pas tenu**
+([docs/56](./56-maestro-de-nouveau-face-a-la-chaine.md) § 5). Une condition sur quatre tient.
+- **Le livré** manque : l'outillage écrit à l'import fait rougir `test_claude_md_tient_sous_son_budget`,
+  donc la CI.
+- **La qualité** manque par les commits : 0 sur 18 au hook, pour 3 critères sur 4 contre 2.
+- **Les gestes** tiennent : 13 gestes, aucune correction ni réécriture.
+- **Le coût** tient (0,90 fois), mais **la durée** manque : 8,4 fois, pour une limite de 1,5.
+
+La routine reste donc différée, et #1515 n'est pas livré non plus. Les écarts entrent au jalon :
+- **#1678** (`haute`) : l'outillage d'un projet importé suit ses instructions ;
+- **#1679** (`haute`) : les commits d'un projet importé suivent sa convention ;
+- **#1680** : la vérification et la recette ;
+- **#1681** : la grille sur un vrai dépôt.
+
+Ils lèvent le livré et la qualité. La durée reste plus loin : sans la suite entière, le passage de
+Maestro aurait duré environ 1 h 15, soit encore environ 4 fois celui de la chaîne. Aucun ticket ne
+porte la prochaine mesure, qui se décide au bilan du jalon ou par `/idee`. Le seuil, lui, ne bouge
+pas.
 
 **Les deux réponses de la personne** :
 - le plan est validé tel que recommandé : #1587 créé, la routine différée, le seuil chiffré posé
