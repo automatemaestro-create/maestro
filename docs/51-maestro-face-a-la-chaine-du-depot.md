@@ -253,4 +253,5 @@ dont la part est plafonnée (docs/49 § 0) : elle est laissée à l'arbitrage, s
 - **#1544** : les limites de la grille de #1512 sur un dépôt existant.
 - **#1587** : la même mesure rejouée sur un ticket neuf, une fois livrés les cinq leviers (#1542,
   #1543, #1531, #1530, #1507). Un seuil posé avant l'épreuve y décide si Maestro peut développer une
-  part de ce dépôt (docs/06, section « Maestro sur son propre dépôt »).
+  part de ce dépôt (docs/06, section « Maestro sur son propre dépôt »). Le 2026-11-16, ce seuil
+  n'est pas tenu : [docs/56](./56-maestro-de-nouveau-face-a-la-chaine.md).
