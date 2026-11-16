@@ -37,7 +37,15 @@ vérifiable` — avec sa preuve, ou la raison pour laquelle rien n'a pu être co
 numérotés dans la tâche (`C1`, `C2`…) et le vérificateur les recopie numéro compris :
 un format que Maestro impose et relit, jamais un texte qu'il interprète. Un critère
 que le vérificateur n'a traduit en aucun contrôle est **non vérifiable** — jamais
-tenu par défaut.
+tenu par défaut, jamais compté non tenu non plus (docs/47 § 5).
+
+**Ce qu'une vérification vient de tenir ne se rejoue pas** (#1680). La recette lit les
+constats de la dernière vérification de chaque tâche (`constats_anterieurs`), avec
+l'empreinte de l'arbre que chacune a jugé. Le modèle dit lequel porte sur quel
+critère ; Maestro reprend tel quel celui qui est tenu sur un arbre identique au
+livrable intégré, et le dit (`RecetteDuRun.repris`). Ce qui se rejoue et rend un autre
+verdict nomme ce qui le sépare de la vérification — l'arbre, le contrôle : la recette
+et la vérification d'un run d'une seule tâche concordent, ou disent pourquoi.
 
 **Rien n'est coché qui ne tient pas.** La recette ne corrige rien et ne relance
 aucune tâche : elle dit. Dans le projet, seuls les critères tenus sont cochés
@@ -73,7 +81,9 @@ from maestro.engine.verification import (
     CONSTAT_NON_JOUE,
     CONSTAT_NON_TENU,
     CONSTAT_TENU,
+    SUFFIXE_ETAPE_VERIFICATION,
     Constat,
+    ConstatAnterieur,
     Livraison,
     VerificateurEnPanne,
     VerificateurTaches,
@@ -87,6 +97,7 @@ from maestro.telemetry import SpendingCapExceeded
 
 if TYPE_CHECKING:
     from maestro.engine.retry import PolitiqueRelance
+    from maestro.telemetry.journal import StepRecord
 
 #: L'identifiant de la tâche que la recette fait vérifier — une tâche que personne
 #: n'exécute et qui n'entre dans aucun plan : elle ne porte que les critères.
@@ -188,6 +199,11 @@ class RecetteDuRun:
         return tuple(c for c in self.constats if c.etat == CONSTAT_NON_JOUE)
 
     @property
+    def repris(self) -> tuple[Constat, ...]:
+        """Les critères tenus repris d'une vérification de tâche, sans être rejoués (#1680)."""
+        return tuple(c for c in self.tenus if c.repris_de)
+
+    @property
     def statut(self) -> str:
         """L'issue de la recette, au vocabulaire du journal."""
         if self.non_tenus:
@@ -197,14 +213,26 @@ class RecetteDuRun:
         return STATUT_RECETTE_IMPOSSIBLE
 
     def resume(self) -> str:
-        """La recette en une ligne — « 6/8 critère(s) du brief tenu(s), 1 non tenu… »."""
+        """La recette en une ligne — « 6/8 critère(s) du brief tenu(s), 1 non tenu… ».
+
+        Un critère non vérifiable n'est compté ni tenu ni non tenu (docs/47 § 5) : quand
+        rien n'a été constaté faux, la ligne le dit (#1680), pour qu'aucun lecteur — ni
+        le récit de fin — ne lise l'écart au total comme des échecs.
+        """
         phrase = f"{len(self.tenus)}/{len(self.constats)} critère(s) du brief tenu(s)"
+        if self.repris:
+            phrase += (
+                f", dont {len(self.repris)} repris de la vérification des tâches sans être "
+                "rejoués"
+            )
         if self.non_tenus:
             phrase += f", {len(self.non_tenus)} non tenu(s)"
         if self.non_verifiables:
             phrase += f", {len(self.non_verifiables)} non vérifiable(s)"
         if self.empechement:
             phrase += f" — recette non jouée : {self.empechement}"
+        elif self.non_verifiables and not self.non_tenus:
+            phrase += " — aucun constaté non tenu"
         return phrase
 
     def preuves(self) -> str:
@@ -234,7 +262,7 @@ class RecetteDuRun:
         ]
         for rang, constat in enumerate(self.constats):
             case = "x" if constat.etat == CONSTAT_TENU else " "
-            mot = _MOTS.get(constat.etat, "non vérifiable")
+            mot = _mot(constat)
             verdict = mot if constat.etat == CONSTAT_TENU else f"**{mot}**"
             lignes.append(f"- [{case}] **{marque(rang)}** — {constat.critere} — {verdict}")
         lignes += ["", "## Preuves"]
@@ -276,9 +304,17 @@ class RecetteDuRun:
         )
 
 
+def _mot(constat: Constat) -> str:
+    """Le verdict d'un critère tel que la personne le lit — repris d'une tâche, s'il l'est."""
+    mot = _MOTS.get(constat.etat, "non vérifiable")
+    if constat.repris_de:
+        return f"{mot}, repris de la vérification de la tâche {constat.repris_de}"
+    return mot
+
+
 def _ligne(rang: int, constat: Constat) -> str:
     """Un critère en une ligne : son numéro, son verdict, sa commande, sa preuve."""
-    tete = f"{marque(rang)} [{_MOTS.get(constat.etat, 'non vérifiable')}] « {constat.critere} »"
+    tete = f"{marque(rang)} [{_mot(constat)}] « {constat.critere} »"
     if constat.commande:
         code = f" → code {constat.code}" if constat.code is not None else ""
         tete += f" — `{constat.commande}`{code}"
@@ -303,6 +339,7 @@ async def recetter(
     modele: str,
     brief: Brief | None = None,
     relance: PolitiqueRelance | None = None,
+    anterieurs: Sequence[ConstatAnterieur] = (),
 ) -> RecetteDuRun:
     """Confronte `livraison` à chacun des `criteres` — un constat par critère, dans leur ordre.
 
@@ -312,6 +349,10 @@ async def recetter(
     aléas de l'exécuteur, comme pour la vérification d'une tâche (#1388) ; resté en
     panne, ou arrêté par le plafond de dépense, il rend une recette non jouée qui le
     dit. Ne lève pas.
+
+    `anterieurs` (#1680) : les constats des vérifications des tâches du run
+    (`constats_anterieurs`). Ce qu'elles ont tenu sur l'arbre que la recette juge est
+    repris sans être rejoué, et un verdict qui s'en écarte dit ce qui l'en sépare.
     """
     if not criteres:
         return RecetteDuRun(constats=())
@@ -321,7 +362,7 @@ async def recetter(
     while True:
         try:
             _, verdict = await verificateur.verifier(
-                tache, livraison, modele=modele, brief=brief
+                tache, livraison, modele=modele, brief=brief, anterieurs=anterieurs
             )
             break
         except SpendingCapExceeded as exc:
@@ -337,6 +378,54 @@ async def recetter(
     if verdict.empechement:
         return recette_non_jouee(criteres, verdict.empechement)
     return RecetteDuRun(constats=par_critere(criteres, verdict.constats))
+
+
+def constats_anterieurs(
+    taches: Sequence[tuple[str, str]],
+    etapes: Sequence[StepRecord],
+    empreinte: str,
+) -> tuple[ConstatAnterieur, ...]:
+    """Les constats de la dernière vérification de chaque tâche, numérotés pour la recette (#1680).
+
+    `taches` sont les tâches abouties du run, `(identifiant, titre)` dans l'ordre du
+    run ; `etapes`, ce que le journal a consigné — la vérification d'une tâche y porte
+    son verdict, son numéro de livraison et l'empreinte de l'arbre qu'elle a jugé
+    (`Verdict.to_dict`). `empreinte` est celle du livrable intégré que la recette va
+    juger : le constat d'une vérification dont l'empreinte est la même porte sur un
+    arbre identique. Une empreinte vide, d'un côté ou de l'autre, ne se compare à
+    rien (`meme_arbre` vaut `None`) — rien n'est alors repris, tout se rejoue.
+
+    Une tâche sans vérification consignée, ou dont la dernière n'a rien constaté (le
+    vérificateur en panne), n'offre rien. Les numéros (« V1 », « V2 »…) courent sur le
+    run entier.
+    """
+    dernieres: dict[str, Mapping[str, Any]] = {}
+    for etape in etapes:
+        tache_id, suffixe, reste = etape.etape.rpartition(SUFFIXE_ETAPE_VERIFICATION)
+        if suffixe and not reste and isinstance(etape.verification, Mapping):
+            dernieres[tache_id] = etape.verification
+    anterieurs: list[ConstatAnterieur] = []
+    for tache_id, titre in taches:
+        verification = dernieres.get(tache_id)
+        brut = verification.get("constats") if verification is not None else None
+        if verification is None or not isinstance(brut, list):
+            continue
+        livraison = verification.get("livraison")
+        jugee = str(verification.get("fingerprint") or "")
+        for donnees in brut:
+            if not isinstance(donnees, Mapping):
+                continue
+            anterieurs.append(
+                ConstatAnterieur(
+                    numero=f"V{len(anterieurs) + 1}",
+                    tache_id=tache_id,
+                    titre=titre,
+                    livraison=livraison if isinstance(livraison, int) else 0,
+                    constat=Constat.depuis(donnees),
+                    meme_arbre=jugee == empreinte if empreinte and jugee else None,
+                )
+            )
+    return tuple(anterieurs)
 
 
 def par_critere(criteres: Sequence[str], constats: Sequence[Constat]) -> tuple[Constat, ...]:
@@ -443,10 +532,7 @@ def recette_en_texte(donnees: Mapping[str, Any]) -> str:
         if len(preuve) > _PREUVE_RECIT_MAX:
             preuve = "…" + preuve[-(_PREUVE_RECIT_MAX - 1) :]
         commande = f" — `{constat.commande}`" if constat.commande else ""
-        tete = (
-            f"- {marque(rang)} [{_MOTS.get(constat.etat, 'non vérifiable')}] "
-            f"« {constat.critere} »{commande}"
-        )
+        tete = f"- {marque(rang)} [{_mot(constat)}] « {constat.critere} »{commande}"
         lignes.append(f"{tete} : {preuve}" if preuve else tete)
     if recette.fichier:
         lignes.append(f"Écrite dans le projet : {recette.fichier}")

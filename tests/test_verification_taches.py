@@ -623,6 +623,79 @@ def test_la_contre_expertise_garde_un_controle_juste(tmp_path):
     assert len(provider.prompts) == 2
 
 
+def test_une_execution_que_la_contre_expertise_dit_sans_preuve_s_abstient(tmp_path):
+    """#1680, run `caf51d06c14f` : pytest-xdist a perdu un worker (`OSError: cannot send`),
+    et « la suite passe » est revenu non tenu à l'agent. La contre-expertise juge où est le
+    défaut ; quand c'est l'exécution qui n'a rien prouvé, elle le dit, et le critère
+    s'abstient au lieu de revenir à l'agent — jamais un vert pour autant."""
+    sortie = "INTERNALERROR> OSError: cannot send (already closed?)\n[gw3] node down"
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": "la suite passe", "commande": "pytest -n auto"}]}),
+        json.dumps(
+            {
+                "commandes": [],
+                "abstentions": [
+                    {"n": 1, "raison": "pytest-xdist a perdu un worker : aucun test n'a échoué"}
+                ],
+            }
+        ),
+    )
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        return Execution(code=3, sortie=sortie, duree_s=0.0)
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    controles, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert constat.preuve.startswith(
+        "abstention — pytest-xdist a perdu un worker : aucun test n'a échoué"
+    )
+    assert "OSError: cannot send" in constat.preuve
+    assert (constat.commande, constat.code) == ("pytest -n auto", 3)
+    assert verdict.non_tenus == () and not verdict.tenue
+    # Le contrôle reste établi : il se rejoue à la livraison suivante.
+    assert controles[0].commande == "pytest -n auto"
+    # La contre-expertise sait qu'elle peut s'abstenir, et ce qui n'en est jamais une.
+    consigne = " ".join(provider.prompts[1].split())
+    assert '"abstentions"' in consigne
+    assert "Un test qui échoue" in consigne
+
+
+def test_une_reecriture_l_emporte_sur_une_abstention_du_meme_controle(tmp_path):
+    """Réécrite, la commande est rejouée tout de suite : c'est son verdict qui compte."""
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": "la suite passe", "commande": "pytest -n auto"}]}),
+        json.dumps(
+            {
+                "commandes": [{"n": 1, "commande": "pytest -p no:xdist"}],
+                "abstentions": [{"n": 1, "raison": "xdist est tombé"}],
+            }
+        ),
+    )
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        return Execution(code=0 if "no:xdist" in commande else 3, sortie="", duree_s=0.0)
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    _, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert verdict.tenue
+
+
 def test_une_livraison_non_tenue_n_est_jamais_relancee_comme_un_alea():
     assert not est_transitoire(LivraisonNonTenue("non vérifiée"))
 
@@ -1132,25 +1205,42 @@ def test_un_demarrage_qui_tourne_encore_au_delai_tient(tmp_path):
     assert verdict.constats[0].preuve == "démarrée, elle tournait encore au bout de 2 s"
 
 
-def test_une_commande_qui_ne_rend_pas_la_main_ne_tient_pas(tmp_path):
+def test_une_commande_coupee_par_son_delai_s_abstient_et_le_dit(tmp_path):
+    """#1680, run `caf51d06c14f` : la suite entière, coupée vers 15 % par le délai, comptait
+    « la suite passe » non tenu. Coupée avant son verdict, elle n'a rien prouvé : elle
+    s'abstient, ne revient pas à l'agent, et n'est jamais un vert."""
     reponse = json.dumps({"controles": [{"critere": "les tests passent", "commande": "t"}]})
 
     def joueur(commande, cwd, *, interprete, delai_s):
-        return Execution(code=None, sortie="en attente…", duree_s=delai_s, expiree=True)
+        return Execution(
+            code=None, sortie="tests/test_a.py ....  [ 15%]", duree_s=delai_s, expiree=True
+        )
 
+    provider = _Reponses(reponse)
     verificateur = VerificateurTaches(
-        _Reponses(reponse),
+        provider,
         delais=DelaisVerification(commande_s=3.0),
         joueur=joueur,
         interprete=_INTERPRETE,
     )
     _, verdict = asyncio.run(
-        verificateur.verifier(_TACHE, Livraison(sortie="fait", espace=tmp_path), modele="m")
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
     )
 
     (constat,) = verdict.constats
-    assert constat.etat == CONSTAT_NON_TENU
-    assert constat.preuve.startswith("elle n'a pas rendu la main en 3 s")
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert constat.preuve.startswith("coupée — elle n'a pas rendu la main en 3 s")
+    assert "ne prouve rien du critère" in constat.preuve
+    assert "[ 15%]" in constat.preuve
+    # Rien de faux n'est constaté : rien ne revient à l'agent, et ce n'est pas un vert.
+    assert verdict.non_tenus == ()
+    assert verdict.statut == STATUT_VERIFICATION_IMPOSSIBLE
+    # Une abstention n'est pas un défaut à contre-expertiser : un seul appel au modèle.
+    assert len(provider.prompts) == 1
 
 
 def test_sans_bash_une_commande_n_est_pas_jouee_et_le_dit(tmp_path):

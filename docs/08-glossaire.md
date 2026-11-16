@@ -214,6 +214,10 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | recette | `acceptance` | les critères du brief, vérifiés sur le livrable |
 | juge, verdict | `judge`, `verdict` | le modèle qui juge sur pièces, et ce qu'il rend |
 | constat | `finding` | un fait relevé sur pièces |
+| constat antérieur | `prior_finding` | le constat d'une vérification de tâche, que la recette du run lit |
+| repris (constat) | `reused_from` | un constat que la recette reprend d'une vérification, sans le rejouer |
+| abstention | `abstention` | une exécution qui ne prouve rien du critère : ni tenu, ni non tenu |
+| empreinte (d'un arbre) | `fingerprint` | ce qui dit que deux arbres de fichiers sont le même |
 | pièce (preuve) | `evidence` | ce sur quoi un verdict s'appuie |
 | récit (de fin) | `recap` | ce qui a été produit, et comment l'essayer |
 | bilan (d'un run) | `assessment` | le bilan d'un run terminé, rendu sur pièces |

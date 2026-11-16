@@ -28,7 +28,15 @@ verification` (#1160), appliquée ici au livrable d'une tâche :
    soit : une commande que Maestro ne sait pas jouer est **réécrite**, et une
    commande qui n'a pas tenu est **contre-expertisée** — le défaut est-il dans le
    livrable, ou dans le contrôle ? Seul un contrôle qui ne constate pas son
-   critère se réécrit, jamais pour qu'il passe.
+   critère se réécrit, jamais pour qu'il passe ;
+5. un critère n'est dit **non tenu** que sur une exécution qui le prouve (#1680) :
+   une commande coupée par son délai, ou que la contre-expertise dit sans preuve
+   (l'outil a failli, la recherche a manqué son texte), **s'abstient** — ni tenue
+   ni non tenue, elle empêche le vert sans revenir à l'agent ;
+6. la **recette du run** passe par ce même mécanisme (`maestro.engine.recette`) et
+   lit les constats des vérifications de ses tâches (`ConstatAnterieur`) : ce qu'elles
+   ont tenu sur un arbre identique se reprend sans être rejoué, et un verdict qui s'en
+   écarte nomme ce qui l'en sépare (#1680).
 
 ## Où l'on joue
 
@@ -243,6 +251,9 @@ PREUVE_MAX = 1500
 #: ajoutait sa ligne — 2,3 millions de caractères sur le run `da0a8ae6f1b2`.
 _COMPTE_RENDU_MAX = 8000
 _OUTILLAGE_MAX = 12000
+#: Ce que la recette lit de chaque constat d'une vérification antérieure (#1680) : de
+#: quoi reconnaître le critère et son verdict, pas de quoi recopier une sortie de tests.
+_PREUVE_ANTERIEURE_MAX = 300
 _FICHIER_MAX = 8000
 _FICHIERS_MAX = 40_000
 _NON_LUS_MAX = 50
@@ -267,8 +278,9 @@ class DelaisVerification:
 
     `commande_s` borne chaque commande : une suite de tests sur un projet réel prend
     une à deux minutes. Au-delà, la commande est arrêtée avec sa descendance, et
-    elle **ne tient pas** — elle n'a pas rendu la main, ce qu'un critère ne peut
-    pas tenir pour vrai. `demarrage_s` est la fenêtre d'observation d'un contrôle
+    elle **s'abstient** (#1680) : coupée avant son verdict, elle n'a rien prouvé du
+    critère, ni dans un sens ni dans l'autre — elle empêche le vert, sans revenir à
+    l'agent. `demarrage_s` est la fenêtre d'observation d'un contrôle
     de démarrage **sans sonde** : un service qui tourne encore au bout de ce temps
     a démarré. Un démarrage **sondé** (#1432) est borné par `commande_s` — il
     s'arrête dès que le service répond, et un service qu'on construit avant de le
@@ -297,6 +309,9 @@ class Controle:
     contrôle un démarrage. `clone_neuf` (#1507) : la commande se joue dans un clone
     de ce que la branche a commité, et non dans l'espace de l'agent
     (`maestro.sandbox.verification.clone_neuf`) — ce que la personne récupère.
+    `anterieur` (#1680) : le numéro du constat d'une vérification antérieure qui
+    porte sur le même critère (`ConstatAnterieur`), tel que le vérificateur de la
+    recette le nomme — reprise sans rejeu, ou écart à nommer.
     """
 
     critere: str
@@ -305,6 +320,7 @@ class Controle:
     demarrage: bool = False
     sonde: str = ""
     clone_neuf: bool = False
+    anterieur: str = ""
 
     @property
     def joue(self) -> bool:
@@ -320,8 +336,8 @@ class Controle:
         return f"`{self.commande}`"
 
     def to_dict(self) -> dict[str, Any]:
-        """La forme JSON du contrôle."""
-        return {
+        """La forme JSON du contrôle — `prior_finding` seulement quand il en nomme un."""
+        donnees: dict[str, Any] = {
             "critere": self.critere,
             "commande": self.commande,
             "lecture": self.lecture,
@@ -329,6 +345,9 @@ class Controle:
             "sonde": self.sonde,
             "clone_neuf": self.clone_neuf,
         }
+        if self.anterieur:
+            donnees["prior_finding"] = self.anterieur
+        return donnees
 
 
 @dataclass(frozen=True)
@@ -337,7 +356,9 @@ class Constat:
 
     `preuve` est ce que la personne — et l'agent — lisent : la fin de la sortie
     d'une commande, ou ce que la lecture a trouvé (ou pas). `code` est le code de
-    retour d'une commande jouée, `None` sinon.
+    retour d'une commande jouée, `None` sinon. `repris_de` (#1680) nomme la tâche
+    dont la vérification a rendu ce constat, quand la recette du run le **reprend**
+    sans le rejouer (`ConstatAnterieur`) ; vide, il a été constaté ici.
     """
 
     critere: str
@@ -345,6 +366,7 @@ class Constat:
     preuve: str = ""
     commande: str = ""
     code: int | None = None
+    repris_de: str = ""
 
     @property
     def tenu(self) -> bool:
@@ -363,14 +385,21 @@ class Constat:
         return f"{tete} : {self.preuve}" if self.preuve else tete
 
     def to_dict(self) -> dict[str, Any]:
-        """La forme JSON du constat — celle que le panneau de détail lit."""
-        return {
+        """La forme JSON du constat — celle que le panneau de détail lit.
+
+        `reused_from` n'y figure que pour un constat repris : un constat joué ici a la
+        forme qu'il a toujours eue.
+        """
+        donnees: dict[str, Any] = {
             "critere": self.critere,
             "etat": self.etat,
             "preuve": self.preuve,
             "commande": self.commande,
             "code": self.code,
         }
+        if self.repris_de:
+            donnees["reused_from"] = self.repris_de
+        return donnees
 
     @classmethod
     def depuis(cls, data: Mapping[str, Any]) -> Constat:
@@ -383,7 +412,62 @@ class Constat:
             preuve=str(data.get("preuve") or ""),
             commande=str(data.get("commande") or ""),
             code=code if isinstance(code, int) and not isinstance(code, bool) else None,
+            repris_de=str(data.get("reused_from") or ""),
         )
+
+
+@dataclass(frozen=True)
+class ConstatAnterieur:
+    """Un constat de la dernière vérification d'une tâche, offert à la recette du run (#1680).
+
+    La recette ne rejoue pas ce qu'une vérification a tenu sur le même arbre, et dit ce
+    qui sépare son verdict du sien quand ils divergent : elle lit donc ses constats.
+    `numero` désigne celui-ci dans son prompt (« V1 »…), `tache_id`, `titre` et
+    `livraison` disent quelle vérification l'a rendu, et `meme_arbre` si l'arbre
+    qu'elle a jugé est celui que la recette juge — `None` quand l'une des deux
+    empreintes manque, et rien n'est alors repris.
+    C'est Maestro qui l'établit, par l'empreinte des deux arbres
+    (`maestro.sandbox.projet.empreinte_du_livrable`), jamais le modèle : le modèle dit
+    quel constat porte sur quel critère, l'empreinte dit si on peut s'y fier.
+    """
+
+    numero: str
+    tache_id: str
+    titre: str
+    livraison: int
+    constat: Constat
+    meme_arbre: bool | None
+
+    @property
+    def reprenable(self) -> bool:
+        """Tenu sur un arbre identique : la recette le reprend sans le rejouer."""
+        return self.meme_arbre is True and self.constat.tenu
+
+    def arbre(self) -> str:
+        """L'arbre que cette vérification a jugé, tel que la recette le lit."""
+        if self.meme_arbre is None:
+            return "un arbre que Maestro n'a pas pu comparer au livrable intégré"
+        if self.meme_arbre:
+            return "un arbre identique au livrable intégré"
+        return "un arbre qui n'est plus celui du livrable intégré"
+
+    def en_ligne(self) -> str:
+        """Le constat tel que le prompt de la recette l'énumère — sa preuve bornée."""
+        preuve = _fin(self.constat.preuve, _PREUVE_ANTERIEURE_MAX)
+        constat = replace(self.constat, preuve=preuve).en_ligne()
+        return (
+            f"{self.numero} — tâche « {self.titre} » (livraison n° {self.livraison}), "
+            f"sur {self.arbre()} : {constat}"
+        )
+
+    def repris(self, critere: str) -> Constat:
+        """Ce constat repris pour `critere`, sans être rejoué — et la recette le dit."""
+        tete = (
+            f"repris sans être rejoué — la vérification de la tâche « {self.titre} » "
+            f"(livraison n° {self.livraison}) l'a tenu sur {self.arbre()}"
+        )
+        preuve = f"{tete} :\n{self.constat.preuve}" if self.constat.preuve else tete
+        return replace(self.constat, critere=critere, preuve=preuve, repris_de=self.tache_id)
 
 
 @dataclass(frozen=True)
@@ -421,11 +505,16 @@ class Verdict:
 
     `empechement` non vide : la vérification n'a pas pu se faire (vérificateur
     illisible, aucun contrôle) — la livraison n'est pas vérifiée, donc pas verte.
+    `empreinte` (#1680) est celle de l'arbre que ce verdict a jugé
+    (`Recette.empreinte_de`) : la recette du run la confronte à celle du livrable
+    intégré pour savoir si elle peut reprendre ce verdict sans le rejouer. Vide,
+    elle n'a pas été prise, et rien ne se reprend.
     """
 
     constats: tuple[Constat, ...] = ()
     renvois: tuple[Renvoi, ...] = ()
     empechement: str = ""
+    empreinte: str = ""
 
     @property
     def tenus(self) -> int:
@@ -481,6 +570,7 @@ class Verdict:
             "resume": self.resume(),
             "empechement": self.empechement,
             "constats": [c.to_dict() for c in self.constats],
+            "fingerprint": self.empreinte,
         }
 
 
@@ -732,6 +822,7 @@ class VerificateurTaches:
         etablis: tuple[Controle, ...] | None = None,
         amont: Sequence[Amont] = (),
         brief: Brief | None = None,
+        anterieurs: Sequence[ConstatAnterieur] = (),
     ) -> tuple[tuple[Controle, ...], Verdict]:
         """Les contrôles de la tâche et le verdict de cette livraison.
 
@@ -744,6 +835,12 @@ class VerificateurTaches:
         chaque prompt — le cadre, jamais le contrat. `None` : un run sans brief, et
         les prompts sont ceux d'avant, au caractère près.
 
+        `anterieurs` (#1680) : les constats des vérifications des tâches, que la
+        recette du run reçoit à l'établissement. Le modèle dit lequel porte sur quel
+        critère ; un constat **tenu sur un arbre identique** est repris sans être
+        rejoué, et un verdict qui s'écarte de celui d'une vérification nomme ce qui
+        les sépare (`_nommer_les_ecarts`). Vide, les prompts sont ceux d'avant.
+
         Ne lève que ce que l'appel au fournisseur lève, et sous deux formes
         seulement : le **plafond de dépense**, tel quel — une borne, que
         l'exécuteur traite comme pour l'agent —, et `VerificateurEnPanne` pour
@@ -754,9 +851,11 @@ class VerificateurTaches:
         modele = self._modele or modele
         if etablis is None:
             texte = await self._consulter(
-                _prompt_etablir(tache, livraison, amont, brief), modele
+                _prompt_etablir(tache, livraison, amont, brief, anterieurs), modele
             )
-            controles, lectures, renvois, empechement = _lire_etablissement(texte, amont)
+            controles, lectures, renvois, empechement = _lire_etablissement(
+                texte, amont, anterieurs
+            )
             if empechement:
                 return (), Verdict(empechement=empechement)
             controles = await self._rendre_jouables(
@@ -791,6 +890,8 @@ class VerificateurTaches:
         controles = await self._contre_expertiser(
             tache, livraison, controles, constats, modele, brief
         )
+        if anterieurs:
+            constats = _nommer_les_ecarts(controles, constats, anterieurs)
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
 
     async def _consulter(self, prompt: str, modele: str) -> str:
@@ -837,6 +938,13 @@ class VerificateurTaches:
         et c'est elle qui reste établie. Un appel, et seulement quand quelque chose
         n'a pas tenu.
 
+        Le défaut peut aussi être dans l'**exécution** (#1680) : l'outil a failli, ou
+        une recherche a manqué son texte par la forme de la source. Renvoyé à l'agent
+        comme un critère non tenu, il lui ferait corriger un livrable juste. Ce que le
+        modèle juge ainsi **s'abstient** (`_abstention`) : le critère n'est ni tenu ni
+        non tenu, il empêche le vert sans revenir à l'agent. Une réécriture jouée
+        l'emporte sur une abstention du même contrôle : elle rend un verdict.
+
         `constats` est mis à jour sur place ; rend les contrôles, révisés ou non.
         """
         fautifs = [
@@ -851,14 +959,15 @@ class VerificateurTaches:
             modele,
         )
         revises = _lire_reecriture(texte, controles, dict.fromkeys(fautifs, ""))
-        if not revises:
-            return controles
         nouveaux = list(controles)
         for rang, controle in revises.items():
             if livraison.portee is not None and _hors_portee(controle, livraison.portee):
                 continue  # une révision que Maestro ne peut pas jouer ne remplace rien
             nouveaux[rang] = controle
             constats[rang] = await self._jouer(controle, livraison)
+        for rang, raison in _lire_abstentions(texte, fautifs).items():
+            if nouveaux[rang] is controles[rang]:
+                constats[rang] = _abstention(constats[rang], raison)
         return tuple(nouveaux)
 
     async def _rendre_jouables(
@@ -1207,10 +1316,22 @@ def _prompt_contre_expertise(
         "contrôle qui ne peut plus échouer ne vérifie rien. Le compte-rendu de l'agent "
         "peut dire en quoi un contrôle se trompe : lis-le, mais ce sont le critère et ce "
         "que la commande a rendu qui tranchent, jamais ce que l'agent affirme.\n"
+        "Dans l'EXÉCUTION : la commande n'est pas allée jusqu'au verdict qu'elle devait "
+        "rendre, et ce qu'elle a rendu ne dit rien du livrable — l'outil lui-même a failli "
+        "(une erreur interne du lanceur de tests, un worker perdu, pas un test qui échoue), "
+        "ou une recherche a manqué son texte par la forme de la source (un retour à la "
+        "ligne, une mise en page) et non par ce que le livrable dit. Si une autre écriture "
+        "irait au bout et constaterait le même critère, réécris-la. Sinon, nomme-la dans "
+        "\"abstentions\" : elle ne prouve rien, ni dans un sens ni dans l'autre, le critère "
+        "reste non vérifié — jamais tenu — et l'agent n'a pas à en répondre. Un test qui "
+        "échoue, une assertion fausse, une erreur de compilation, une règle de style "
+        "enfreinte sont des preuves : jamais une abstention.\n"
         f"<non_tenues>\n{lignes}\n</non_tenues>\n\n"
-        "Forme de la réponse — seules les commandes réécrites y figurent :\n"
+        "Forme de la réponse — seules les commandes réécrites, et celles qui n'ont rien "
+        "prouvé, y figurent :\n"
         '{"commandes": [{"n": 1, "commande": "...", "raison": "ce qui était faux dans le '
-        'contrôle"}]}'
+        'contrôle"}], "abstentions": [{"n": 2, "raison": "pourquoi cette exécution ne '
+        'prouve rien"}]}'
     )
 
 
@@ -1247,8 +1368,123 @@ def _lire_reecriture(
                 sonde=sonde,
                 # Réécrire une commande ne change pas où elle se joue (#1507).
                 clone_neuf=controles[rang].clone_neuf and not demarrage,
+                # Ni le critère qu'une vérification antérieure constatait (#1680).
+                anterieur=controles[rang].anterieur,
             )
     return reecrits
+
+
+def _lire_abstentions(texte: str, fautifs: Sequence[int]) -> dict[int, str]:
+    """Les commandes que la contre-expertise dit sans preuve, par rang, avec leur raison (#1680).
+
+    Seules comptent celles qu'on lui a soumises, et chacune avec une raison : une
+    abstention qui ne dit pas pourquoi n'est pas un jugement.
+    """
+    objet = _objet_json(texte or "")
+    brut = objet.get("abstentions") if isinstance(objet, dict) else None
+    abstentions: dict[int, str] = {}
+    for element in brut if isinstance(brut, list) else ():
+        if not isinstance(element, dict):
+            continue
+        numero = element.get("n")
+        raison = _texte(element.get("raison"))
+        if isinstance(numero, int) and not isinstance(numero, bool) and raison:
+            if numero - 1 in fautifs:
+                abstentions.setdefault(numero - 1, raison)
+    return abstentions
+
+
+def _abstention(constat: Constat, raison: str) -> Constat:
+    """Le constat d'une commande jouée qui n'a rien prouvé : « non joué », sa raison, sa sortie.
+
+    La commande et son code restent : c'est ce qu'elle a rendu, et ce que la personne
+    relit pour juger l'abstention.
+    """
+    code = f" (code {constat.code})" if constat.code is not None else ""
+    rendu = f"\nCe que la commande a rendu{code} :\n{constat.preuve}" if constat.preuve else ""
+    return replace(constat, etat=CONSTAT_NON_JOUE, preuve=f"abstention — {raison}{rendu}")
+
+
+#: Ce qu'une vérification avait conclu d'un critère, tel que la recette le cite (#1680).
+_CONCLUSION_ANTERIEURE = {
+    CONSTAT_TENU: "qui l'avait tenu",
+    CONSTAT_NON_TENU: "qui l'avait dit non tenu",
+    CONSTAT_NON_JOUE: "qui n'avait pas pu le vérifier",
+}
+
+
+def _pourquoi_pas_repris(anterieur: ConstatAnterieur) -> str:
+    """Pourquoi Maestro ne reprend pas ce constat : l'arbre a changé, ou il n'était pas tenu."""
+    raisons = []
+    if anterieur.meme_arbre is not True:
+        raisons.append(f"sa vérification a jugé {anterieur.arbre()}")
+    if not anterieur.constat.tenu:
+        raisons.append(f"elle ne l'avait pas tenu ({anterieur.constat.en_ligne()})")
+    return ", et ".join(raisons)
+
+
+def _nommer_les_ecarts(
+    controles: Sequence[Controle],
+    constats: Sequence[Constat],
+    anterieurs: Sequence[ConstatAnterieur],
+) -> list[Constat]:
+    """Les constats de la recette, chacun avec ce qui sépare son verdict de la vérification (#1680).
+
+    Deux juges du même critère qui divergent sans rien en dire laissent la personne
+    devant deux chiffres. La recette nomme donc ce qui les sépare — l'arbre (la fusion
+    l'a changé), le contrôle (elle n'a pas joué la même commande), ou ni l'un ni l'autre,
+    et c'est alors l'exécution qui a changé d'avis. Un critère qu'elle dit non tenu
+    sans qu'aucune vérification ne l'ait constaté le dit aussi : elle est seule à
+    l'avoir jugé. Un constat repris, ou renvoyé sans contrôle, a déjà dit d'où il vient.
+    """
+    par_numero = {anterieur.numero: anterieur for anterieur in anterieurs}
+    nommes: list[Constat] = []
+    for controle, constat in zip(controles, constats, strict=True):
+        ajout = ""
+        anterieur = par_numero.get(controle.anterieur)
+        if not (controle.joue or controle.lecture):
+            pass
+        elif anterieur is not None and anterieur.constat.etat != constat.etat:
+            ajout = _ecart(controle, anterieur)
+        elif anterieur is None and constat.etat == CONSTAT_NON_TENU:
+            ajout = (
+                "Aucune vérification de tâche ne constatait ce critère : la recette est "
+                "seule à l'avoir jugé."
+            )
+        if ajout:
+            constat = replace(
+                constat, preuve=f"{constat.preuve}\n{ajout}" if constat.preuve else ajout
+            )
+        nommes.append(constat)
+    return nommes
+
+
+def _ecart(controle: Controle, anterieur: ConstatAnterieur) -> str:
+    """Ce qui sépare le verdict de la recette de celui d'une vérification du même critère."""
+    avant = anterieur.constat
+    moyen = f"par `{avant.commande}`" if avant.commande else "à la lecture"
+    separe = []
+    if anterieur.meme_arbre is None:
+        separe.append(
+            "peut-être l'arbre — Maestro n'a pas pu comparer celui qu'elle a jugé au livrable "
+            "intégré"
+        )
+    elif not anterieur.meme_arbre:
+        separe.append("l'arbre — le livrable intégré n'est plus celui qu'elle a jugé")
+    if controle.commande != avant.commande:
+        joue = f"a joué {controle.en_ligne()}" if controle.joue else "l'a lu"
+        separe.append(f"le contrôle — la recette {joue}")
+    detail = (
+        " ; ".join(separe)
+        if separe
+        else "ni l'arbre ni le contrôle — la même commande a rendu un autre verdict sur le "
+        "même arbre"
+    )
+    return (
+        f"Ce qui la sépare de la vérification de la tâche « {anterieur.titre} » "
+        f"(livraison n° {anterieur.livraison}), {_CONCLUSION_ANTERIEURE[avant.etat]} "
+        f"{moyen} : {detail}."
+    )
 
 
 def _traduire_chemins(texte: str, de: Path, vers: Path) -> str:
@@ -1319,10 +1555,16 @@ def _constat_joue(
     if sur and resultat.code != 0:
         sortie = f"jouée{sur}" + (f"\n{sortie}" if sortie else "")
     if resultat.expiree:
+        # Coupée avant son verdict, elle s'abstient (#1680) : une suite arrêtée à 15 %
+        # n'a vu échouer aucun test, et ce n'est pas à l'agent d'en répondre.
         return Constat(
             critere=controle.critere,
-            etat=CONSTAT_NON_TENU,
-            preuve=f"elle n'a pas rendu la main en {delai:g} s ; Maestro l'a arrêtée"
+            etat=CONSTAT_NON_JOUE,
+            preuve=(
+                f"coupée — elle n'a pas rendu la main en {delai:g} s, et Maestro l'a "
+                "arrêtée avant son verdict : elle ne prouve rien du critère, ni tenu ni "
+                "non tenu"
+            )
             + (f"\n{sortie}" if sortie else ""),
             commande=controle.commande,
         )
@@ -1426,6 +1668,7 @@ def _prompt_etablir(
     livraison: Livraison,
     amont: Sequence[Amont],
     brief: Brief | None = None,
+    anterieurs: Sequence[ConstatAnterieur] = (),
 ) -> str:
     """Ce que le vérificateur lit à la première livraison."""
     lignes = [_bloc_tache(tache, brief), *_bloc_outillage(livraison), _bloc_livraison(livraison)]
@@ -1436,8 +1679,32 @@ def _prompt_etablir(
         )
     if amont:
         lignes.append(_FORME_RENVOIS.replace("{amont}", _bloc_amont(amont)))
+    if anterieurs:
+        lignes.append(_FORME_ANTERIEURS.replace("{anterieurs}", _bloc_anterieurs(anterieurs)))
     lignes.append(_FORME_ETABLIR)
     return "\n\n".join(lignes)
+
+
+#: Ce que la recette du run lit des vérifications des tâches (#1680) : leurs constats,
+#: et comment renvoyer un critère à celui qui le constate déjà. Ce n'est pas le modèle
+#: qui décide de ne pas rejouer : il dit quel constat porte sur quel critère, et Maestro
+#: reprend celui qui est tenu sur un arbre identique (`ConstatAnterieur.reprenable`).
+_FORME_ANTERIEURS = """\
+Les tâches du run ont déjà été vérifiées en les exécutant. Voici les constats de la \
+dernière vérification de chacune, numérotés, avec l'arbre qu'elle a jugé :
+<verifications>
+{anterieurs}
+</verifications>
+Pour chaque critère qu'un de ces constats constate déjà — le même critère, et non un \
+voisin —, ajoute à son contrôle "verification": "<son numéro>". Un constat tenu sur un \
+arbre identique au livrable intégré n'est pas rejoué : Maestro le reprend tel quel, et \
+tu n'écris alors pour ce critère que {"critere": "C1 — …", "verification": "V1"}. Pour \
+tout autre critère, écris le contrôle comme d'habitude, avec le numéro du constat qui \
+portait sur lui s'il en existe un : Maestro dira ce qui sépare les deux verdicts."""
+
+
+def _bloc_anterieurs(anterieurs: Sequence[ConstatAnterieur]) -> str:
+    return "\n".join(anterieur.en_ligne() for anterieur in anterieurs)
 
 
 def _prompt_relire(
@@ -1598,12 +1865,17 @@ def _bloc_amont(amont: Sequence[Amont]) -> str:
 
 
 def _lire_etablissement(
-    texte: str, amont: Sequence[Amont]
+    texte: str, amont: Sequence[Amont], anterieurs: Sequence[ConstatAnterieur] = ()
 ) -> tuple[tuple[Controle, ...], dict[int, Constat], tuple[Renvoi, ...], str]:
     """Les contrôles établis, les lectures jugées, les renvois — ou l'empêchement.
 
     Un contrôle sans critère est écarté ; aucun contrôle lisible est un
     **empêchement**, jamais un accord : la livraison n'est alors pas vérifiée.
+
+    Un contrôle renvoyé à un constat antérieur **reprenable** (#1680) est jugé ici,
+    comme une lecture : son constat est celui de la vérification, repris sans rejouer
+    sa commande, même si le modèle en a écrit une. Renvoyé à un constat que Maestro ne
+    reprend pas, sans contrôle écrit, il n'est pas vérifié, et la preuve dit pourquoi.
     """
     objet = _objet_json(texte or "")
     brut = objet.get("controles") if isinstance(objet, dict) else None
@@ -1612,6 +1884,7 @@ def _lire_etablissement(
             "le vérificateur n'a pas rendu de contrôles lisibles "
             f"({(texte or '').strip()[:160] or 'réponse vide'})"
         )
+    par_numero = {anterieur.numero: anterieur for anterieur in anterieurs}
     controles: list[Controle] = []
     lectures: dict[int, Constat] = {}
     for element in brut:
@@ -1620,7 +1893,25 @@ def _lire_etablissement(
         critere = _texte(element.get("critere"))
         if not critere:
             continue
+        anterieur = par_numero.get(_texte(element.get("verification")))
+        numero = anterieur.numero if anterieur is not None else ""
         commande = _texte(element.get("commande"))
+        if anterieur is not None and anterieur.reprenable:
+            controles.append(Controle(critere=critere, anterieur=numero))
+            lectures[len(controles) - 1] = anterieur.repris(critere)
+            continue
+        if anterieur is not None and not commande and not _texte(element.get("lecture")):
+            controles.append(Controle(critere=critere, anterieur=numero))
+            lectures[len(controles) - 1] = Constat(
+                critere=critere,
+                etat=CONSTAT_NON_JOUE,
+                preuve=(
+                    f"renvoyé à {numero}, que Maestro ne reprend pas — "
+                    f"{_pourquoi_pas_repris(anterieur)} — et aucun contrôle n'a été écrit "
+                    "pour le constater ici"
+                ),
+            )
+            continue
         if commande:
             sonde = _texte(element.get("sonde"))
             demarrage = element.get("demarrage") is True or bool(sonde)
@@ -1633,10 +1924,13 @@ def _lire_etablissement(
                     # Un service se démarre là où l'agent l'a construit : un clone neuf
                     # ne vaut que pour une commande qui rend la main (#1507).
                     clone_neuf=element.get("clone_neuf") is True and not demarrage,
+                    anterieur=numero,
                 )
             )
             continue
-        controles.append(Controle(critere=critere, lecture=_texte(element.get("lecture"))))
+        controles.append(
+            Controle(critere=critere, lecture=_texte(element.get("lecture")), anterieur=numero)
+        )
         lectures[len(controles) - 1] = _constat_lu(critere, element)
     if not controles:
         return (), {}, (), "le vérificateur n'a établi aucun contrôle"
@@ -1821,6 +2115,11 @@ class Recette:
     travail porte et ce qui n'est pas commité — de quoi juger la convention —, et ce
     qu'elle a changé de la comptabilité de Maestro ; `None` hors d'une copie de travail
     d'un projet outillé.
+
+    `empreinte_de` (#1680) relève l'empreinte de l'arbre livré, avant qu'aucun contrôle
+    n'y soit joué (`maestro.sandbox.projet.empreinte_du_livrable`) : le verdict la porte,
+    et c'est par elle que la recette du run sait si l'arbre qu'elle juge est celui que
+    cette vérification a jugé. `None` : un espace qui n'est le projet de personne.
     """
 
     verificateur: VerificateurTaches
@@ -1833,6 +2132,7 @@ class Recette:
     brief: Brief | None = None
     outillage: str = ""
     etat_de_la_branche: Callable[[Path], str] | None = None
+    empreinte_de: Callable[[Path], str] | None = None
     controles: tuple[Controle, ...] | None = None
     livraisons: int = 0
     meilleur: int = -1
@@ -1887,9 +2187,16 @@ class Recette:
                 else ""
             ),
         )
+        empreinte = (
+            await asyncio.to_thread(self.empreinte_de, espace)
+            if espace is not None and self.empreinte_de is not None
+            else ""
+        )
         controles, verdict = await self._verifier(livraison)
         if controles:
             self.controles = controles
+        if empreinte:
+            verdict = replace(verdict, empreinte=empreinte)
         self.dernier = verdict
         if self.on_verdict is not None:
             self.on_verdict(verdict, self.livraisons)
