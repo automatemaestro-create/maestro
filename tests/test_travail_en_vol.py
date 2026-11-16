@@ -70,6 +70,7 @@ from maestro.controltower.progression import STATUT_INTERROMPUE
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import EXECUTION_EN_COURS
 from maestro.engine import STATUT_EN_COURS
+from maestro.orchestrator.schema import Brief
 from maestro.projets.application import ApplicationRefusee
 from maestro.projets.modele import Projet
 from maestro.projets.reglages import ReglagesProjetsStore
@@ -618,9 +619,18 @@ def _avec_convention(projet: Projet, convention: str) -> None:
 
 
 def _sauvegarde_par_un_hote_mort(
-    tmp_path: Path, redacteur: _Redacteur, monkeypatch: pytest.MonkeyPatch, delai_s: float = 20.0
+    tmp_path: Path,
+    redacteur: _Redacteur,
+    monkeypatch: pytest.MonkeyPatch,
+    delai_s: float = 20.0,
+    *,
+    brief: Brief | None = None,
+    format_git: str = "%s",
 ) -> str:
-    """Un hôte mort seul, le travail en vol porté : rend le sujet du commit de sauvegarde."""
+    """Un hôte mort seul, le travail en vol porté : rend le commit de sauvegarde (`format_git`).
+
+    `brief` est le cadrage retenu du run, celui que ses tâches ont lu (#1679).
+    """
     from maestro.controltower import executions
     from maestro.projets.commits import RedacteurDeCommits
 
@@ -639,13 +649,17 @@ def _sauvegarde_par_un_hote_mort(
         redacteur=RedacteurDeCommits(redacteur, modele="modele-du-test"),
     )
     pilote._consigne(run_id, EXECUTION_EN_COURS, "Recettes", "lancée depuis la Control Tower")
+    if brief is not None:
+        execution = state.execution(run_id)
+        assert execution is not None
+        execution.brief = brief
     _en_vol(state, run_id, projet)
     with _tache_tuee(projet) as tuee:
         (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
         asyncio.run(pilote._ramasser())
     racine = Path(projet.racine)
     assert _fichiers_de_la_branche(racine) == {"src/recettes.ts"}
-    return _git(racine, "log", "-1", "--format=%s", branche_de_tache(TACHE)).strip()
+    return _git(racine, "log", "-1", f"--format={format_git}", branche_de_tache(TACHE)).strip()
 
 
 def test_la_sauvegarde_d_un_travail_en_vol_suit_la_convention_choisie(
@@ -660,6 +674,28 @@ def test_la_sauvegarde_d_un_travail_en_vol_suit_la_convention_choisie(
     (prompt,) = redacteur.prompts
     assert "<convention>Conventional Commits</convention>" in prompt
     assert "« Écrire les données »" in prompt
+
+
+def test_la_sauvegarde_cite_le_ticket_que_le_brief_du_run_nomme(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1679 : le rédacteur voit la demande du run, et le pied qu'il rend entre au commit."""
+    redacteur = _Redacteur("chore(recettes): sauvegarde le travail en cours\n\nRefs #1592")
+    brief = Brief(
+        goal="Corriger le ticket #1592 : les recettes s'enregistrent",
+        in_scope=(),
+        out_of_scope=(),
+        acceptance_criteria=("Les recettes sont écrites",),
+    )
+
+    message = _sauvegarde_par_un_hote_mort(
+        tmp_path, redacteur, monkeypatch, brief=brief, format_git="%B"
+    )
+
+    assert message == "chore(recettes): sauvegarde le travail en cours\n\nRefs #1592"
+    (prompt,) = redacteur.prompts
+    assert "<demande>" in prompt
+    assert "#1592" in prompt.split("<demande>", 1)[1]
 
 
 def test_un_modele_trop_lent_laisse_la_sauvegarde_sous_le_message_de_maestro(
