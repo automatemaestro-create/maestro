@@ -92,6 +92,7 @@ from maestro.outillage.detection import (
     usage_de_script,
 )
 from maestro.outillage.modele import (
+    ORIGINE_PRESCRITE,
     USAGES,
     Analyse,
     Bornes,
@@ -228,6 +229,13 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
     recommandation sont refaits sur les constats complétés, par les mêmes
     fonctions que l'analyse — `recommander` ne sait pas d'où vient un constat.
 
+    **Les instructions du projet sont sa parole sur ses agents** (#1678), et c'est la
+    seule chose qui retire un indice : une commande qu'elles prescrivent prend la place
+    de la même commande lue par les tables, et un usage qu'elles écartent perd ses
+    commandes, d'où qu'elles viennent. Les deux ont été confrontés à un fichier
+    d'instructions lu (`maestro.outillage.exploration`) ; un modèle qui se tait sur un
+    indice ne le retire toujours pas.
+
     Une lecture qui n'a rien retenu (le modèle muet, ou qui n'a rien trouvé de
     plus) rend l'analyse telle quelle, à sa `lecture` près : c'est elle qui dit
     ce qui s'est passé.
@@ -237,6 +245,17 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
     noms_langages = {langage.nom.casefold() for langage in indices.langages}
     noms_gestionnaires = {g.nom.casefold() for g in indices.gestionnaires}
     commandes_vues = {(c.usage, c.commande) for c in indices.commandes}
+    prescrites = {
+        (c.usage, c.commande) for c in retenus.commandes if c.origine == ORIGINE_PRESCRITE
+    }
+    exclus = {piece.nom for piece in retenus.usages_exclus}
+    des_tables = tuple(c for c in indices.commandes if (c.usage, c.commande) not in prescrites)
+    lues = tuple(
+        c
+        for c in retenus.commandes
+        if (c.usage, c.commande) in prescrites or (c.usage, c.commande) not in commandes_vues
+    )
+    commandes = tuple(c for c in des_tables + lues if c.usage not in exclus)
     ci_vues = {piece.chemin for piece in indices.ci}
     ci = indices.ci + tuple(p for p in retenus.ci if p.chemin not in ci_vues)
     conventions_vues = {piece.chemin.casefold() for piece in indices.conventions}
@@ -246,10 +265,7 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
         langages=_langages_completes(indices.langages + ajoutes) if ajoutes else indices.langages,
         gestionnaires=indices.gestionnaires
         + tuple(g for g in retenus.gestionnaires if g.nom.casefold() not in noms_gestionnaires),
-        commandes=_ordonner(
-            indices.commandes
-            + tuple(c for c in retenus.commandes if (c.usage, c.commande) not in commandes_vues)
-        ),
+        commandes=_ordonner(commandes),
         ci=ci,
         forge=_forge(indices.vcs, ci),
         conventions=indices.conventions
@@ -257,6 +273,11 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
             p for p in retenus.conventions if p.chemin.casefold() not in conventions_vues
         ),
         convention_de_commit=indices.convention_de_commit or retenus.convention_de_commit,
+        usages_exclus=indices.usages_exclus + retenus.usages_exclus,
+        fichiers_gardes=indices.fichiers_gardes + retenus.fichiers_gardes,
+        dossier_scripts=_scripts_decharges(
+            indices.dossier_scripts, exclus | {usage for usage, _ in prescrites}
+        ),
     )
     return replace(
         analyse,
@@ -264,6 +285,26 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
         constats=constats,
         recommandation=recommander(constats),
         lecture=lecture,
+    )
+
+
+def _scripts_decharges(dossier: DossierScripts, usages: set[str]) -> DossierScripts:
+    """Les scripts du projet, ceux de `usages` déchargés de leur usage (#1678).
+
+    Les usages que les instructions prescrivent ou écartent : ce qu'elles disent pour un
+    usage est ce que son skill écrit, et lui seul. Les scripts restent dans la liste — le
+    dossier les porte toujours, c'est une lecture —, mais sans usage, aucun skill ne les
+    appelle plus. La même règle que pour une correction de la personne
+    (`maestro.outillage.correction`).
+    """
+    if not any(piece.role in usages for piece in dossier.scripts):
+        return dossier
+    return replace(
+        dossier,
+        scripts=tuple(
+            replace(piece, role="") if piece.role in usages else piece
+            for piece in dossier.scripts
+        ),
     )
 
 
@@ -688,18 +729,25 @@ def _commandes_par_defaut(
     )
 
 
-def _ordonner(commandes: tuple[Commande, ...]) -> tuple[Commande, ...]:
-    """Les commandes rangées par usage, **déclarées avant conventions**.
+#: Le rang d'une provenance dans un usage : ce que les instructions prescrivent aux
+#: agents (#1678), puis ce que le projet déclare, puis le reste — dans l'ordre lu,
+#: puisque le tri est stable.
+_RANG_ORIGINE: dict[str, int] = {ORIGINE_PRESCRITE: 0, "declaree": 1}
 
-    C'est cet ordre qui fait que `Constats.commande_de` rend la commande du
-    projet plutôt que celle de l'outil : la règle vit ici, une fois, plutôt que
-    dans chaque appelant qui aurait à retrier.
+
+def _ordonner(commandes: tuple[Commande, ...]) -> tuple[Commande, ...]:
+    """Les commandes rangées par usage, **prescrites, puis déclarées, avant conventions**.
+
+    C'est cet ordre qui fait que `Constats.commande_de` rend la commande que les
+    instructions du projet prescrivent, à défaut celle qu'il déclare, plutôt que
+    celle de l'outil : la règle vit ici, une fois, plutôt que dans chaque appelant
+    qui aurait à retrier.
     """
     rang = {usage: index for index, usage in enumerate(USAGES)}
     return tuple(
         sorted(
             commandes,
-            key=lambda c: (rang.get(c.usage, len(rang)), c.origine != "declaree"),
+            key=lambda c: (rang.get(c.usage, len(rang)), _RANG_ORIGINE.get(c.origine, 2)),
         )
     )
 

@@ -313,6 +313,37 @@ sources à maintenir et à régénérer, pour une ergonomie que le skill rend d�
 cas. C'est une option de génération que le manifeste rend ajoutable plus tard sans rien défaire ;
 ce n'est pas le défaut.
 
+### 3.5bis Les commandes que le projet prescrit à ses agents (#1678)
+
+Un projet importé qui écrit déjà ses instructions (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`…) y dit
+souvent comment ses agents installent, testent et vérifient. Il peut demander l'interpréteur de son
+environnement plutôt que l'outil nu, le périmètre du changement plutôt que la suite entière, ou un
+script du projet. Ces commandes **font foi** sur celles que les tables déduisent de la configuration
+(`[tool.pytest]` → `pytest`, `[tool.mypy]` → `mypy .`). Mesuré sur le dépôt de Maestro importé
+(#1587) : l'outillage prescrivait `pytest` nu, soit 1 h 23 de suite entière, là où `CLAUDE.md`
+demande le filet du diff.
+
+- **Qui le dit** : le modèle, en lisant le projet (`lire_le_projet`). Il rend la commande avec le
+  fichier d'instructions pour fichier lu, et elle vaut pour chaque usage que ce fichier couvre. La
+  confrontation la retient `prescribed` seulement si ce fichier est l'un des fichiers d'instructions
+  du projet : un script ou un README ne prescrivent rien. Une commande prescrite passe avant toute
+  autre de son usage. C'est elle que les skills et `AGENTS.md` écrivent (« prescrite par
+  `CLAUDE.md` »), et elle est jouée avant d'être écrite comme les autres (`verifications`, §4.1).
+  Aucun lexique : la lecture juge, l'exécution vérifie.
+- **Ce qu'elles écartent** : un usage que les instructions n'appliquent pas, comme un formateur ou un
+  vérificateur qu'elles n'exigent pas, revient `EXCLUDED`. L'outillage n'en écrit aucune commande. Un
+  usage à la fois prescrit et écarté garde sa prescription.
+- **Ce que le projet garde** : un budget ou un test peut garder le fichier où Maestro ajouterait un
+  bloc, comme le pont `CLAUDE.md`. Le modèle le rend `GUARDED`, avec le fichier lu qui le dit, et la
+  pièce le dit **avant** d'être écrite (« ⚠ le projet garde `CLAUDE.md`… »). La personne la refuse si
+  le fichier n'a pas la place. Maestro ne retranche rien de ce fichier à sa place.
+- **Un fichier d'instructions se lit en entier** : servi tronqué, il se relit pour en avoir la suite.
+  C'est une lecture de plus, sous la même borne (`lectures_max`).
+
+Ne bougent pas : Maestro ne recopie pas les instructions dans `AGENTS.md`, il les nomme (« Lis-les en
+entier »). La commande déduite reste dans les constats, derrière la prescrite, et n'est jamais
+présentée comme celle du projet.
+
 ### 3.6 L'arbre, en entier
 
 ```

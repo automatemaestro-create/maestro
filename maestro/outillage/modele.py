@@ -94,6 +94,16 @@ ORIGINE_DITE = "dite"
 #: une commande proposée passer pour dite par la personne.
 ORIGINE_PROPOSEE = "proposee"
 
+#: La cinquième (#1678) : la commande est **prescrite aux agents** par un fichier
+#: d'instructions du projet (`CLAUDE.md`…) que la lecture a ouvert — l'interpréteur de son
+#: environnement, le périmètre du changement plutôt que la suite entière. C'est la parole du
+#: projet sur la façon dont ses agents travaillent : elle passe devant ce que ses fichiers
+#: de configuration déclarent (`analyse._ordonner`). Le modèle ne la revendique pas — il
+#: rend une commande `declaree` qui cite le fichier —, c'est le disque qui la reconnaît :
+#: le fichier cité est l'un des fichiers d'instructions du projet. Hors
+#: d'`ORIGINES_COMMANDE` pour cette raison. Nom neuf, donc en anglais (docs/55 §4, règle 3).
+ORIGINE_PRESCRITE = "prescribed"
+
 #: L'état d'une entrée recommandée. `deja-present` est celui qui compte : c'est
 #: la forme que prend « ce que le projet porte déjà est reconnu plutôt que
 #: dupliqué » — l'entrée reste dans la réponse, avec le chemin de ce qui existe,
@@ -427,6 +437,14 @@ class Constats:
     dossier_scripts: DossierScripts = field(default_factory=DossierScripts)
     outillage_present: tuple[Piece, ...] = ()
     convention_de_commit: ConventionDeCommit | None = None
+    #: Les usages que les instructions du projet **écartent** (#1678) — un formateur que le
+    #: dépôt n'applique pas : `nom` est l'usage, `chemin` le fichier d'instructions lu,
+    #: `role` ce qu'il y dit. Aucune commande de ces usages n'est écrite.
+    usages_exclus: tuple[Piece, ...] = ()
+    #: Les fichiers du projet que le projet **garde** (#1678) — un budget, un contenu
+    #: qu'un test vérifie : `nom` est le fichier gardé, `chemin` le fichier lu qui le dit,
+    #: `role` ce qu'il exige. Une pièce qui y écrirait un bloc le dit avant d'être écrite.
+    fichiers_gardes: tuple[Piece, ...] = ()
 
     def commande_de(self, usage: str) -> Commande | None:
         """La première commande constatée pour `usage`, `None` s'il n'y en a aucune.
@@ -438,8 +456,8 @@ class Constats:
         return next((c for c in self.commandes if c.usage == usage), None)
 
     def to_dict(self) -> dict[str, Any]:
-        """Les constats en JSON."""
-        return {
+        """Les constats en JSON — usages écartés et fichiers gardés seulement s'il y en a."""
+        forme: dict[str, Any] = {
             "langages": [langage.to_dict() for langage in self.langages],
             "gestionnaires": [g.to_dict() for g in self.gestionnaires],
             "commandes": [commande.to_dict() for commande in self.commandes],
@@ -455,6 +473,11 @@ class Constats:
                 else None
             ),
         }
+        if self.usages_exclus:
+            forme["excluded_usages"] = [piece.to_dict() for piece in self.usages_exclus]
+        if self.fichiers_gardes:
+            forme["guarded_files"] = [piece.to_dict() for piece in self.fichiers_gardes]
+        return forme
 
 
 @dataclass(frozen=True)
