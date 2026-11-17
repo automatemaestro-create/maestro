@@ -447,11 +447,12 @@ def depot(tmp_path: Path) -> Depot:
     git("config", "user.name", "Maestro Test", cwd=racine)
 
     # Les vrais scripts, dans la vraie arborescence (worktree.sh appelle lib.sh en relatif, et
-    # `gc` source la règle de l'état des stacks, #1456).
+    # `gc` source la règle de l'état des stacks, #1456, qui lit la table des écoutes, #1696).
     for relatif in (
         "scripts/git/worktree.sh",
         "scripts/gitlab/lib.sh",
         "scripts/controltower/etat-stack.sh",
+        "scripts/controltower/ecoutes.py",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)
@@ -467,6 +468,14 @@ def depot(tmp_path: Path) -> Depot:
         dossier = racine / lourd
         dossier.mkdir(parents=True)
         (dossier / "marqueur.txt").write_text(lourd, encoding="utf-8", newline="\n")
+    # Sous Windows, la table des écoutes se lit avec le Python du venv du dépôt (#1696) : celui du
+    # dépôt d'essai est le lanceur du venv qui joue la suite, avec sa configuration. Rien de plus :
+    # le lecteur n'a que la bibliothèque standard. Ailleurs, `/proc` se lit sans Python.
+    configuration = Path(sys.prefix) / "pyvenv.cfg"
+    if os.name == "nt" and configuration.is_file():
+        (racine / ".venv" / "Scripts").mkdir()
+        shutil.copy2(sys.executable, racine / ".venv" / "Scripts" / "python.exe")
+        shutil.copy2(configuration, racine / ".venv" / "pyvenv.cfg")
 
     # Copie conforme des motifs du dépôt, y compris l'ABSENCE de barre oblique finale sur `.venv`
     # et `.tools` (#333) : ils sont partagés par un LIEN, que git ne voit comme un répertoire que
@@ -1274,6 +1283,38 @@ def test_gc_ne_retire_jamais_l_etat_d_une_stack_vivante(depot: Depot, tmp_path: 
     assert not depot.worktree().exists()
     assert etat.exists()
     assert "état de stack" not in acheve.stdout
+    # Gardé parce que la table l'a VU écouter, pas parce qu'elle ne s'est pas lue (#1696).
+    assert "dont on ne voit pas les ports" not in acheve.stdout, acheve.stdout
+
+
+def test_gc_dit_une_table_des_ecoutes_illisible_et_garde_l_etat(
+    depot: Depot, tmp_path: Path
+) -> None:
+    """#1696 — la table refusée, et pas de `netstat` qui réponde : `gc` ne conclut pas qu'aucun
+    port n'écoute. Il garde l'état et le dit, même quand il n'a rien retiré d'autre."""
+    temp = tmp_path / "temp"
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+    etat = _etat_de_stack(temp, "8097-3097", depot.worktree())
+    refus = tmp_path / "bin" / "refus"
+    refus.parent.mkdir()
+    refus.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+    refus.chmod(0o755)
+    netstat = refus.parent / "netstat"
+    netstat.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+    netstat.chmod(0o755)
+    environnement = {
+        **_avec_etat_stack(temp),
+        "MAESTRO_TABLE_DES_ECOUTES": refus.as_posix(),
+        "PATH": str(refus.parent) + os.pathsep + os.environ.get("PATH", ""),
+    }
+
+    acheve = depot.lance("gc", environnement=environnement)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not depot.worktree().exists()
+    assert etat.exists()
+    assert "aucune écoute ne se lit" in acheve.stdout, acheve.stdout
+    assert "l'état des stacks dont on ne voit pas les ports reste" in acheve.stdout
 
 
 def test_gc_check_ne_touche_pas_a_l_etat_des_stacks(depot: Depot, tmp_path: Path) -> None:

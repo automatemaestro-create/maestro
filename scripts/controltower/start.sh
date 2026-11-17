@@ -213,7 +213,8 @@ SURVIVANTS=""
 MARQUEUR_NAVIGATEUR="maestro-profil-navigateur-${PORT_API}-${PORT_UI}"
 PROFIL_NAVIGATEUR="$ETAT_DIR/$MARQUEUR_NAVIGATEUR"
 
-# Windows (Git Bash) ou Unix : le repérage des PID par port et le kill diffèrent.
+# Windows (Git Bash) ou Unix : la description d'un processus et le kill diffèrent (la table des
+# écoutes, elle, se lit dans `etat-stack.sh`).
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
   *) WINDOWS=0 ;;
@@ -228,23 +229,30 @@ else
   PYTHON="$RACINE/.venv/bin/python"
 fi
 
-# Les PID qui ÉCOUTENT sur le port donné (rien d'autre : ni clients, ni autres ports).
+# Les PID qui ÉCOUTENT sur le port donné (rien d'autre : ni clients, ni autres ports), dans
+# PIDS_SUR_PORT, lus dans la table des écoutes d'`etat-stack.sh` (#1696). Une table qui ne s'est pas
+# lue entière se dit, sous le préfixe de l'appelant : le constat qui suit juge ce qu'elle a manqué.
 pids_sur_port() {
   port="$1"
-  if [ "$WINDOWS" = 1 ]; then
-    netstat -ano 2>/dev/null \
-      | awk -v port="$port" '$1 == "TCP" && $4 == "LISTENING" && $2 ~ (":" port "$") {print $5}' \
-      | sort -u
-  else
-    lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null | sort -u || true
+  PIDS_SUR_PORT=""
+  code_table=0
+  etat_stack_ecoutes || code_table=$?
+  if [ "$code_table" != 0 ]; then
+    echo "[$2] ⚠ $ETAT_STACK_ECOUTES_AVIS"
   fi
+  while read -r port_lu pid_lu; do
+    [ "$port_lu" = "$port" ] || continue
+    case "$pid_lu" in '' | *[!0-9]*) continue ;; esac
+    case " $PIDS_SUR_PORT " in *" $pid_lu "*) ;; *) PIDS_SUR_PORT="$PIDS_SUR_PORT $pid_lu" ;; esac
+  done <<<"$ETAT_STACK_ECOUTES"
 }
 
 # Libère le port d'un service de la stack (« API » ou « UI ») : l'ancienne session qu'on remplace,
 # qu'on arrête ou — préfixe « panne » — qu'on coupe. Trois temps, dans cet ordre (#1579) :
 #   1. son TÉMOIN, qui est à nous (voir FICHIER_PID_API et CARTE_UI) ;
-#   2. la table des ports du système, pour ce qu'aucun témoin ne désigne — une session lancée
-#      avant eux. Elle peut ne rien voir, et c'est pourquoi elle passe en second ;
+#   2. la table des écoutes du système, pour ce qu'aucun témoin ne désigne — une session lancée
+#      avant eux. Lue par `etat-stack.sh`, elle peut ne pas se lire entière (elle le dit), et c'est
+#      pourquoi elle passe en second ;
 #   3. le CONSTAT : le service répond-il encore ? Ce qu'aucun des deux ne désigne n'est pas tué au
 #      jugé, mais cela se dit, et SURVIVANTS le compte : l'appelant ne raconte pas un arrêt qui n'a
 #      pas eu lieu, et ne démarre pas une API neuve qu'une ancienne empêcherait de s'attacher.
@@ -257,7 +265,8 @@ liberer_port() {
     API) viser_l_api "$prefixe" ;;
     UI) viser_l_ui "$prefixe" ;;
   esac
-  for pid in $(pids_sur_port "$port"); do
+  pids_sur_port "$port" "$prefixe"
+  for pid in $PIDS_SUR_PORT; do
     case " $VISES " in *" $pid "*) continue ;; esac
     annoncer_l_arret "$prefixe" "$quoi" "$port" "PID ${pid}"
     tuer_pid "$pid"
@@ -1208,6 +1217,9 @@ if [ "$ETAT_STACK_RETIRES" -gt 0 ] || [ "$ETAT_STACK_RESISTANTS" -gt 0 ]; then
     ligne_etat="$ligne_etat ; ${ETAT_STACK_RESISTANTS} résistant(s), repris au prochain démarrage"
   fi
   echo "$ligne_etat"
+fi
+if [ -n "$ETAT_STACK_PORTS_AVIS" ]; then
+  echo "[nettoyage] ⚠ $ETAT_STACK_PORTS_AVIS — l'état des stacks dont on ne voit pas les ports reste"
 fi
 
 mkdir -p "$LOG_DIR" "$ETAT_DIR"
