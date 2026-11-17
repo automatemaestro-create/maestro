@@ -912,6 +912,109 @@ def test_le_delai_d_une_commande_se_prend_du_livrable(tmp_path: Path) -> None:
     assert grille.ligne(gr.AXE_INSTALLATION).etat == gr.TENU
 
 
+#: Ce que le dépôt de Maestro déclare de sa suite (#1695) : son verdict se rend sous Linux, et
+#: rien de ce que le lecteur retient ne l'y joue depuis le poste.
+_AILLEURS_LINUX = (
+    "ELSEWHERE: TESTS=Linux (CLAUDE.md : le job pytest joue dans un conteneur Linux, "
+    "l'OS du verdict), LINT=Linux (même source), PAGES=Linux, TESTS=macOS (second)\n"
+)
+
+
+@AVEC_GIT
+def test_un_echec_dont_le_livrable_rend_le_verdict_ailleurs_ne_tranche_pas(tmp_path: Path) -> None:
+    """#1695 : la suite de Maestro, jouée en natif sous Windows, échouait sur quatre tests du
+    poste, et la ligne Tests disait « manque » quand c'est le poste qui parlait. Le livrable
+    déclare que ce verdict se rend sous Linux : un échec ici ne dit rien de lui, un succès
+    est tenu, et une ligne dont il ne déclare rien de tel reste jugée."""
+    commandes = _COMMANDES + _AILLEURS_LINUX
+    joueur = Joueur({"npm test": 1, "npm run typecheck": 1})
+    grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), joueur)
+
+    tests = grille.ligne(gr.AXE_TESTS)
+    assert tests is not None and tests.etat == gr.NON_TRANCHE
+    assert "code 1" in tests.detail
+    assert "Linux" in tests.detail and "l'OS du verdict" in tests.detail
+    assert "macOS" not in tests.detail  # le premier de chaque ligne fait foi
+    # Un succès, lui, est tenu : rien ne le dément là où le livrable rend son verdict.
+    assert grille.ligne(gr.AXE_LINT).etat == gr.TENU
+    # Le livrable ne dit rien de tel de son typage : son échec sur le poste reste un manque.
+    assert grille.ligne(gr.AXE_TYPES).etat == gr.MANQUE
+    assert grille.jugees == len(gr.AXES) - 1
+
+
+@AVEC_GIT
+def test_sans_verdict_declare_ailleurs_un_echec_sur_le_poste_reste_un_manque(
+    tmp_path: Path,
+) -> None:
+    """L'hébergement de la CI n'est pas une déclaration (#1695) : sans `ELSEWHERE`, la ligne
+    qui échoue sur le poste manque — c'est ce que le banc existe pour voir (bilan de p5)."""
+    grille = _rejouer(tmp_path, LecteurFactice(), Joueur({"npm test": 1}))
+    assert grille.ligne(gr.AXE_TESTS).etat == gr.MANQUE
+
+
+@AVEC_GIT
+def test_une_installation_qui_echoue_hors_de_son_verdict_laisse_les_suivantes_se_jouer(
+    tmp_path: Path,
+) -> None:
+    """Une installation que le livrable ne fait que sous Linux, ratée sous Windows, ne bloque
+    rien : les lignes suivantes se jouent, un succès est tenu, un échec ne tranche pas."""
+    commandes = _COMMANDES + "ELSEWHERE: INSTALLATION=Linux (README : « sous Linux seulement »)\n"
+    joueur = Joueur({"npm ci": 1, "npm run lint": 1})
+    grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), joueur)
+
+    etats = {ligne.axe: ligne.etat for ligne in grille.lignes}
+    assert etats[gr.AXE_INSTALLATION] == gr.NON_TRANCHE
+    assert "Linux" in grille.ligne(gr.AXE_INSTALLATION).detail
+    assert len([commande for commande, _ in joueur.joues]) == len(gr.AXES_JOUES) + 1
+    assert etats[gr.AXE_LINT] == gr.NON_TRANCHE
+    assert "installation" in grille.ligne(gr.AXE_LINT).detail
+    assert etats[gr.AXE_FORMATAGE] == etats[gr.AXE_TESTS] == etats[gr.AXE_BUILD] == gr.TENU
+    assert gr.MANQUE not in etats.values() and gr.NON_JOUE not in etats.values()
+
+
+@AVEC_GIT
+def test_la_commande_qui_joue_la_verification_la_ou_se_rend_son_verdict_est_jouee(
+    tmp_path: Path,
+) -> None:
+    """#1695 : le lecteur est chargé de retenir la commande que le projet donne pour jouer une
+    vérification là où il en rend le verdict (un script qui lance son conteneur), et de nommer
+    ce verdict sous son champ quand rien ne l'y joue ; le banc joue ce qu'il retient, tel quel."""
+    commandes = _COMMANDES.replace("TESTS: npm test", "TESTS: bash scripts/ci/pytest.sh")
+    joueur = Joueur()
+    lecteur = LecteurFactice(commandes=commandes)
+    traces: list[tuple[str, str]] = []
+    grille = gr.rejouer(
+        _livrable(tmp_path),
+        tmp_path / "clone",
+        choix=("tests : pytest",),
+        lecteur=lecteur,
+        poste=_poste(joueur),
+        trace=lambda libelle, detail: traces.append((libelle, detail)),
+    )
+
+    assert "CI=1 bash scripts/ci/pytest.sh" in [commande for commande, _ in joueur.joues]
+    assert grille.ligne(gr.AXE_TESTS).etat == gr.TENU
+    assert f"{gr.CHAMP_AILLEURS}:" in gr.SYSTEME_COMMANDES
+    # Sans verdict rendu ailleurs, le déroulé le dit.
+    lues = dict(traces)["commandes lues dans le livrable"]
+    assert "verdicts rendus ailleurs : aucun" in lues
+
+
+def test_le_verdict_rendu_ailleurs_se_lit_dans_son_champ() -> None:
+    commandes = gr.commandes_depuis(_COMMANDES + _AILLEURS_LINUX + "ELSEWHERE: BUILD=Linux\n")
+    assert set(commandes.ailleurs) == {gr.AXE_TESTS, gr.AXE_LINT}  # PAGES n'est pas une commande
+    tests = commandes.ailleurs[gr.AXE_TESTS]
+    assert tests.systeme == "Linux"
+    assert tests.origine.startswith("CLAUDE.md : le job pytest joue dans un conteneur Linux")
+    assert commandes.ailleurs[gr.AXE_LINT].origine == "même source"
+    assert commandes.to_dict()["elsewhere"]["tests"] == {
+        "system": "Linux",
+        "origin": tests.origine,
+    }
+    assert gr.commandes_depuis(_COMMANDES + "ELSEWHERE: aucune\n").ailleurs == {}
+    assert "Tests sous Linux" in gr._commandes_en_mots(commandes)
+
+
 @AVEC_GIT
 def test_une_ligne_que_la_personne_a_ecartee_est_sans_objet(tmp_path: Path) -> None:
     """#1681 : « aucun formateur appliqué au dépôt », et la ligne du formatage manquait des deux
