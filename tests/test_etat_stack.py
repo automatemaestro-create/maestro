@@ -221,3 +221,120 @@ def test_le_ramassage_s_eteint_par_sa_variable(temp: Path) -> None:
     compte = _ramasse(temp, MAESTRO_RAMASSAGE_ETAT_STACK="0")
     assert compte == {"retires": 0, "anciens": 0, "resistants": 0, "conserves": 0}
     assert ancien.exists()
+
+
+# --- La table des écoutes (#1696) -----------------------------------------------------------------
+# Sous Windows, la table du système qui porte les écoutes (`ecoutes.py`), pas `netstat`, qui tait
+# celles qu'un poste range dans un état 0 ; ailleurs `/proc`, puis `lsof`. Une lecture impossible
+# retombe sur `netstat`, le dit, et ne fait jamais mourir une stack.
+
+
+def _executable(chemin: Path, corps: str) -> Path:
+    """Un exécutable bash, là où le test le veut."""
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(f"#!/usr/bin/env bash\n{corps}\n", encoding="utf-8", newline="\n")
+    chemin.chmod(0o755)
+    return chemin
+
+
+def _joue(script: str, *, chemin: Path | None = None, **env: str) -> list[str]:
+    """Source la bibliothèque puis joue `script` dans un vrai `bash` ; rend ses lignes."""
+    environnement = os.environ.copy()
+    environnement.pop("MAESTRO_TABLE_DES_ECOUTES", None)
+    environnement["MAESTRO_RAMASSAGE_ETAT_STACK"] = "1"
+    if chemin is not None:
+        environnement["PATH"] = str(chemin) + os.pathsep + environnement.get("PATH", "")
+    environnement.update(env)
+    assert BASH is not None
+    acheve = subprocess.run(  # noqa: S603
+        [BASH, "-c", f'. "{LIB.as_posix()}"\n{script}'],
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    return acheve.stdout.splitlines()
+
+
+def _repli(tmp_path: Path, netstat: str) -> dict[str, str]:
+    """Une table refusée, et un `netstat` à la place du vrai : ce qu'il imprime, ou son refus."""
+    refus = _executable(tmp_path / "refus", 'echo "appel refusé" >&2\nexit 1')
+    _executable(tmp_path / "bin" / "netstat", netstat)
+    return {"MAESTRO_TABLE_DES_ECOUTES": refus.as_posix()}
+
+
+def test_la_table_des_ecoutes_nomme_le_port_qui_ecoute_et_son_pid(port_ouvert: int) -> None:
+    """Critère 1 — la table du système porte l'écoute du test, avec le pid qui la tient : celui
+    de ce processus. Sous Windows, c'est ce que `netstat` taisait sur ce poste ; dans le
+    conteneur, `/proc` le dit sans `lsof`."""
+    lignes = _joue('etat_stack_ecoutes; echo "code=$?"\nprintf "%s\\n" "$ETAT_STACK_ECOUTES"')
+    assert lignes[0] == "code=0"
+    assert f"{port_ouvert} {os.getpid()}" in lignes[1:]
+
+
+def test_une_table_illisible_retombe_sur_netstat_le_dit_et_garde_l_etat(
+    tmp_path: Path, temp: Path
+) -> None:
+    """Critère 2 — la table refusée, on lit `netstat` et on le dit. Ce qu'il voit écouter vit ;
+    ce qu'il ne voit pas n'est pas mort pour autant : son silence ne prouve rien (#1579)."""
+    vue = _etat(temp / "maestro", "controltower-8912-3912", copie=tmp_path / "parti")
+    muette = _etat(temp / "maestro", "controltower-8913-3913", copie=tmp_path / "parti")
+    env = _repli(
+        tmp_path,
+        "printf '  TCP    0.0.0.0:8912     0.0.0.0:0     LISTENING       4242\\r\\n'",
+    )
+    lignes = _joue(
+        'etat_stack_ecoutes; echo "code=$?"\nprintf "%s\\n" "$ETAT_STACK_ECOUTES"\n'
+        "etat_stack_ramasser\n"
+        'printf "conserves=%s retires=%s\\n" "$ETAT_STACK_CONSERVES" "$ETAT_STACK_RETIRES"\n'
+        'printf "avis=%s\\n" "$ETAT_STACK_PORTS_AVIS"',
+        chemin=tmp_path / "bin",
+        TMPDIR=temp.as_posix(),
+        **env,
+    )
+    assert lignes[:2] == ["code=2", "8912 4242"]
+    assert "conserves=2 retires=0" in lignes
+    avis = next(ligne for ligne in lignes if ligne.startswith("avis="))
+    assert "illisible (appel refusé, code 1)" in avis
+    assert "repli sur netstat" in avis
+    assert vue.exists() and muette.exists()
+
+
+def test_sans_table_ni_netstat_aucune_ecoute_ne_se_lit_et_rien_ne_part(
+    tmp_path: Path, temp: Path
+) -> None:
+    """Critère 2 — rien ne se lit : on le dit, et on ne conclut jamais qu'aucun port n'écoute."""
+    etat = _etat(temp / "maestro", "controltower-8914-3914", copie=tmp_path / "parti")
+    lignes = _joue(
+        'etat_stack_ecoutes; echo "code=$?"\n'
+        "etat_stack_ramasser\n"
+        'printf "conserves=%s retires=%s\\n" "$ETAT_STACK_CONSERVES" "$ETAT_STACK_RETIRES"\n'
+        'printf "avis=%s\\n" "$ETAT_STACK_PORTS_AVIS"',
+        chemin=tmp_path / "bin",
+        TMPDIR=temp.as_posix(),
+        **_repli(tmp_path, "exit 1"),
+    )
+    assert lignes[0] == "code=1"
+    assert "conserves=1 retires=0" in lignes
+    assert "netstat ne répond pas : aucune écoute ne se lit" in lignes[-1]
+    assert etat.exists()
+
+
+def test_une_table_lue_et_vide_fait_partir_l_etat_d_une_stack_eteinte(
+    tmp_path: Path, temp: Path
+) -> None:
+    """La table lue fait foi, vide comprise : la stack éteinte dont la copie est partie s'en va,
+    et rien n'est dit."""
+    etat = _etat(temp / "maestro", "controltower-8915-3915", copie=tmp_path / "parti")
+    vide = _executable(tmp_path / "vide", "exit 0")
+    lignes = _joue(
+        "etat_stack_ramasser\n"
+        'printf "retires=%s avis=%s\\n" "$ETAT_STACK_RETIRES" "$ETAT_STACK_PORTS_AVIS"',
+        TMPDIR=temp.as_posix(),
+        MAESTRO_TABLE_DES_ECOUTES=vide.as_posix(),
+    )
+    assert lignes == ["retires=1 avis="]
+    assert not etat.exists()

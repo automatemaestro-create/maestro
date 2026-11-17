@@ -781,7 +781,8 @@ def _fauxbin(
     la porte est jouée : toute autre adresse — le constat d'arrêt qui sonde l'API et
     l'UI (#1579) — trouve des ports où personne n'écoute, et `curl` sort alors en `7`
     comme le vrai. Sans quoi le double ferait répondre une stack qu'aucun test ne sert.
-    `netstat`/`lsof` rendent le vide, ce qui n'est pas du confort — sans eux, un
+    La table des écoutes est vide — `table-des-ecoutes`, que les appelants imposent par
+    `MAESTRO_TABLE_DES_ECOUTES` —, ce qui n'est pas du confort : sans elle, un
     `--stop` joué sur des ports arbitraires irait tuer les process qui les écoutent
     vraiment. `taskkill`/`kill` sont le filet de ce filet.
     """
@@ -809,10 +810,9 @@ def _fauxbin(
             newline="\n",
         )
         shim.chmod(0o755)
-    for nom in ("netstat", "lsof"):
-        shim = fauxbin / nom
-        shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
-        shim.chmod(0o755)
+    table = fauxbin / "table-des-ecoutes"
+    table.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+    table.chmod(0o755)
     return fauxbin, appels
 
 
@@ -838,6 +838,7 @@ def _stop(
     environnement.update(
         {
             "PATH": os.pathsep.join([str(fauxbin), environnement.get("PATH", "")]),
+            "MAESTRO_TABLE_DES_ECOUTES": (fauxbin / "table-des-ecoutes").as_posix(),
             "TMPDIR": str(tmp_path / "etat"),
             "MAESTRO_BROWSER_DEFAUT": "firefox",
             "MAESTRO_PORT_API": "18456",
@@ -1214,6 +1215,7 @@ def test_le_chien_de_garde_qui_abandonne_ne_solde_rien(tmp_path: Path) -> None:
     environnement.update(
         {
             "PATH": os.pathsep.join([str(fauxbin), environnement.get("PATH", "")]),
+            "MAESTRO_TABLE_DES_ECOUTES": (fauxbin / "table-des-ecoutes").as_posix(),
             "TMPDIR": str(tmp_path / "etat"),
             "MAESTRO_BROWSER_DEFAUT": "firefox",
             "MAESTRO_PORT_API": "18457",

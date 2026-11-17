@@ -43,8 +43,9 @@ par le levier qui l'expose sans rien lancer :
 ⑦ **L'arrêt par témoin** (#1579) — `--stop` et `--couper-api` retrouvent l'API par le pid
    qu'elle consigne elle-même au démarrage, et l'UI par la carte de la racine de son arbre,
    même quand la table des ports ne voit pas leur écoute (le poste du 2026-11-03 : `netstat`
-   n'affichait aucune ligne pour elles). La table des ports est rendue AVEUGLE (`netstat` et
-   `lsof` factices, muets) : seul le témoin peut alors désigner le processus. Un témoin qui
+   n'affichait aucune ligne pour elles). La table des ports est rendue AVEUGLE (une table
+   imposée par `MAESTRO_TABLE_DES_ECOUTES`, lue mais vide) : seul le témoin peut alors désigner
+   le processus. Un témoin qui
    désigne un autre processus ne tue rien, et un arrêt qui laisse l'API répondre le dit et
    sort en erreur. Les vrais processus à l'écoute portent la ligne de commande de l'API.
 """
@@ -497,15 +498,12 @@ def test_couper_l_api_sans_rien_a_couper_n_est_pas_une_erreur() -> None:
     assert "[nettoyage]" not in acheve.stdout
 
 
-@pytest.mark.skipif(
-    os.name != "nt" and shutil.which("lsof") is None,
-    reason="hors Windows, le lanceur repère un port par lsof, absent de ce poste",
-)
 def test_couper_l_api_la_fait_tomber_et_laisse_l_ui_servie() -> None:
     """La vraie panne « API injoignable » (#996) : l'API tombe net, l'UI reste servie.
 
     Deux vrais processus à l'écoute, pour que le test dise ce que le lanceur FAIT — ce que
-    l'écran montre ensuite est l'affaire de la relecture, pas de ce module.
+    l'écran montre ensuite est l'affaire de la relecture, pas de ce module. Aucun témoin ne les
+    désigne : c'est la table des écoutes du système qui trouve l'API, sur tout poste (#1696).
     """
     api, ui = _port_libre(), _port_libre()
     serveurs = [
@@ -586,18 +584,17 @@ serveur.serve_forever()
 
 
 def _aveugle(tmp_path: Path) -> Path:
-    """Une table des ports qui ne voit rien : `netstat` et `lsof` factices, muets.
+    """Une table des ports qui ne voit rien : lue sans erreur, et vide.
 
-    C'est le poste du 2026-11-03 : l'écoute de l'API était bien dans la table TCP du système,
-    mais avec un état hors de `MIB_TCP_STATE`, et `netstat` n'en affichait aucune ligne.
+    C'est le poste du 2026-11-03 tel que `netstat` le voyait : l'écoute de l'API était bien dans
+    la table TCP du système, mais avec un état hors de `MIB_TCP_STATE`, et `netstat` n'en
+    affichait aucune ligne. `start.sh` lit la table qui la porte (#1696) : l'aveuglement
+    s'impose par `MAESTRO_TABLE_DES_ECOUTES`.
     """
-    dossier = tmp_path / "aveugle"
-    dossier.mkdir(exist_ok=True)
-    for outil in ("netstat", "lsof"):
-        faux = dossier / outil
-        faux.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
-        faux.chmod(0o755)
-    return dossier
+    table = tmp_path / "table-aveugle"
+    table.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+    table.chmod(0o755)
+    return table
 
 
 def _dossier_d_etat(temp: Path, api: int, ui: int) -> Path:
@@ -647,9 +644,10 @@ def _pid_consigne(temoin: Path) -> int | None:
 
 
 def _jouer(
-    geste: str, api: int, ui: int, temp: Path, aveugle: Path
+    geste: str, api: int, ui: int, temp: Path, table: Path, *, chemin: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """`start.sh <geste>` sur ces ports, son état sous `temp`, la table des ports aveugle."""
+    """`start.sh <geste>` sur ces ports, son état sous `temp`, la table des ports imposée par
+    `table` — aveugle, d'ordinaire —, et `chemin` en tête du PATH s'il est nommé."""
     environnement = os.environ.copy()
     for cle in (*_A_NETTOYER, VARIABLE_FICHIER_PID):
         environnement.pop(cle, None)
@@ -661,9 +659,11 @@ def _jouer(
             # Solder les runs parle à l'API (#700) : ce n'est pas l'objet de ces tests.
             "MAESTRO_EXTINCTION": "0",
             "MAESTRO_BROWSER_DEFAUT": "firefox",
-            "PATH": str(aveugle) + os.pathsep + environnement.get("PATH", ""),
+            "MAESTRO_TABLE_DES_ECOUTES": table.as_posix(),
         }
     )
+    if chemin is not None:
+        environnement["PATH"] = str(chemin) + os.pathsep + environnement.get("PATH", "")
     assert BASH is not None
     return subprocess.run(  # noqa: S603
         [BASH, str(SCRIPT), geste],
@@ -817,6 +817,49 @@ def test_un_arret_qui_laisse_l_api_repondre_le_dit_et_sort_en_erreur(tmp_path: P
         assert service.poll() is None and _ecoute(api)
     finally:
         _achever(service, _pid_consigne(hors_pile))
+
+
+def test_une_table_illisible_retombe_sur_netstat_et_le_dit(tmp_path: Path) -> None:
+    """Le lecteur de la table refusé (pas de venv, appel refusé) : `start.sh` lit `netstat` à
+    la place, le dit sous le préfixe du geste, et coupe ce qu'il désigne (#1696)."""
+    api, ui = _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    _dossier_d_etat(temp, api, ui)
+    # Consigné hors de la stack : aucun témoin ne désigne le service, seul `netstat` le fera.
+    hors_pile = tmp_path / "hors-pile.pid"
+    service = _lancer_service(
+        tmp_path, "maestro.controltower.cli", "--port", str(api), temoin=hors_pile
+    )
+    pid = None
+    try:
+        assert _attendre(lambda: _ecoute(api) and _pid_consigne(hors_pile) is not None)
+        pid = _pid_consigne(hors_pile)
+        refus = tmp_path / "refus"
+        refus.write_text(
+            "#!/usr/bin/env bash\necho 'appel refusé' >&2\nexit 1\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        refus.chmod(0o755)
+        chemin = tmp_path / "bin"
+        chemin.mkdir()
+        netstat = chemin / "netstat"
+        netstat.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '  TCP    127.0.0.1:{api}     0.0.0.0:0     LISTENING       {pid}\\r\\n'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        netstat.chmod(0o755)
+
+        acheve = _jouer("--couper-api", api, ui, temp, refus, chemin=chemin)
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert "[panne] ⚠ " in acheve.stdout and "repli sur netstat" in acheve.stdout
+        assert f"(PID {pid}) — coupée net, sans soldage" in acheve.stdout, acheve.stdout
+        assert _attendre(lambda: not _ecoute(api), 15), "l'API sert encore : " + acheve.stdout
+    finally:
+        _achever(service, pid)
 
 
 def test_l_arret_retrouve_l_ui_par_la_carte_de_son_arbre(tmp_path: Path) -> None:

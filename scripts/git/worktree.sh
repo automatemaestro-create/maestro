@@ -303,9 +303,11 @@ ramasse_coquilles() {
 # touche à rien. Même dispositif de compte rendu que les coquilles, pour la même raison.
 ETATS_RAPPORT=""
 ETATS_RETIRES=0
+ETATS_AVIS=""
 ramasse_etats_stack() {
   ETATS_RAPPORT=""
   ETATS_RETIRES=0
+  ETATS_AVIS=""
   # shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
   # n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
   . "$ICI/../controltower/etat-stack.sh" || return 0
@@ -316,6 +318,11 @@ ramasse_etats_stack() {
   fi
   if [ "$ETAT_STACK_RESISTANTS" -gt 0 ]; then
     ETATS_RAPPORT="$ETATS_RAPPORT$(alerte "état de stack tenu, repris au prochain passage : $ETAT_STACK_RESISTANTS dossier(s)")"$'\n'
+  fi
+  # Une table des écoutes qui ne s'est pas lue entière rompt le silence, comme un échec.
+  ETATS_AVIS="$ETAT_STACK_PORTS_AVIS"
+  if [ -n "$ETATS_AVIS" ]; then
+    ETATS_RAPPORT="$ETATS_RAPPORT$(alerte "$ETATS_AVIS — l'état des stacks dont on ne voit pas les ports reste")"$'\n'
   fi
   return 0
 }
@@ -2494,7 +2501,8 @@ commande_gc() {
   # taire dessus est exactement ce qui les a laissées s'accumuler à onze (#422).
   local muet_ramassage=0
   if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ] &&
-     [ "$COQUILLES_RETIREES" -eq 0 ] && [ "$COQUILLES_SIGNALEES" -eq 0 ] && [ "$ETATS_RETIRES" -eq 0 ]; then
+     [ "$COQUILLES_RETIREES" -eq 0 ] && [ "$COQUILLES_SIGNALEES" -eq 0 ] && [ "$ETATS_RETIRES" -eq 0 ] &&
+     [ -z "$ETATS_AVIS" ]; then
     muet_ramassage=1
     [ -z "$orphelins" ] && return 0
   fi
