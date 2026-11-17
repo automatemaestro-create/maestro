@@ -73,7 +73,7 @@ from typing import Any
 from maestro.shell import SUBSTITUTION, Illisible, Simple, lis
 
 #: L'outil d'exécution des agents — le seul que ce module juge. Même valeur que
-#: `maestro.equipe.proposition.OUTIL_EXECUTION`, et les deux la portent pour deux
+#: `maestro.team.proposal.EXECUTION_TOOL`, et les deux la portent pour deux
 #: questions différentes : là-bas *sous quel cran l'agent exécute*, ici *cet
 #: appel-ci exécute-t-il quelque chose*.
 OUTIL_SHELL = "Bash"

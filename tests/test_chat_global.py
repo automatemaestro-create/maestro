@@ -142,9 +142,9 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.engine import RunReport
-from maestro.equipe import RoleValide, definition
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
+from maestro.team import ValidatedRole, definition
 
 UTILISATEUR = "utilisateur"
 
@@ -2246,10 +2246,10 @@ def agents_equipes(tmp_path: Path, projets: ServiceProjets) -> AgentStore:
     for projet in projets.lister():
         store.pour_projet(projet["id"]).ecrire(
             definition(
-                RoleValide(
-                    nom="dev-projet",
+                ValidatedRole(
+                    name="dev-projet",
                     role="Développeur",
-                    competences=("backend",),
+                    competencies=("backend",),
                     playbook="Tu écris le code.",
                 )
             )
@@ -3410,17 +3410,17 @@ def test_les_bornes_du_geste_arrivent_au_moteur(
 PROJET_SANS_EQUIPE = "prj-9ab8b520"
 
 
-def _roles_valides() -> list[RoleValide]:
+def _roles_valides() -> list[ValidatedRole]:
     """L'équipe que l'écran rapporte : un rôle à deux instances, un rôle à une."""
     return [
-        RoleValide(
-            nom="dev-p1",
+        ValidatedRole(
+            name="dev-p1",
             role="Développeur",
-            competences=("backend",),
+            competencies=("backend",),
             playbook="Tu écris le code de p1.",
             instances=2,
         ),
-        RoleValide(nom="qa-p1", role="QA", competences=("tests",), playbook="Tu testes p1."),
+        ValidatedRole(name="qa-p1", role="QA", competencies=("tests",), playbook="Tu testes p1."),
     ]
 
 
@@ -3428,9 +3428,9 @@ def _corps_roles() -> list[dict[str, Any]]:
     """Les mêmes rôles dans la forme de `POST /api/projets/{id}/equipe`."""
     return [
         {
-            "nom": r.nom,
+            "nom": r.name,
             "role": r.role,
-            "competences": list(r.competences),
+            "competences": list(r.competencies),
             "playbook": r.playbook,
             "instances": r.instances,
         }
@@ -3448,7 +3448,7 @@ class RecruteurEspion:
     """
 
     def __init__(self, *, refus: Exception | None = None) -> None:
-        self.appels: list[tuple[str, list[RoleValide], str]] = []
+        self.appels: list[tuple[str, list[ValidatedRole], str]] = []
         self.agents: dict[str, int] = {}
         self._refus = refus
 
@@ -3466,7 +3466,7 @@ class RecruteurEspion:
             "projet_id": projet_id,
             "proposition_id": proposition_id,
             "cree": True,
-            "agents": [{"nom": r.nom, "role": r.role, "instances": r.instances} for r in roles],
+            "agents": [{"nom": r.name, "role": r.role, "instances": r.instances} for r in roles],
             "instances_total": sum(r.instances for r in roles),
         }
 
@@ -4188,8 +4188,8 @@ def test_un_renfort_recrute_pendant_un_run_se_lit_sur_la_carte() -> None:
     juge = JugeQuiRedige()
     recruteur = RecruteurEspion()
     repondeur = RepondeurOrchestration(provider=juge, recruteur=recruteur)
-    designer = RoleValide(
-        nom="interface", role="Designer", competences=("ui",), playbook="Tu dessines."
+    designer = ValidatedRole(
+        name="interface", role="Designer", competencies=("ui",), playbook="Tu dessines."
     )
 
     reponse = asyncio.run(

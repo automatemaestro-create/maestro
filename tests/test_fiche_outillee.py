@@ -186,7 +186,7 @@ def test_le_document_du_paquet_masque_le_playbook_d_une_fiche_homonyme() -> None
     """Le fait qui vaut réservation de nom : une fiche de projet nommée comme un
     rôle du code partirait en exécution avec le playbook du code, **en silence**.
     C'est pourquoi les rôles proposés par l'analyse d'équipe portent d'autres noms
-    (`dev` descend de `developpeur`, `maestro.equipe.gabarits`)."""
+    (`dev` descend de `developpeur`, `maestro.team.role_templates`)."""
     ecrit_pour_ce_projet = "Tu travailles sur le projet Dépensio, et rien d'autre."
 
     prompt = playbook_outille(_fiche("developpeur", prompt_systeme=ecrit_pour_ce_projet))

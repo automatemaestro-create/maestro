@@ -313,6 +313,19 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
   par les noms qui n'appartiennent qu'au type renommé, cherchés derrière `.`. Un nom partagé
   (`cout_usd`, `appels`) ne se suit derrière un receveur qu'une fois sa classe vérifiée : un `Event`
   porte aussi `cout_usd`.
+- **Un nom du paquet peut aussi vivre ailleurs** (#1670). `role_manquant` était une fonction
+  d'`equipe`, mais aussi une méthode de `Prerequis` et une valeur de statut du moteur ;
+  `DemandeRenfort.manque`, un champ du moteur, porte un `PlanGap` dont le champ `manque` devient
+  `gap`. Le remplacement des noms par la table exclut donc ceux qu'un autre paquet porte (le script
+  les relève avant d'écrire), et la correction guidée par mypy ne remplace que la lecture désignée :
+  remplacer tout `.manque` de la ligne écrit `demande.gap.gap.role` au lieu de
+  `demande.manque.gap.role`.
+- **Le schéma OpenAPI porte les docstrings des modèles et des routes** (#1670). Un nom de code cité
+  dans l'une d'elles change les octets du schéma sans en changer la forme. La comparaison se fait
+  donc sans les `description`, puis chaque description qui diffère se relit : elle ne doit changer
+  que par les noms cités.
+- **Un paquet renommé change sa place dans l'ordre des imports.** `ruff check --fix --select I`
+  la remet, sans rien toucher d'autre.
 - **Les erreurs de mypy sur les tests se comparent à leur relevé sans les colonnes.** Un nom plus
   court déplace la fin d'une erreur déjà là, qui se lit alors comme une erreur neuve.
 - **Les numéros de ligne cités dans `docs/` bougent avec la réécriture.** Ils se suivent comme les

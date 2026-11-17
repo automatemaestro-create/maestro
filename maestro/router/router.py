@@ -36,9 +36,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 
 from maestro.agents.catalog import Agent
-from maestro.equipe.manque import competences_non_couvertes
 from maestro.orchestrator.schema import Task
 from maestro.router.classifier import TaskClassifier
+from maestro.team.gap import uncovered_competencies
 
 #: Assignment methods of a routing decision. The values travel with the decision
 #: and keep their names.
@@ -81,7 +81,7 @@ class RoutingDecision:
     out, nor the project catalog the router received for that call. Empty in every
     case where the question does not arise: an assigned agent, a tie the classifier
     did not settle, an entirely disabled catalog (there the team has the role: it is
-    switched off, not missing). `maestro.equipe.manque` turns it into a named
+    switched off, not missing). `maestro.team.gap` turns it into a named
     **position**.
     """
 
@@ -215,7 +215,7 @@ class Router:
         # competencies as covered would silence the signal exactly when it is true.
         # Empty as soon as a candidate covers something: the task is then routable,
         # and the ambiguity is that of the tiebreak.
-        uncovered = competences_non_couvertes(required, active) if best_score == 0 else ()
+        uncovered = uncovered_competencies(required, active) if best_score == 0 else ()
         if closest and uncovered:
             return await self._closest(task, active, uncovered)
         return await self._tiebreak(task, candidates, required, uncovered)

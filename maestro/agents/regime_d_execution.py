@@ -27,7 +27,7 @@ suivante, et le texte ne peut pas dire autre chose que la règle.
 Le modèle, lui, rédige le **métier** — ce que l'agent fait, comment il procède, ce
 qu'il rend (`maestro.controltower.generation_agent._CADRE_GENERATION`) — et ne
 reçoit plus le régime dans l'intention d'un rôle
-(`maestro.equipe.proposition.intention_du_role`) : ce qu'on ne lui donne pas, il ne
+(`maestro.team.proposal.role_intent`) : ce qu'on ne lui donne pas, il ne
 le reformule pas. Le bloc **prime** sur ce que le playbook dirait d'autre des
 commandes, et il le dit : c'est ce qui couvre un playbook écrit avant ce lot, ou
 retouché à la main.

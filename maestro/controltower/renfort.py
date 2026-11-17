@@ -181,7 +181,7 @@ def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = 
     lira (`recrutement`) — rôle, raison, tâches — et son échéance. Le relais n'a
     rien à juger ni à recomposer — il ne connaît pas le manque, seulement sa forme
     publiée, et c'est ce qui laisse la raison montrée être *la* raison calculée
-    par le moteur. `detail` porte le manque en une ligne (`ManqueAuPlan.phrase`),
+    par le moteur. `detail` porte le manque en une ligne (`PlanGap.sentence`),
     pour le journal durable : c'est le constat, pas une phrase du fil (#1262).
 
     Secrets expurgés de ce qui vient d'un humain (l'objectif), comme la question
@@ -190,15 +190,15 @@ def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = 
     """
     naissance = maintenant or datetime.now(UTC)
     objectif = redact_secrets(demande.objectif.strip())
-    raison = demande.manque.raison()
+    raison = demande.manque.reason()
     recrutement = DemandeRecrutement(
         objectif=objectif,
         projet_id=demande.projet_id,
         run_id=demande.run_id,
-        role=demande.manque.manque.role,
-        gabarit=demande.manque.manque.gabarit or "",
+        role=demande.manque.gap.role,
+        gabarit=demande.manque.gap.role_template or "",
         raison=raison,
-        taches=demande.manque.taches,
+        taches=demande.manque.tasks,
         # La tâche suspendue, quand la demande naît en cours de run (#1181).
         tache=demande.tache,
     )
@@ -209,7 +209,7 @@ def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = 
         agent=ACTEUR_RUN,
         role=ROLE_RUN,
         titre=recrutement.role,
-        detail=demande.manque.phrase(),
+        detail=demande.manque.sentence(),
         recrutement=recrutement.to_dict(),
         echeance=(naissance + timedelta(seconds=demande.attente_s)).isoformat(
             timespec="seconds"

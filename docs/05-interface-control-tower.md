@@ -7799,7 +7799,7 @@ Deux routes, et **tout** les sépare : la première ne crée rien, la seconde cr
 du chantier « équipe sur mesure » ([docs/37](./37-decision-equipe-sur-mesure.md)) — *un projet naît
 sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
 
-- `POST /api/projets/{id}/equipe/proposition` → `PropositionEquipe`. Corps **vide** : le projet est
+- `POST /api/projets/{id}/equipe/proposition` → `TeamProposal`. Corps **vide** : le projet est
   **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
   d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
   le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
@@ -7820,7 +7820,7 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   a écrit (raison obligatoire, gabarit et skills confrontés à ce qui existe, preuve confrontée à ce
   que l'analyse a lu, instances bornées, orchestrateur jamais recruté). Un modèle qui ne répond pas
   fait retomber sur les **règles** des gabarits, et `composition` le dit, avec sa cause.
-- `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
+- `POST /api/projets/{id}/equipe/correction` → `TeamCorrection` (#1159). La personne corrige
   l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis la carte
   d'équipe du fil (#1331). Corps : `demande` (une phrase, 500 caractères au plus), `equipe`
   (l'équipe **telle que la carte la montre** : `nom`, `role`, `retenu`, `instances`, `navigateur`
@@ -7836,7 +7836,7 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   playbook écrit pour le projet reçoit ce que la personne a répondu et ce que le projet montre : il
   ne contredit aucune réponse, et une restriction bornée à une partie (« bibliothèque standard pour
   le générateur ») n'y gagne pas tout le projet.
-- `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
+- `POST /api/projets/{id}/equipe` → `CreatedTeam`, **201**. Le corps rapporte la proposition **telle
   que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
   compris.
 
@@ -7844,7 +7844,7 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
 l'équipe est refusée — jamais un `500`.
 
 ```jsonc
-// PropositionEquipe — POST …/equipe/proposition
+// TeamProposal — POST …/equipe/proposition
 {
   "proposition": 1,                    // VERSION de la forme : un consommateur doit
                                        // pouvoir dire « je ne sais pas lire ça »
@@ -7917,7 +7917,7 @@ l'équipe est refusée — jamais un `500`.
 ```
 
 ```jsonc
-// CorrectionEquipe — POST …/equipe/correction (#1159)
+// TeamCorrection — POST …/equipe/correction (#1159)
 {
   "reponse": "J'ai ajouté un rôle Sécurité à votre équipe, chargé de l'audit des dépendances…",
   // Des rôles proposés DE PLEIN DROIT : même forme qu'un rôle de la proposition,
@@ -7936,7 +7936,7 @@ l'équipe est refusée — jamais un `500`.
 ```
 
 ```jsonc
-// EquipeCreee — POST …/equipe (201)
+// CreatedTeam — POST …/equipe (201)
 {
   "projet_id": "prj-depensio",
   "proposition_id": "equ-9f3a21bc",   // de quoi cette équipe est née
@@ -7974,7 +7974,7 @@ exister l'agent au catalogue, et une coupure après elle laisse un agent aux dé
 modifiable, que les écrans d'agents rattrapent — là où l'ordre inverse laisserait une capacité et
 une politique orphelines que rien n'affiche.
 
-Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
+Implémentation : [`maestro/team/`](../maestro/team/) (la dérivation et la création, **pures** —
 aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
 (la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
 [`maestro/controltower/routes/outillage.py`](../maestro/controltower/routes/outillage.py) (les routes),

@@ -51,9 +51,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
-from maestro.equipe.gabarits import GABARITS
 from maestro.orchestrator.recovery import Attempt, TaskFailure
 from maestro.orchestrator.schema import Clarification
+from maestro.team.role_templates import ROLE_TEMPLATES
 
 # ⚠ **No task-count range** (#1531,
 # [docs/50 §§ 2 and 4.1](../../docs/50-ecart-face-a-un-agent-seul.md)). The playbook splits
@@ -116,7 +116,7 @@ def _team_block(team: Sequence[Agent]) -> str:
     everywhere else (routing, log, Kanban), and two profiles of one project may carry the
     same role — two instances of one template, for example. Competencies are sorted:
     `Agent.competences` is a `frozenset`, and a system prompt whose order moves at every
-    build cannot be compared from one run to the next (same rule as `Gabarit.competences`).
+    build cannot be compared from one run to the next (same rule as `RoleTemplate.competencies`).
     """
     return "\n".join(
         f"- **{agent.role}** (`{agent.nom}`) — {', '.join(sorted(agent.competences))}"
@@ -144,8 +144,8 @@ def _recruitable_list(team: Sequence[Agent]) -> str:
     in place carries would be forced onto a role that is there, and the missing role would
     be neither named nor proposed.
 
-    The source is **`maestro.equipe.gabarits`**, exactly what Maestro can offer to recruit
-    (`GABARITS`): a tag named here always designates a position that can really be created.
+    The source is **`maestro.team.role_templates`**, exactly what Maestro can offer to recruit
+    (`ROLE_TEMPLATES`): a tag named here always designates a position that can really be created.
     A second list written alongside would let the model name a trade nobody could recruit,
     and the gap would then be neither filled nor even understandable.
 
@@ -161,9 +161,9 @@ def _recruitable_list(team: Sequence[Agent]) -> str:
         else frozenset()
     )
     lines = [
-        f"- **{template.role}** (gabarit `{template.nom}`) — {', '.join(remaining)}"
-        for template in GABARITS
-        if (remaining := tuple(t for t in template.competences if t not in covered))
+        f"- **{template.role}** (gabarit `{template.name}`) — {', '.join(remaining)}"
+        for template in ROLE_TEMPLATES
+        if (remaining := tuple(t for t in template.competencies if t not in covered))
     ]
     if not lines:
         return (

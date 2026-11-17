@@ -40,7 +40,7 @@ Un inventaire du code produit (`maestro/`, `apps/web/`, `packages/shared/`, `cor
 | Six questions à options fermées : 4 natures, 4 langages plus « autre », tests déduits du langage, 3 forges, un plafond de 6 questions | `maestro/outillage/questionnaire.py` | **Bloqué.** Aucune réponse libre. Une correction tapée dans le fil n'est jamais enregistrée. « Autre » fait perdre le langage | #1147 |
 | Commandes par langage (uv, ruff, npm, `python -m app`) écrites comme « convention » | `questionnaire.py`, rédaction | **Faux en silence.** Rien n'est exécuté, sur un projet sous poetry, pnpm ou bun | #1160 |
 | Détection par extensions et noms de fichiers | `maestro/outillage/detection.py` | **Dégradé.** Pas de commande pour .NET, Swift, Deno, Bazel, `justfile`… ; skills écartés, puis ni QA ni DevOps. Et à l'écran, *« un élément se garde ou se retire, il ne se ressaisit pas »* | #1158, #1161 |
-| Cinq gabarits de rôle retenus par des règles fixes | `maestro/equipe/gabarits.py` | Mobile, ML, sécurité, documentation : **jamais proposés**. Le rôle données jamais sur un projet neuf. Le prompt du fil décrit une équipe figée | #1159 |
+| Cinq gabarits de rôle retenus par des règles fixes | `maestro/team/role_templates.py` | Mobile, ML, sécurité, documentation : **jamais proposés**. Le rôle données jamais sur un projet neuf. Le prompt du fil décrit une équipe figée | #1159 |
 | Plancher de 3 tâches, plan jamais réparé | `maestro/orchestrator/` | Un objectif simple gonflé ; un titre de plus de 120 caractères qui fait échouer le run | #1149 |
 | Six formats de source seulement | `maestro/sources/extraction.py` | `.json`, `.yaml`, `.csv`, code et images écartés du brief | #1163 |
 

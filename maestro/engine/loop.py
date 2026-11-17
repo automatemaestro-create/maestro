@@ -231,12 +231,6 @@ from maestro.engine.verification import (
     VerificateurTaches,
 )
 from maestro.engine.verification import Verdict as VerdictVerification
-from maestro.equipe.manque import (
-    ManqueAuPlan,
-    competences_non_couvertes,
-    manque_au_plan,
-    role_manquant,
-)
 from maestro.messaging.handoff import HandoffRelay
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -255,6 +249,12 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
+from maestro.team.gap import (
+    PlanGap,
+    missing_role,
+    plan_gap,
+    uncovered_competencies,
+)
 from maestro.telemetry import (
     RunJournal,
     StepRecord,
@@ -1786,7 +1786,7 @@ class OrchestrationEngine:
         choses, dans cet ordre, et l'ordre est la décision :
 
         1. **le manque est calculé** sur l'équipe du projet et sur ce que le plan
-           demande (`manque_au_plan`, fonction pure) ;
+           demande (`plan_gap`, fonction pure) ;
         2. **il est consigné** — toujours, même sans arbitre et même si personne ne
            répond. C'est la ligne qui manquait au run du 2026-09-22 : *« aucune
            modification de l'équipe n'a été suggérée »* était vrai jusque dans le
@@ -1812,7 +1812,7 @@ class OrchestrationEngine:
         equipe = catalogue_du_projet(self._agents_store, projet_id, self._modele)
         if not equipe:
             return
-        manque = manque_au_plan(tasks, equipe)
+        manque = plan_gap(tasks, equipe)
         if manque is None:
             return
         self._consigne_manque(manque, projet_id, journal)
@@ -1824,7 +1824,7 @@ class OrchestrationEngine:
         # `2e7f7278a991` : Designer recruté, validation QA « à assigner », 2/3).
         # Ce qu'un rôle recruté couvre n'est pas touché : il le couvre.
         self._executor.continuer_avec_l_equipe(journal.run_id)
-        if self._arbitre_renfort is None or not manque.recrutable:
+        if self._arbitre_renfort is None or not manque.recruitable:
             return
         demande = DemandeRenfort(
             run_id=journal.run_id,
@@ -1853,7 +1853,7 @@ class OrchestrationEngine:
             # Le rôle recruté pour ce plan prend les tâches qui demandaient son
             # métier (#1260) — ce que le fil vient de promettre en recrutant.
             self._executor.equipe_completee(
-                journal.run_id, manque.manque.couvre or manque.manque.competences
+                journal.run_id, manque.gap.covers or manque.gap.competencies
             )
         self._consigne_renfort(manque, decision, projet_id, journal)
 
@@ -1904,7 +1904,7 @@ class OrchestrationEngine:
         )
 
     def _consigne_manque(
-        self, manque: ManqueAuPlan, projet_id: str, journal: RunJournal
+        self, manque: PlanGap, projet_id: str, journal: RunJournal
     ) -> None:
         """Écrit au journal le rôle que le plan appelle et que l'équipe n'a pas.
 
@@ -1925,14 +1925,14 @@ class OrchestrationEngine:
             role=ROLE_ORCHESTRATEUR,
             statut=STATUT_ROLE_MANQUANT,
             entree="",
-            sortie=manque.phrase(),
+            sortie=manque.sentence(),
             usage=StepUsage(),
             projet_id=projet_id,
         )
 
     def _consigne_renfort(
         self,
-        manque: ManqueAuPlan,
+        manque: PlanGap,
         decision: DecisionRenfort,
         projet_id: str,
         journal: RunJournal,
@@ -1963,7 +1963,7 @@ class OrchestrationEngine:
         )
         # Ce que le rôle proposé ne couvre pas (#1260) — un second métier absent,
         # qu'on n'a pas proposé : il se **dit**, puisqu'il ira au plus proche.
-        reste = sorted(set(manque.manque.competences) - set(manque.manque.couvre))
+        reste = sorted(set(manque.gap.competencies) - set(manque.gap.covers))
         if decision.approuve and reste:
             suite += (
                 f" ; personne ne couvre encore {', '.join(reste)}, ces tâches vont "
@@ -1972,7 +1972,7 @@ class OrchestrationEngine:
         detail = decision.detail.strip()
         journal.consigne(
             etape=STEP_TEAM,
-            nom=f"Renfort « {manque.manque.role} »",
+            nom=f"Renfort « {manque.gap.role} »",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
             statut=statut,
@@ -2610,7 +2610,7 @@ class OrchestrationEngine:
         """Le prérequis que le Chef de projet a nommé, rapporté à ce que Maestro sait faire (#1181).
 
         Un **rôle** se nomme par les compétences qu'il couvrirait ; c'est ici qu'il
-        devient un poste à pourvoir, par la règle du routage (`role_manquant`, sur
+        devient un poste à pourvoir, par la règle du routage (`missing_role`, sur
         l'équipe du projet) : le gabarit qui couvre le plus de ce qui manque, et la
         raison du Chef de projet — c'est lui qui a lu le blocage. Si l'équipe couvre
         déjà ces compétences, ou si aucun gabarit n'y répond, le prérequis reste tel
@@ -2622,8 +2622,8 @@ class OrchestrationEngine:
         equipe = catalogue_du_projet(self._agents_store, task.project_id, self._modele)
         if equipe is None:
             return prerequis
-        manque = role_manquant(competences_non_couvertes(prerequis.competences, equipe))
-        if manque is None or manque.gabarit is None:
+        manque = missing_role(uncovered_competencies(prerequis.competences, equipe))
+        if manque is None or manque.role_template is None:
             return prerequis
         return replace(prerequis_du_role(manque, task.title), raison=prerequis.raison)
 
@@ -2727,7 +2727,7 @@ class OrchestrationEngine:
             run_id=journal.run_id,
             projet_id=task.project_id,
             objectif=objectif,
-            manque=ManqueAuPlan(manque=prerequis.role_manquant(), taches=(task.title,)),
+            manque=PlanGap(gap=prerequis.role_manquant(), tasks=(task.title,)),
             attente_s=self._bornes_renfort.attente_s,
             tache=task.title,
         )

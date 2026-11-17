@@ -82,7 +82,7 @@ from maestro.agents.regime_d_execution import REGIME_EXECUTION, REGIME_PORTEE, o
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.decideur import Decideur
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN, MODE_BRIEF_SANS
-from maestro.equipe.proposition import OUTIL_EXECUTION
+from maestro.team.proposal import EXECUTION_TOOL
 
 #: L'en-tête du bloc — ce qui le distingue, dans le prompt, des faits du projet
 #: et des runs : ceux-là disent ce qui **est**, celui-ci ce qu'un run **fera**.
@@ -320,7 +320,7 @@ def _shell(politique: PolitiqueOutils) -> str:
     la politique le retire. La portée ne se dit que sur le cran `auto`, le seul
     qu'elle borne : sur `humain`, dedans comme dehors, une personne tranche.
     """
-    decision = politique.decide(OUTIL_EXECUTION)
+    decision = politique.decide(EXECUTION_TOOL)
     if decision.verdict is Verdict.REFUS:
         return " Il n'a pas de shell : sa politique le lui refuse."
     if decision.verdict is Verdict.PASSE:

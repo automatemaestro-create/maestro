@@ -88,7 +88,7 @@ const SENS_DECIDEUR: Record<string, string> = {
 /**
  * Une raison servie, ses `**…**` rendus en **gras** au lieu d'être recopiés.
  *
- * Les raisons d'autorisation (`maestro.equipe.proposition`) soulignent ce que la
+ * Les raisons d'autorisation (`maestro.team.proposal`) soulignent ce que la
  * personne garde avec la convention Markdown, et l'écran affichait les
  * astérisques tels quels (relevé par le regard neuf de #1159). Un nombre impair
  * de marqueurs laisse le texte intact : mieux vaut deux astérisques visibles
@@ -263,7 +263,7 @@ export function LigneRole({
             Instances
           </label>
           {/* `min` seulement, jamais de `max` : le plafond est une **décision**
-              et elle vit en un seul endroit (`INSTANCES_MAX_CREEES`), qui la
+              et elle vit en un seul endroit (`MAX_CREATED_INSTANCES`), qui la
               nomme dans son refus. Le recopier ici en ferait une seconde règle
               à tenir d'accord — et c'est toujours celle de l'écran qui dérive.
               « Moins d'une instance », lui, n'est pas une décision : c'est

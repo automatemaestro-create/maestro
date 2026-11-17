@@ -727,7 +727,7 @@ def test_l_acte_que_l_objectif_a_nomme_ne_redemande_personne(store):
 
     Le run est celui de S1 : `Bash` en `ask`/`humain` — le cran qu'une équipe
     proposée pose sur un projet qui ne déclare aucune commande
-    (`maestro.equipe.proposition`) —, et une tâche qui agit sur un acte que
+    (`maestro.team.proposal`) —, et une tâche qui agit sur un acte que
     l'objectif nomme. Les trois commandes passent, et **aucune** n'a composé de
     demande : c'est le compte, pas le verdict, qui porte le remède. Sous le
     régime d'avant, ce même run rendait trois demandes ; la personne n'en

@@ -782,10 +782,10 @@ from maestro.engine.executor import (
     STATUT_EN_COURS,
     STATUT_TERMINEE,
 )
-from maestro.equipe import RoleValide
 from maestro.outillage.contexte import OutillageDuProjet
 from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
+from maestro.team import ValidatedRole
 
 if TYPE_CHECKING:  # pragma: no cover - typage seul, cf. `SondeDuPoste`
     from maestro.poste import RapportSonde
@@ -1333,11 +1333,11 @@ ProjetDuFil = Callable[[str], ProjetVise | None]
 #: `outillage_en_clair`) — `""` quand il n'y a rien à en dire.
 OutillageDuFil = Callable[[str], str]
 
-#: Crée dans le projet l'équipe validée et rend son rapport (`EquipeCreee.to_dict`)
+#: Crée dans le projet l'équipe validée et rend son rapport (`CreatedTeam.to_dict`)
 #: — le seul geste de recrutement que le canal demande, par la voie de #1040.
 #: Arguments : le projet, les rôles retenus, la proposition dont ils sortent (une
 #: trace, jamais une condition). Une équipe refusée lève, et le canal le raconte.
-RecruteurEquipe = Callable[[str, Sequence[RoleValide], str], Awaitable[Mapping[str, Any]]]
+RecruteurEquipe = Callable[[str, Sequence[ValidatedRole], str], Awaitable[Mapping[str, Any]]]
 
 #: Exécute **une** lecture demandée par le modèle, dans le projet de la fenêtre
 #: (#1223). Attendable, parce que lire touche le disque ; elle ne lève jamais —
@@ -3918,7 +3918,7 @@ class RepondeurOrchestration(RepondeurChat):
         *,
         demande: DemandeRecrutement,
         approuve: bool,
-        roles: Sequence[RoleValide],
+        roles: Sequence[ValidatedRole],
         proposition_id: str = "",
     ) -> ReponseChat:
         """Crée l'équipe validée, puis **reprend** la demande d'origine (#1146).

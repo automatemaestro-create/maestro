@@ -178,7 +178,7 @@ défaut. Ne devine jamais un nom."""
 #: extérieur attend l'accord d'une personne » ne se reconnaît pas à un mot (#1169),
 #: et un lexique qui l'arracherait saurait encore moins garder le métier qui
 #: l'entoure. Ce que le code tient, lui, est ce qui ne se rédige pas : la section des
-#: skills (`maestro.equipe.creation.TITRE_SKILLS`) ne passe jamais par ici, et le
+#: skills (`maestro.team.creation.SKILLS_HEADING`) ne passe jamais par ici, et le
 #: régime que l'agent lira est composé depuis sa politique, quoi qu'il reste de ce
 #: texte (`maestro.agents.regime_d_execution`).
 _CADRE_SANS_REGIME = f"""\
@@ -309,7 +309,7 @@ class GenerateurDefinitionAgent:
 
         `faits` (#1521) est ce que la personne a dit du projet et ce qu'il montre —
         ses réponses, ses commandes —, que le playbook ne contredit pas. Composé par
-        Maestro (`maestro.equipe.proposition.faits_du_projet`), jamais saisi : il
+        Maestro (`maestro.team.proposal.project_facts`), jamais saisi : il
         n'est donc pas borné comme l'intention, qui vient d'un champ de formulaire.
         Vide, le prompt est celui d'avant, au caractère près.
 
