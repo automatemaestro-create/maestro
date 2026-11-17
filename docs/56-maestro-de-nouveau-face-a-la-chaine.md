@@ -248,27 +248,36 @@ budget.
 | Issue | échec, rien de fusionné | terminé, livrable fusionné dans le clone |
 | Commits au hook du dépôt | 0/5 | 0/18 |
 
-### 4.1 #1542 — l'outillage lit enfin les instructions, mais il en reprend mal les commandes
+### 4.1 #1542 — l'outillage lit les instructions, et depuis #1678 il en reprend les commandes
 
-L'`AGENTS.md` écrit à l'import renvoie à `CLAUDE.md`, et l'agent l'a lu. Il a vérifié la convention
-de commit dans l'historique, et il a joué `mypy maestro` comme la CI. Les commandes de l'outillage,
-en revanche, viennent des fichiers de configuration (`pyproject.toml`, `package.json`), et elles
-contredisent les instructions :
-- **`lancer-les-tests`** prescrit `pytest`, présenté comme « la vérification que tout agent joue
-  avant de rendre son travail ». `CLAUDE.md` dit l'inverse : ne pas rejouer la suite complète. Le
-  brief en a même fait un critère, et c'est d'ici que vient l'heure de suite entière ;
-- **`verifier-le-style`** prescrit `ruff format .` et `mypy .`. Or le dépôt n'exige que
-  `ruff check`, et sa CI joue `mypy maestro` ;
-- **les commandes sont nues**, hors du venv que `CLAUDE.md` impose. La vérification de l'outillage
-  les a toutes vues échouer, avec le code 127, dans une copie sans venv, et l'outillage les livre
-  marquées « ⚠ Échouée ». Au premier essai, l'outillage écrivait au contraire les commandes Windows
-  du poste ;
-- **`mettre-en-route`** écrit deux fois `bash scripts/setup.sh`. C'est cette commande que la grille
-  a lue pour l'installation (§ 3.1).
+L'`AGENTS.md` écrit à l'import renvoie à `CLAUDE.md`, et l'agent le lit. Les commandes de
+l'outillage viennent des instructions du dépôt, et plus de ses fichiers de configuration (#1678) :
+- **`lancer-les-tests`** prescrit `bash scripts/ci/local.sh`, c'est-à-dire le périmètre du diff ;
+- **`verifier-le-style`** prescrit `local.sh --only lint` et `local.sh --only mypy` ;
+- **`mettre-en-route`** prescrit `bash scripts/setup.sh`, une seule fois ;
+- la vérification de l'outillage les a jouées sur une copie installée comme le dépôt le déclare.
 
-**Le pont `@AGENTS.md`**, ajouté à la fin de `CLAUDE.md` pour le client du poste (#1295), fait
-passer le fichier au-dessus de son cliquet : 19 tokens de trop. La personne qui accepte la pièce ne
-le sait pas. Une développeuse l'aurait refusée.
+**La preuve sur le réel est #1688** (2026-11-17, base `3fd3de6e`, run `f26576408d0a`, #1305
+ramené à `maestro/providers/claude.py`). Aucune commande de l'agent, de la vérification ni de la
+recette ne joue la suite entière. L'agent joue ses deux suites, puis `local.sh`, qui rend
+« Périmètre réduit ». Le run tient en 1 h 26 min 32 s du premier geste à sa fin, contre
+2 h 37 min 09 s à #1587, et le grand livre en compte 5,83 $, contre 6,06 $.
+
+**Ce qui reste**, mesuré sur le même passage :
+- **Le périmètre réduit compte 52 suites.** Le module en appelle 31, mais les skills que
+  l'outillage commite sur la `main` du projet, sans les pousser, entrent dans le diff de chaque
+  tâche. Leur nom nu `SKILL.md` tire 21 suites qui lisent `.claude/skills/`, dont `test_orchestrate`
+  (#1713).
+- **À l'intégrité basse, le filet ne voit pas Docker.** Il joue alors en natif, et ses 52 suites
+  prennent 35 min 26 s (#1714).
+- **La vérification coupe ce filet à 300 s**, et le critère reste « non joué ». Sans réponse à la
+  question du Chef de projet, la tâche finit en échec, et le run avec elle : le correctif de l'agent
+  reste sur sa branche (#1715).
+- **Le pont `@AGENTS.md`** fait encore passer `CLAUDE.md` au-dessus de son cliquet, d'un token
+  cette fois. La pièce prévient qu'elle peut faire rougir `test_audit_commandes`, sans l'avoir joué
+  (#1716).
+- **La relecture d'après le run** lit le `pytest tests/…` de `CLAUDE.md` comme `pytest tests/`, la
+  suite entière. Sur ce passage, elle ne l'a pas jouée (#1717).
 
 ### 4.2 #1543 — non exercé
 
@@ -355,10 +364,15 @@ Sur un ticket aussi petit, la chaîne livre en 19 min, pipeline compris. Le seui
 
 | Écart | Ticket |
 | --- | --- |
-| L'outillage d'un projet importé prend ses commandes dans les fichiers de configuration, contre ses instructions : la suite entière au lieu du périmètre, `ruff format .`, `mypy .`, des commandes hors du venv. Et son pont fait rougir le budget de `CLAUDE.md` | **#1678** (`prio::haute`) |
+| L'outillage d'un projet importé prend ses commandes dans les fichiers de configuration, contre ses instructions : la suite entière au lieu du périmètre, `ruff format .`, `mypy .`, des commandes hors du venv. Et son pont fait rougir le budget de `CLAUDE.md` | **#1678** (`prio::haute`), fermé : sa preuve sur le réel est #1688 (§ 4.1) |
 | Les commits du moteur ignorent la convention d'un projet importé, et ceux de l'agent ne citent pas le ticket | **#1679** (`prio::haute`) |
 | La vérification et la recette comptent non tenu un critère qu'elles n'ont pas su exécuter, et la recette rejoue ce qui vient d'être tenu | **#1680** (`prio::moyenne`) |
 | La grille arrête un vrai dépôt à 300 s par commande, compte manquant un formatage écarté, et juge la convention sur les seuls sujets | **#1681** (`prio::moyenne`) |
+| Mesuré par #1688 (§ 4.1) : les pièces d'outillage commitées sans être poussées élargissent le périmètre de chaque tâche, de 31 à 52 suites | **#1713** (`prio::moyenne`) |
+| Mesuré par #1688 : à l'intégrité basse, le filet ne voit pas Docker et joue pytest en natif | **#1714** (`prio::haute`) |
+| Mesuré par #1688 : la vérification coupe à 300 s la commande que le projet déclare, et la tâche part en échec | **#1715** (`prio::haute`) |
+| Mesuré par #1688 : le pont `@AGENTS.md` prévient qu'il peut faire rougir le budget de `CLAUDE.md`, sans jouer le test, et le fait rougir | **#1716** (`prio::moyenne`) |
+| Mesuré par #1688 : la relecture d'après le run lit `pytest tests/…` comme la suite entière | **#1717** (`prio::moyenne`) |
 
 **Restent sans ticket**, pour les raisons suivantes :
 - **#1543, non exercé** : ce n'est pas un écart avec la chaîne, mais une pièce qui manque à C4
@@ -395,6 +409,8 @@ Sur un ticket aussi petit, la chaîne livre en 19 min, pipeline compris. Le seui
 - **#1587** : le choix du ticket, le protocole, la consigne du quota, les relevés des deux côtés et
   le rapport du rejeu.
 - **#1678, #1679, #1680 et #1681** : les écarts.
+- **#1688** : la preuve sur le réel de #1678, et son relevé (versé aussi sur #1678). Ses écarts
+  sont #1713 à #1717.
 - **#1515** : une note y verse les pièces de ce passage.
 - **docs/06**, section « Maestro sur son propre dépôt » : le verdict du seuil.
 - **[docs/51](./51-maestro-face-a-la-chaine-du-depot.md)** : le premier essai.
