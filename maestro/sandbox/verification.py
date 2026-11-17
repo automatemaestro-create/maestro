@@ -306,6 +306,10 @@ _OCTETS_GARDES = CARACTERES_SORTIE * 8
 #: passage lance un bash : sous Windows, une à deux centaines de millisecondes.
 PERIODE_SONDE_S = 1.0
 
+#: Tous les combien une commande jouée sous un signal d'abandon le relit (#1715) : le
+#: temps qu'un run arrêté laisse vivre cette commande, pas une borne de la commande.
+_ABANDON_POLL_S = 0.5
+
 #: La variable où le service d'une vérification et sa sonde trouvent le port que
 #: Maestro leur réserve (#1487) — posée pour eux seuls, jamais pour un agent.
 VARIABLE_PORT = "MAESTRO_PORT"
@@ -1299,10 +1303,11 @@ def jouer(
     cwd: Path,
     *,
     interprete: Sequence[str],
-    delai_s: float,
+    delai_s: float | None,
     caracteres_sortie: int = CARACTERES_SORTIE,
     environnement: Mapping[str, str] | None = None,
     abaissement: Abaissement | None = None,
+    abandon: threading.Event | None = None,
 ) -> Execution:
     """Joue `commande` dans `cwd` par `interprete`, et l'arrête au bout de `delai_s`.
 
@@ -1312,6 +1317,11 @@ def jouer(
     verdict est pris sur **la fin du processus**, pas sur celle de sa sortie ; puis
     tout l'arbre est arrêté — au délai, ou parce que la commande a laissé derrière
     elle un démon qui tient la sortie (voir l'en-tête).
+
+    `delai_s=None` (#1715) : rien ne borne la commande, elle se joue jusqu'à ce qu'elle
+    rende la main. `abandon` est alors ce qui l'arrête : l'appelant qui cesse
+    d'attendre le pose, et l'arbre est arrêté comme au délai, avec sa descendance. Une
+    commande abandonnée rend `expiree` : elle n'a pas rendu son verdict.
 
     `abaissement` (#1691) fait naître l'arbre à l'intégrité basse, sous l'établi qu'il
     porte. `interprete` est alors le sien (`Abaissement.interprete`).
@@ -1332,11 +1342,7 @@ def jouer(
         target=_lire, args=(arbre.process.stdout, tampon), daemon=True
     )
     lecteur.start()
-    try:
-        arbre.process.wait(timeout=max(delai_s, 0.0))
-        expiree = False
-    except subprocess.TimeoutExpired:
-        expiree = True
+    expiree = not _rend_la_main(arbre.process, delai_s, abandon)
     try:
         _arreter(arbre)
         lecteur.join(timeout=_DELAI_VIDANGE_S)
@@ -1452,6 +1458,33 @@ def demarrer(
         sonde=derniere,
         duree_s=round(time.monotonic() - debut, 2),
     )
+
+
+def _rend_la_main(
+    process: subprocess.Popen[bytes] | low_integrity.LowIntegrityProcess,
+    delai_s: float | None,
+    abandon: threading.Event | None,
+) -> bool:
+    """`process` a-t-il rendu la main avant son délai, et avant qu'on cesse de l'attendre ? (#1715)
+
+    `delai_s=None` ne pose aucun délai. Sans `abandon`, l'attente est un seul appel
+    bloquant ; avec lui, elle se réveille toutes les `_ABANDON_POLL_S` pour le relire.
+    """
+    echeance = None if delai_s is None else time.monotonic() + max(delai_s, 0.0)
+    while True:
+        reste = None if echeance is None else max(echeance - time.monotonic(), 0.0)
+        if abandon is None:
+            tranche = reste
+        else:
+            tranche = _ABANDON_POLL_S if reste is None else min(reste, _ABANDON_POLL_S)
+        try:
+            process.wait(timeout=tranche)
+            return True
+        except subprocess.TimeoutExpired:
+            if abandon is not None and abandon.is_set():
+                return False
+            if echeance is not None and time.monotonic() >= echeance:
+                return False
 
 
 def _arreter(arbre: Arbre) -> None:

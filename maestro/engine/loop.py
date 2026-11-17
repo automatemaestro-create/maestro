@@ -2304,8 +2304,10 @@ class OrchestrationEngine:
         la carte offre de prendre la livraison telle quelle
         (`CHOIX_LIVRAISON_ACCEPTEE`, quand l'exécuteur sait la solder) ; une
         réponse en mots part au Chef de projet, qui la juge en sachant que le
-        travail est livré ; sans réponse, la tâche reste en échec **avec** sa
-        livraison et l'aval ne part pas.
+        travail est livré. La question dit ce qui tient et ce qui n'a pas pu être
+        joué, et elle attend la personne **sans borne** (#1715) : se taire n'est pas
+        juger. D'ici là, la carte dit « Attente humaine », la tâche garde sa
+        livraison, et l'aval ne part pas.
 
         ## Ce qui manque se propose avant de se juger (#1181)
 
@@ -2385,7 +2387,7 @@ class OrchestrationEngine:
                     # levé : la question ne le cite pas (vu sur le run `0e7e20dd6844`).
                     deja_demandee = dernier
                     diagnostic = ""
-                    question = question_de_la_livraison(task)
+                    question = question_de_la_livraison(task, dernier.erreur or "")
                     motif = "la livraison n'a pas pu être vérifiée"
                     if self._executor.sait_accepter_une_livraison:
                         choix = (CHOIX_LIVRAISON_ACCEPTEE,)
@@ -2541,8 +2543,21 @@ class OrchestrationEngine:
                     )
                     break
                 texte = question_du_rattrapage(task, dossier, question, diagnostic)
+                if livree and not suspendue:
+                    # Une livraison qui attend qu'on en décide attend quelqu'un (#1715) :
+                    # la carte le dit, comme pendant une proposition.
+                    self._consigne_la_carte(
+                        task, dernier, STATUT_EN_ATTENTE_VALIDATION,
+                        dernier.erreur or "", journal,
+                    )
+                    suspendue = True
                 reponse = await self._demande(
-                    task, texte, journal, choix=choix, livree=dernier.verification_en_panne
+                    task,
+                    texte,
+                    journal,
+                    choix=choix,
+                    livree=dernier.verification_en_panne,
+                    sans_borne=livree,
                 )
                 questions += 1
                 if reponse is None:
@@ -2919,6 +2934,7 @@ class OrchestrationEngine:
         choix: tuple[str, ...] = (),
         verbe: str = VERBE_RATTRAPAGE,
         livree: bool = False,
+        sans_borne: bool = False,
     ) -> str | None:
         """Pose dans le fil la question d'un échec, et attend la réponse — bornée (#1178).
 
@@ -2927,6 +2943,11 @@ class OrchestrationEngine:
         rend en bouton, et un espace de clés à elle pour que sa réponse ne soit
         jamais celle d'une question. `choix` sert aussi la livraison non vérifiée
         (#1396), dont `livree` fait dire à l'hypothèse qu'elle est gardée.
+
+        `sans_borne` (#1715) : la question attend sa réponse comme une validation,
+        sans que le silence tranche — celle d'une livraison non vérifiée, dont l'issue
+        par défaut serait de condamner un travail que personne n'a jugé. Seule la fin
+        du run met fin à l'attente.
 
         La question **quitte le fil** à la borne (#1396) : passé ce délai, la boucle
         a conclu et plus rien ne lirait une réponse — à la différence d'une question
@@ -2947,7 +2968,7 @@ class OrchestrationEngine:
         questionneur = self._questionneur
         if questionneur is None:  # pragma: no cover — l'appelant l'a vérifié
             return None
-        attente_s = self._bornes_question.attente_s
+        attente_s = None if sans_borne else self._bornes_question.attente_s
         hypothese = hypothese_du_rattrapage(
             self._juge.aval(journal.run_id, task.id) if self._juge is not None else (),
             livree=livree,
@@ -2969,10 +2990,14 @@ class OrchestrationEngine:
         )
         reponse: str | None = None
         try:
-            reponse = await asyncio.wait_for(questionneur(demande), attente_s)
+            if attente_s is None:
+                reponse = await questionneur(demande)
+            else:
+                reponse = await asyncio.wait_for(questionneur(demande), attente_s)
             motif = f"réponse reçue à : {texte}"
         except TimeoutError:
-            motif = f"aucune réponse après {attente_s:g} s à : {texte}"
+            apres = f" après {attente_s:g} s" if attente_s is not None else ""
+            motif = f"aucune réponse{apres} à : {texte}"
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — un canal muet ne condamne rien de plus

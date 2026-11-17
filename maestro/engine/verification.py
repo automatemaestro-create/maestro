@@ -76,10 +76,14 @@ disent les chemins de la racine (`Livraison.en_clair`) ; et un miroir impossible
 (au-delà de ses bornes, faute de place) rend chaque commande « non jouée » avec son
 motif (`Livraison.empechement`) — jamais rejouée dans la racine.
 
-Sous deux gardes, les mêmes que pour un agent : la **portée « projet »**
-(`maestro.portee`) — une commande qui sort du dossier ou qui détruirait ce que la
-personne avait posé n'est pas jouée, elle est dite — et un **délai** par commande,
-garde-fou et pas verdict (`DelaisVerification`).
+Sous la garde de la **portée « projet »** (`maestro.portee`), la même que pour un
+agent : une commande qui sort du dossier ou qui détruirait ce que la personne avait
+posé n'est pas jouée, elle est dite. Le **délai** d'une commande n'est pas un
+chiffre de Maestro (#1715) : il vient de ce qu'on sait d'elle — la limite que le
+projet pose à la vérification qu'elle joue, ou la durée que l'agent vient d'en
+mesurer —, nommé par le vérificateur avec son origine (`Controle.delai_s`). Une
+commande que rien ne borne se joue jusqu'à son verdict, et s'arrête quand le run
+cesse de l'attendre (`DelaisVerification`).
 
 ## La boucle, et ce qui l'arrête
 
@@ -254,6 +258,8 @@ _OUTILLAGE_MAX = 12000
 #: Ce que la recette lit de chaque constat d'une vérification antérieure (#1680) : de
 #: quoi reconnaître le critère et son verdict, pas de quoi recopier une sortie de tests.
 _PREUVE_ANTERIEURE_MAX = 300
+#: Ce que la personne lit de la raison d'un critère non joué (#1715) : une phrase.
+_RAISON_MAX = 400
 _FICHIER_MAX = 8000
 _FICHIERS_MAX = 40_000
 _NON_LUS_MAX = 50
@@ -276,21 +282,29 @@ _NOMME_LE_PORT = re.compile(r"\$\{?" + execution.VARIABLE_PORT + r"\b")
 class DelaisVerification:
     """Les délais d'un contrôle joué, en secondes — des garde-fous, pas des verdicts.
 
-    `commande_s` borne chaque commande : une suite de tests sur un projet réel prend
-    une à deux minutes. Au-delà, la commande est arrêtée avec sa descendance, et
-    elle **s'abstient** (#1680) : coupée avant son verdict, elle n'a rien prouvé du
+    Le délai d'une commande est d'abord **le sien** (`Controle.delai_s`, #1715) : ce que
+    Maestro sait d'elle — ce que le projet en dit, ou ce que l'agent en a mesuré —,
+    nommé par le vérificateur avec son origine. `commande_s` vaut pour une commande dont
+    on ne sait rien, et il n'y en a **aucun** : la durée d'une commande n'est pas un
+    verdict, et un chiffre choisi ici ne viendrait ni du projet ni de ce que Maestro a
+    mesuré. Une telle commande se joue jusqu'à ce qu'elle rende la main ; ce qui l'arrête
+    sinon, c'est que le run cesse de l'attendre. Une commande coupée par son délai est
+    arrêtée avec sa descendance et **s'abstient** (#1680) : elle n'a rien prouvé du
     critère, ni dans un sens ni dans l'autre — elle empêche le vert, sans revenir à
-    l'agent. `demarrage_s` est la fenêtre d'observation d'un contrôle
-    de démarrage **sans sonde** : un service qui tourne encore au bout de ce temps
-    a démarré. Un démarrage **sondé** (#1432) est borné par `commande_s` — il
-    s'arrête dès que le service répond, et un service qu'on construit avant de le
-    servir prend le temps d'une construction —, chaque passage de sa sonde par
-    `sonde_s`. `liberation_s` (#1449) est le temps laissé à ce qui tient déjà ce que
-    la sonde interroge pour le rendre — le serveur qu'un agent voisin a lancé pour
-    se vérifier, puis arrêté — avant que le contrôle ne soit dit « non joué ».
+    l'agent. Un test qui pose `commande_s` borne toutes les commandes sans délai à elles.
+
+    `demarrage_s` est la fenêtre d'observation d'un contrôle de démarrage **sans
+    sonde** : un service qui tourne encore au bout de ce temps a démarré. Un démarrage
+    **sondé** (#1432) s'arrête dès que le service répond, et son critère est qu'il
+    réponde : il est borné par le délai de son contrôle, à défaut par `service_s`,
+    chaque passage de sa sonde par `sonde_s`. `liberation_s` (#1449) est le temps
+    laissé à ce qui tient déjà ce que la sonde interroge pour le rendre — le serveur
+    qu'un agent voisin a lancé pour se vérifier, puis arrêté — avant que le contrôle ne
+    soit dit « non joué ».
     """
 
-    commande_s: float = 300.0
+    commande_s: float | None = None
+    service_s: float = 300.0
     demarrage_s: float = 15.0
     sonde_s: float = 15.0
     liberation_s: float = 120.0
@@ -312,6 +326,9 @@ class Controle:
     `anterieur` (#1680) : le numéro du constat d'une vérification antérieure qui
     porte sur le même critère (`ConstatAnterieur`), tel que le vérificateur de la
     recette le nomme — reprise sans rejeu, ou écart à nommer.
+    `delai_s` et `origine_delai` (#1715) : le temps que la commande reçoit, et d'où
+    Maestro le sait — la limite que le projet pose à cette vérification, ou ce que
+    l'agent a mesuré en la jouant. `None` : rien ne la borne (`DelaisVerification`).
     """
 
     critere: str
@@ -321,6 +338,8 @@ class Controle:
     sonde: str = ""
     clone_neuf: bool = False
     anterieur: str = ""
+    delai_s: float | None = None
+    origine_delai: str = ""
 
     @property
     def joue(self) -> bool:
@@ -336,7 +355,7 @@ class Controle:
         return f"`{self.commande}`"
 
     def to_dict(self) -> dict[str, Any]:
-        """La forme JSON du contrôle — `prior_finding` seulement quand il en nomme un."""
+        """La forme JSON du contrôle — `prior_finding` et `timeout_*` seulement quand il en a."""
         donnees: dict[str, Any] = {
             "critere": self.critere,
             "commande": self.commande,
@@ -347,6 +366,9 @@ class Controle:
         }
         if self.anterieur:
             donnees["prior_finding"] = self.anterieur
+        if self.delai_s is not None:
+            donnees["timeout_s"] = self.delai_s
+            donnees["timeout_source"] = self.origine_delai
         return donnees
 
 
@@ -383,6 +405,20 @@ class Constat:
             code = f" → code {self.code}" if self.code is not None else ""
             tete += f" — `{self.commande}`{code}"
         return f"{tete} : {self.preuve}" if self.preuve else tete
+
+    def en_bref(self) -> str:
+        """Le constat tel que la personne en décide (#1715) : son état, et pourquoi non joué.
+
+        Ni la sortie d'une commande qui a tenu, ni la preuve entière : la première ligne
+        de la preuve d'un critère non joué dit pourquoi, et la preuve entière reste dans
+        l'étape de vérification du journal.
+        """
+        if self.etat != CONSTAT_NON_JOUE:
+            return replace(self, preuve="", commande="", code=None).en_ligne()
+        raison = self.preuve.strip().splitlines()[0] if self.preuve.strip() else ""
+        if len(raison) > _RAISON_MAX:
+            raison = raison[: _RAISON_MAX - 1] + "…"
+        return replace(self, preuve=raison, code=None).en_ligne()
 
     def to_dict(self) -> dict[str, Any]:
         """La forme JSON du constat — celle que le panneau de détail lit.
@@ -563,6 +599,12 @@ class Verdict:
             return self.empechement
         return "\n".join(c.en_ligne() for c in self.constats)
 
+    def en_bref(self) -> str:
+        """Chaque critère et son état, une ligne chacun — ce dont la personne décide (#1715)."""
+        if self.empechement:
+            return self.empechement
+        return "\n".join(c.en_bref() for c in self.constats)
+
     def to_dict(self) -> dict[str, Any]:
         """La forme JSON du verdict — portée par l'étape `:verification` du journal."""
         return {
@@ -732,8 +774,16 @@ Elle installe donc d'abord les dépendances par la commande d'installation du pr
 commandes simples enchaînées par |, &&, || ou ;, avec if/then au besoin : JAMAIS de \
 substitution $(…) ni d'accent grave, JAMAIS de redirection d'entrée < ni de heredoc. \
 Pour compter ou comparer une sortie, passe par un tube (… | grep -q …, … | wc -l | \
-grep -qx 4) ou par python -c. L'entrée standard est déjà fermée, CI=1 est posé et \
-chaque commande a déjà son délai : n'écris ni timeout, ni < /dev/null.
+grep -qx 4) ou par python -c. L'entrée standard est déjà fermée et CI=1 est posé : \
+n'écris ni timeout, ni < /dev/null.
+- Le délai d'une commande vient de ce que l'on sait d'elle, jamais d'un chiffre que tu \
+choisirais : la limite de temps que le projet pose à la vérification qu'elle joue (celle \
+du job ou de l'étape de son intégration continue qui la joue, ou la durée que ses \
+instructions annoncent), ou la durée que l'agent dit avoir mesurée en la jouant dans son \
+espace — laisse-lui alors de la marge au-delà, et dis laquelle. Écris-le en secondes sous \
+"timeout_s", et d'où il vient sous "timeout_source". Une commande que rien de tout cela \
+ne borne n'a pas de délai : ne lui en invente pas, elle se joue jusqu'à ce qu'elle rende \
+la main. Un délai écoulé ne prouve rien du critère, ni dans un sens ni dans l'autre.
 - Un critère qui ne se constate qu'en lisant le livrable devient une lecture : écris \
 ce qu'on doit y constater, puis juge-le toi-même sur le livrable ci-dessous, avec ta \
 preuve — l'extrait qui le montre, ou ce qui manque.
@@ -750,6 +800,8 @@ _FORME_ETABLIR = """\
 Forme de la réponse :
 {"controles": [
   {"critere": "le critère, tel que la tâche l'écrit", "commande": "..."},
+  {"critere": "...", "commande": "...", "timeout_s": 1800, \
+"timeout_source": "d'où vient ce délai"},
   {"critere": "...", "commande": "...", "demarrage": true},
   {"critere": "...", "commande": "...", "demarrage": true, "sonde": "..."},
   {"critere": "...", "commande": "...", "clone_neuf": true},
@@ -1042,7 +1094,7 @@ class VerificateurTaches:
         if controle.clone_neuf:
             return await self._jouer_sur_un_clone(controle, livraison.espace, interprete)
         joueur = self._joueur if self._joueur is not None else execution.jouer
-        delai = self._delais.demarrage_s if controle.demarrage else self._delais.commande_s
+        delai, origine = self._delai_de(controle)
         try:
             # Dans un fil : `jouer` attend un processus, et la boucle asyncio du run
             # porte d'autres tâches pendant ce temps. Un service démarré prend son
@@ -1056,12 +1108,46 @@ class VerificateurTaches:
                 (port, resultat), obtenu = await _a_son_tour(_au_port_reserve(appel))
                 apres = _apres_attente(obtenu - debut, tour=True, port=False)
             else:
-                resultat, apres = await asyncio.to_thread(appel), ""
+                resultat, apres = await self._jusqu_a_son_verdict(appel), ""
         except execution.PortIndisponible as exc:
             return non_joue(f"pas jouée — {exc}")
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
-        return _constat_joue(controle, resultat, delai, apres=apres, port=port)
+        return _constat_joue(controle, resultat, delai, apres=apres, port=port, origine=origine)
+
+    def _delai_de(self, controle: Controle) -> tuple[float | None, str]:
+        """Le délai d'une commande du contrôle, et d'où il vient (#1715).
+
+        Un démarrage sans sonde a le sien (`demarrage_s`) : le temps de constater qu'il
+        tourne, pas celui d'un verdict. Une commande qui rend la main a d'abord **le
+        sien**, nommé par le vérificateur avec son origine ; sinon celui que la
+        vérification donne à toute commande (`DelaisVerification.commande_s`), aucun
+        par défaut : une commande que rien ne borne se joue jusqu'à son verdict.
+        """
+        if controle.demarrage:
+            return self._delais.demarrage_s, ""
+        if controle.delai_s is not None:
+            return controle.delai_s, controle.origine_delai
+        return self._delais.commande_s, ""
+
+    async def _jusqu_a_son_verdict(
+        self, appel: Callable[..., execution.Execution]
+    ) -> execution.Execution:
+        """Joue `appel` dans un fil, et arrête sa commande si l'on cesse de l'attendre (#1715).
+
+        Une commande sans délai ne rend la main que d'elle-même : quand le run qui
+        l'attend s'arrête, la tâche est annulée, et la commande — avec tout ce qu'elle a
+        lancé — s'arrête avec elle plutôt que de tourner sur le poste. Un joueur de
+        test (`joueur=`) ne connaît pas ce signal : il est joué tel quel.
+        """
+        if self._joueur is not None:
+            return await asyncio.to_thread(appel)
+        abandon = threading.Event()
+        try:
+            return await asyncio.to_thread(functools.partial(appel, abandon=abandon))
+        except asyncio.CancelledError:
+            abandon.set()
+            raise
 
     async def _jouer_sur_un_clone(
         self, controle: Controle, espace: Path, interprete: tuple[str, ...]
@@ -1077,19 +1163,21 @@ class VerificateurTaches:
         """
         non_joue = _non_joue(controle)
         joueur = self._joueur if self._joueur is not None else execution.jouer
-        delai = self._delais.commande_s
+        delai, origine = self._delai_de(controle)
 
-        def jouer() -> execution.Execution:
+        def jouer(**signal: Any) -> execution.Execution:
             with execution.clone_neuf(espace) as clone:
-                return joueur(controle.commande, clone, interprete=interprete, delai_s=delai)
+                return joueur(
+                    controle.commande, clone, interprete=interprete, delai_s=delai, **signal
+                )
 
         try:
-            resultat = await asyncio.to_thread(jouer)
+            resultat = await self._jusqu_a_son_verdict(jouer)
         except execution.CloneImpossible as exc:
             return non_joue(f"pas jouée — {exc}")
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
-        constat = _constat_joue(controle, resultat, delai)
+        constat = _constat_joue(controle, resultat, delai, origine=origine)
         if constat.etat != CONSTAT_NON_TENU:
             return constat
         return replace(
@@ -1119,7 +1207,9 @@ class VerificateurTaches:
         """
         non_joue = _non_joue(controle)
         demarreur = self._demarreur if self._demarreur is not None else execution.demarrer
-        delai = self._delais.commande_s
+        # Un service sondé a une fenêtre : le temps qu'il reçoit pour répondre (#1432),
+        # le sien s'il est nommé (#1715), celle de la vérification sinon.
+        delai = controle.delai_s if controle.delai_s is not None else self._delais.service_s
         appel = functools.partial(
             demarreur,
             controle.commande,
@@ -1361,6 +1451,10 @@ def _lire_reecriture(
                 if "demarrage" in element
                 else controles[rang].demarrage
             )
+            # Ni le temps qu'elle reçoit, sauf si la réécriture en nomme un (#1715).
+            delai, origine = _lire_delai(element)
+            if delai is None:
+                delai, origine = controles[rang].delai_s, controles[rang].origine_delai
             reecrits[rang] = Controle(
                 critere=controles[rang].critere,
                 commande=commande,
@@ -1370,8 +1464,27 @@ def _lire_reecriture(
                 clone_neuf=controles[rang].clone_neuf and not demarrage,
                 # Ni le critère qu'une vérification antérieure constatait (#1680).
                 anterieur=controles[rang].anterieur,
+                delai_s=delai,
+                origine_delai=origine,
             )
     return reecrits
+
+
+def _lire_delai(element: Mapping[str, Any]) -> tuple[float | None, str]:
+    """Le délai qu'un contrôle nomme, et d'où il vient — ou aucun (#1715).
+
+    Un délai se lit avec son origine, ou pas du tout : une durée sans raison serait un
+    chiffre choisi, et une raison sans durée ne borne rien. Seule une durée positive
+    en secondes compte ; le reste laisse la commande sans délai, jouée jusqu'à son
+    verdict.
+    """
+    duree = element.get("timeout_s")
+    origine = _texte(element.get("timeout_source"))
+    if isinstance(duree, bool) or not isinstance(duree, int | float):
+        return None, ""
+    if not duree > 0 or duree == float("inf") or not origine:
+        return None, ""
+    return float(duree), origine
 
 
 def _lire_abstentions(texte: str, fautifs: Sequence[int]) -> dict[int, str]:
@@ -1533,15 +1646,17 @@ def _non_joue(controle: Controle) -> Callable[[str], Constat]:
 def _constat_joue(
     controle: Controle,
     resultat: execution.Execution,
-    delai: float,
+    delai: float | None,
     *,
     apres: str = "",
     port: int | None = None,
+    origine: str = "",
 ) -> Constat:
     """Le constat d'une commande jouée — par son code de retour, jamais par sa sortie.
 
     `apres` : ce qui a retardé un démarrage (`_apres_attente`, #1449), ou rien.
     `port` : celui que Maestro a réservé à un démarrage (#1487), ou `None`.
+    `origine` : d'où vient le délai d'une commande coupée (#1715), dit dans sa preuve.
     """
     sortie = _fin(resultat.sortie, PREUVE_MAX)
     sur = _sur_le_port(controle, port)
@@ -1557,12 +1672,19 @@ def _constat_joue(
     if resultat.expiree:
         # Coupée avant son verdict, elle s'abstient (#1680) : une suite arrêtée à 15 %
         # n'a vu échouer aucun test, et ce n'est pas à l'agent d'en répondre.
+        if delai is None:
+            coupee = "coupée — Maestro l'a arrêtée avant qu'elle ne rende la main"
+        else:
+            laisse = f", le délai que lui laisse {origine}" if origine else ""
+            coupee = (
+                f"coupée — elle n'a pas rendu la main en {delai:g} s{laisse}, "
+                "et Maestro l'a arrêtée"
+            )
         return Constat(
             critere=controle.critere,
             etat=CONSTAT_NON_JOUE,
             preuve=(
-                f"coupée — elle n'a pas rendu la main en {delai:g} s, et Maestro l'a "
-                "arrêtée avant son verdict : elle ne prouve rien du critère, ni tenu ni "
+                f"{coupee} avant son verdict : elle ne prouve rien du critère, ni tenu ni "
                 "non tenu"
             )
             + (f"\n{sortie}" if sortie else ""),
@@ -1915,6 +2037,7 @@ def _lire_etablissement(
         if commande:
             sonde = _texte(element.get("sonde"))
             demarrage = element.get("demarrage") is True or bool(sonde)
+            delai, origine = _lire_delai(element)
             controles.append(
                 Controle(
                     critere=critere,
@@ -1925,6 +2048,9 @@ def _lire_etablissement(
                     # ne vaut que pour une commande qui rend la main (#1507).
                     clone_neuf=element.get("clone_neuf") is True and not demarrage,
                     anterieur=numero,
+                    # Son délai vient de ce que le vérificateur en sait, ou n'est pas (#1715).
+                    delai_s=delai,
+                    origine_delai=origine,
                 )
             )
             continue
@@ -2206,9 +2332,15 @@ class Recette:
             # Rien de faux, mais rien de vérifié en entier : l'agent n'y peut rien,
             # et sa livraison est **gardée** (#1432) — c'est le juge qui n'a pas pu
             # aller au bout, comme lorsqu'il tombe en panne (#1388).
+            # Son motif est ce que la personne lit pour décider de la garder (#1715) :
+            # chaque critère et son état, la raison de ce qui n'a pas pu être joué —
+            # les sorties entières sont sur la carte, avec chaque vérification.
             raise LivraisonNonVerifiee(
                 "livrée, "
-                + self.motif("ce qui reste n'a pas pu être vérifié, et l'agent n'y peut rien"),
+                + self.motif(
+                    "ce qui reste n'a pas pu être vérifié, et l'agent n'y peut rien",
+                    bref=True,
+                ),
                 livraison.sortie,
                 livraison.fichiers,
             )
@@ -2269,14 +2401,19 @@ class Recette:
         """La dernière vérification a-t-elle constaté un critère qui ne tient pas ?"""
         return self.dernier is not None and not self.dernier.tenue
 
-    def motif(self, arret: str) -> str:
-        """L'échec motivé : le verdict, le nombre de livraisons, l'arrêt, puis les preuves."""
+    def motif(self, arret: str, *, bref: bool = False) -> str:
+        """L'échec motivé : le verdict, le nombre de livraisons, l'arrêt, puis les preuves.
+
+        `bref` : chaque critère et son état plutôt que les preuves entières
+        (`Verdict.en_bref`, #1715).
+        """
         verdict = self.dernier
         if verdict is None:
             return f"non vérifiée : {arret}."
+        preuves = verdict.en_bref() if bref else verdict.preuves()
         return (
             f"non vérifiée — {verdict.resume()} après {self.livraisons} livraison(s) : "
-            f"{arret}.\n{verdict.preuves()}"
+            f"{arret}.\n{preuves}"
         )
 
     def retour(self, verdict: Verdict) -> str:

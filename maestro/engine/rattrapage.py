@@ -59,8 +59,10 @@ du juge disait « tâche trop grosse ». Le fait voyage désormais dans la tenta
 le vérificateur a déjà été relancé seul, l'espace encore ouvert, et il reste à
 **demander** (`question_de_la_livraison`) — prendre la livraison telle quelle, d'un
 geste (`CHOIX_LIVRAISON_ACCEPTEE`), ou répondre en mots, que le Chef de projet lit
-en sachant que le travail est livré. Sans réponse, la tâche reste en échec avec sa
-livraison, et l'aval ne part pas sur un travail que personne n'a jugé.
+en sachant que le travail est livré. La question attend la personne **sans borne**
+(#1715), comme une validation : se taire n'est pas juger, et rien ne tranche à sa
+place. Tant qu'elle attend, la tâche garde sa livraison et l'aval ne part pas sur un
+travail que personne n'a jugé.
 """
 
 from __future__ import annotations
@@ -606,7 +608,13 @@ def consigne_proposition(
     )
 
 
-def question_de_la_livraison(tache: Task) -> str:
+#: Ce que la question d'une livraison non vérifiée cite de sa vérification (#1715) :
+#: chaque critère et son état tiennent sur quelques lignes, et la carte n'est pas un
+#: journal — les preuves entières restent dans l'étape de vérification.
+_ETAT_DE_LA_VERIFICATION_MAX = 3000
+
+
+def question_de_la_livraison(tache: Task, etat: str = "") -> str:
     """Ce que la carte demande d'une livraison que le vérificateur n'a pas pu juger (#1396).
 
     Rien à diagnostiquer : le fait est typé (`TaskResult.verification_en_panne`),
@@ -617,27 +625,43 @@ def question_de_la_livraison(tache: Task) -> str:
     panne y est, puisque c'est elle qu'on accepte de ne pas avoir levée.
 
     Un juge qui n'a pas pu **jouer** un de ses contrôles (#1432 : une commande que
-    le système a refusé de lancer) pose la même question : rien n'a été constaté
-    faux, mais tout n'a pas été jugé.
+    le système a refusé de lancer ; #1715 : une commande coupée avant son verdict)
+    pose la même question : rien n'a été constaté faux, mais tout n'a pas été jugé.
+    `etat` est ce que la vérification en dit (`Verdict.en_bref`, porté par l'erreur
+    de la tâche) : ce qui tient, ce qui n'a pas pu être joué et pourquoi — de quoi
+    décider sans ouvrir le journal.
     """
-    return (
+    tete = (
         f"La tâche « {tache.title} » a livré, mais sa vérification n'a pas abouti : "
         "personne n'a pu juger si sa livraison tient en entier. La prendre telle "
         "quelle, ou que dois-je en faire ?"
     )
+    etat = etat.strip()
+    if not etat:
+        return tete
+    if len(etat) > _ETAT_DE_LA_VERIFICATION_MAX:
+        etat = etat[: _ETAT_DE_LA_VERIFICATION_MAX - 1] + "…"
+    return f"{tete}\n\nOù en est sa vérification :\n{etat}"
 
 
 def hypothese_du_rattrapage(aval: Sequence[Task], *, livree: bool = False) -> str:
-    """Ce qui se passera sans réponse — la tâche reste en échec, et ce qu'elle retient.
+    """Ce qui tient tant que personne n'a répondu — la tâche, et ce qu'elle retient.
 
     `livree` (#1396) : la tâche a livré sans que sa livraison soit jugée. Elle la
     garde, mais rien ne part dessus — c'est ce qu'accepter la livraison changerait.
+    Sa question attend sans borne (#1715) : ce n'est pas une issue à une heure dite,
+    c'est l'état dans lequel la réponse la trouvera.
     """
-    reste = "la tâche reste en échec avec sa livraison" if livree else "la tâche reste en échec"
+    if livree:
+        reste = "la tâche garde sa livraison, et rien ne part dessus"
+        attend = "n'en dépend" if not aval else "ne s'exécutent pas encore"
+    else:
+        reste = "la tâche reste en échec"
+        attend = "n'en dépend" if not aval else "ne s'exécutent pas"
     if not aval:
-        return f"{reste} ; aucune autre tâche n'en dépend"
+        return f"{reste} ; aucune autre tâche {attend}"
     titres = ", ".join(f"« {tache.title} »" for tache in aval)
-    return f"{reste}, et les tâches qui l'attendent ne s'exécutent pas : {titres}"
+    return f"{reste}, et les tâches qui l'attendent {attend} : {titres}"
 
 
 def _erreur_courte(erreur: str, borne: int = 300) -> str:

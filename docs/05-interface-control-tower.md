@@ -7655,9 +7655,15 @@ même appel, faux pour une tâche dont le run est déjà reparti.
 **Une livraison que la vérification n'a pas pu juger se demande aussi (#1396).** Quand l'agent a
 livré et que c'est son vérificateur qui est resté en panne ([docs/45 §3](./45-decision-une-tache-verifiee-en-l-executant.md)),
 le Chef de projet ne diagnostique rien et ne refait rien : il demande, d'emblée, sur cette même
-carte. `question` dit que la tâche a livré sans être jugée, puis les faits — la cause de la panne
-comprise ; `hypothese` dit que la tâche reste en échec **avec sa livraison** ; et un geste est
-déclaré en `choix`, « Accepter la livraison telle quelle ». Ce geste solde la tâche « terminée » —
+carte. `question` dit que la tâche a livré sans être jugée, où en est sa vérification — chaque
+critère et son état, et pour ce qui n'a pas pu être joué, pourquoi (une commande coupée dit son
+délai et d'où il vient) —, puis les faits, la cause de la panne comprise ; `hypothese` dit que la
+tâche **garde sa livraison** et que rien ne part dessus ; et un geste est déclaré en `choix`,
+« Accepter la livraison telle quelle ». Cette question-là **n'a pas de borne** (#1715) : se taire
+n'est pas juger, elle attend la personne comme une validation, `attente` le dit (« elle attend
+votre réponse, sans délai : en attendant, le Chef de projet s'en tient à ceci : … »), `echeance`
+reste vide, et la carte de la tâche dit « Attente humaine » (`en_attente_validation`) tant
+qu'elle attend. Seule la fin du run la retire du fil. Ce geste solde la tâche « terminée » —
 fusion de sa branche comprise, sous l'accord d'écriture du run (#706) —, et l'aval part dessus ;
 le résultat garde `verification_en_panne`, puisqu'elle n'a toujours pas été vérifiée. Une réponse
 en mots part au Chef de projet, qui la lit en sachant que le travail est livré. Le geste n'est
