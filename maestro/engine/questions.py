@@ -77,8 +77,10 @@ class DemandeQuestion:
     #: La borne annoncée, en secondes — ce que l'exécuteur laisse à qui répond.
     #: Elle voyage avec la demande parce qu'elle est une **information pour la
     #: personne** autant qu'un réglage : « il reste quatre minutes » et « il reste
-    #: une heure » n'appellent pas le même geste.
-    attente_s: float = 0.0
+    #: une heure » n'appellent pas le même geste. `None` : la question attend sa
+    #: réponse sans borne (#1715), comme une validation — elle n'a pas d'issue par
+    #: défaut qui vaudrait jugement.
+    attente_s: float | None = 0.0
     #: La question **se retire du fil** quand on cesse de l'attendre (#1298). Faux
     #: pour la question d'un agent, qui reste ouverte après la borne parce qu'une
     #: réponse tardive sert encore (`MemoireArbitrage`, #584). Vrai pour une

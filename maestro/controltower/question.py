@@ -84,7 +84,16 @@ def phrase_d_attente(demande: DemandeQuestion, hypothese: str) -> str:
     du run `da0a8ae6f1b2` annonçait que « l'agent reprendra » alors qu'aucun agent
     n'attendait, et que c'était l'aval qui restait bloqué. L'auteur est un
     identifiant que **nous** posons (`ACTEUR_ORCHESTRATEUR`), jamais un texte lu.
+
+    Une question **sans borne** (`attente_s is None`, #1715) attend sa réponse : elle
+    ne promet aucune issue à une heure dite, et dit seulement ce qui tient d'ici là.
     """
+    if demande.attente_s is None:
+        qui = "le Chef de projet" if demande.agent == ACTEUR_ORCHESTRATEUR else "l'agent"
+        return (
+            f"elle attend votre réponse, sans délai : en attendant, {qui} s'en tient à "
+            f"ceci : {hypothese}"
+        )
     delai = f"sans réponse d'ici {demande.attente_s:g} s"
     if demande.agent == ACTEUR_ORCHESTRATEUR:
         return f"{delai}, le Chef de projet s'en tiendra à ceci : {hypothese}"
@@ -139,9 +148,14 @@ def evenement_question(demande: DemandeQuestion) -> Event:
         # borne est un réglage du moteur (`BornesArbitrage.attente_s`), et la
         # recopier dans le navigateur ferait deux supports pour un même réglage.
         # `horodatage` reste l'instant de la demande : les deux ne se déduisent
-        # pas l'un de l'autre sans connaître ce réglage.
-        echeance=(naissance + timedelta(seconds=demande.attente_s)).isoformat(
-            timespec="seconds"
+        # pas l'un de l'autre sans connaître ce réglage. Sans borne (#1715), pas
+        # d'échéance : la question n'est jamais échue, elle attend.
+        echeance=(
+            ""
+            if demande.attente_s is None
+            else (naissance + timedelta(seconds=demande.attente_s)).isoformat(
+                timespec="seconds"
+            )
         ),
         horodatage=naissance.isoformat(timespec="seconds"),
     )

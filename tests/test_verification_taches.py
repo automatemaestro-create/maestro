@@ -51,6 +51,7 @@ from maestro.engine import (
 )
 from maestro.engine.executor import (
     ACTEUR_ORCHESTRATEUR,
+    STATUT_EN_ATTENTE_VALIDATION,
     STATUT_QUESTION_REPONDUE,
     STATUT_QUESTION_SANS_REPONSE,
     STATUT_TERMINEE,
@@ -939,22 +940,25 @@ def test_une_livraison_non_verifiee_se_demande_sans_rien_refaire():
 
     Une seule session d'agent, aucune tâche `-r1-`, et la question est celle du
     Chef de projet : elle porte la cause de la panne, et un seul geste déclaré —
-    accepter la livraison telle quelle. Sans réponse, la tâche reste en échec
-    avec sa livraison, et l'aval ne part pas sur un travail que personne n'a jugé.
+    accepter la livraison telle quelle. Elle attend sans borne (#1715) ; seul un fil
+    qui se referme sans réponse y met fin, et la tâche reste alors en échec avec sa
+    livraison, l'aval ne partant pas sur un travail que personne n'a jugé.
     """
     questions: list[DemandeQuestion] = []
 
-    async def personne(demande: DemandeQuestion) -> str:
+    async def fil_qui_se_referme(demande: DemandeQuestion) -> str:
         questions.append(demande)
-        await asyncio.Event().wait()
-        return ""
+        await asyncio.sleep(0.2)  # quatre fois la borne des questions de ce moteur
+        raise RuntimeError("le bus d'événements s'est refermé sans réponse")
 
     agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}])
     chef = ChefQuiCompte(_plan(_SALUT, _SUITE))
     journal = RunJournal(run_id="run-1396")
 
     rapport = asyncio.run(
-        _engine_qui_demande(agent, chef, personne, attente_s=0.05).run("Salut", journal=journal)
+        _engine_qui_demande(agent, chef, fil_qui_se_referme, attente_s=0.05).run(
+            "Salut", journal=journal
+        )
     )
 
     salut, suite = rapport.resultats
@@ -966,12 +970,16 @@ def test_une_livraison_non_verifiee_se_demande_sans_rien_refaire():
     assert question.tache_id == "salut"
     assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
     assert "Prompt is too long" in question.question  # la cause est dite
-    # Passé la borne, plus rien ne lirait une réponse : la carte quitte le fil.
+    assert question.attente_s is None  # la borne n'a rien tranché
+    # À la fin de l'attente, plus rien ne lirait une réponse : la carte quitte le fil.
     assert question.retirer_sans_reponse
     assert salut.statut == STATUT_ECHEC and salut.verification_en_panne
     assert salut.sortie == "J'ai livré (session 1)."
     assert "sans réponse" in (salut.erreur or "")
     assert suite.statut == STATUT_BLOQUEE
+    # La carte a dit l'attente d'un humain, puis l'a soldée.
+    statuts = [r.statut for r in journal.records if r.etape == "salut"]
+    assert statuts[-2:] == [STATUT_EN_ATTENTE_VALIDATION, STATUT_ECHEC]
     (echange,) = [r for r in journal.records if r.etape == f"salut{SUFFIXE_ETAPE_QUESTION}"]
     assert echange.statut == STATUT_QUESTION_SANS_REPONSE
 
@@ -999,9 +1007,11 @@ def test_accepter_la_livraison_la_solde_et_l_aval_repart():
     # Une session pour `salut`, une pour `suite` : rien n'a été refait.
     assert len(agent.sessions) == 2
     assert suite.ok
-    # La carte de la tâche passe à « terminée » après l'échec, et la décision est au journal.
+    # La carte de la tâche attend un humain après l'échec, puis passe à « terminée » ; la
+    # décision est au journal.
     assert [r.statut for r in journal.records if r.etape == "salut"] == [
         STATUT_ECHEC,
+        STATUT_EN_ATTENTE_VALIDATION,
         STATUT_TERMINEE,
     ]
     (echange,) = [r for r in journal.records if r.etape == f"salut{SUFFIXE_ETAPE_QUESTION}"]
@@ -1047,15 +1057,14 @@ def test_la_question_d_une_livraison_ne_reprend_pas_un_diagnostic_perime():
     """
     questions: list[DemandeQuestion] = []
 
-    async def personne(demande: DemandeQuestion) -> str:
+    async def fil_qui_se_referme(demande: DemandeQuestion) -> str:
         questions.append(demande)
-        await asyncio.Event().wait()
-        return ""
+        raise RuntimeError("le bus d'événements s'est refermé sans réponse")
 
     agent = AgentQuiTombePuisLivre([{"bonjour.txt": "Bonjour"}])
     chef = ChefQuiReprend(_plan(_SALUT))
 
-    asyncio.run(_engine_qui_demande(agent, chef, personne, attente_s=0.05).run("Salut"))
+    asyncio.run(_engine_qui_demande(agent, chef, fil_qui_se_referme, attente_s=0.05).run("Salut"))
 
     (question,) = questions
     assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
@@ -1789,13 +1798,15 @@ def test_une_commande_que_le_systeme_refuse_de_lancer_ne_jette_pas_la_livraison(
 
 
 def test_une_livraison_que_le_juge_n_a_pas_pu_jouer_se_demande():
-    """Le même cas, quelqu'un à qui demander : la carte offre de prendre la livraison."""
+    """Le même cas, quelqu'un à qui demander : la carte offre de prendre la livraison.
+
+    La question attend sans borne (#1715) : seul le fil qui se referme y met fin ici.
+    """
     questions: list[DemandeQuestion] = []
 
     async def personne(demande: DemandeQuestion) -> str:
         questions.append(demande)
-        await asyncio.Event().wait()
-        return ""
+        raise RuntimeError("le bus d'événements s'est refermé sans réponse")
 
     agent = AgentEtVerificateur(
         [{"bonjour.txt": "Bonjour"}],
@@ -1864,7 +1875,7 @@ def _verifier_le_serveur(tmp_path, demarreur, *, controle=None, liberation_s=0.0
     verificateur = VerificateurTaches(
         _Reponses(reponse),
         delais=DelaisVerification(
-            commande_s=90.0, demarrage_s=2.0, sonde_s=7.0, liberation_s=liberation_s
+            service_s=90.0, demarrage_s=2.0, sonde_s=7.0, liberation_s=liberation_s
         ),
         joueur=joueur,
         demarreur=demarreur,
@@ -2562,7 +2573,7 @@ def test_deux_taches_verifiees_ensemble_sur_le_meme_port_jouent_tous_leurs_crite
         }
         return VerificateurTaches(
             _Reponses(json.dumps({"controles": [controle]})),
-            delais=DelaisVerification(commande_s=60.0, sonde_s=10.0),
+            delais=DelaisVerification(service_s=60.0, sonde_s=10.0),
             interprete=bash,
         ).verifier(_TACHE, Livraison(sortie="fait", espace=espace), modele="m")
 
@@ -2860,7 +2871,7 @@ def test_le_port_du_critere_tenu_par_un_agent_ne_croise_jamais_la_verification(
         _, verdict = asyncio.run(
             VerificateurTaches(
                 _Reponses(json.dumps({"controles": [controle]})),
-                delais=DelaisVerification(commande_s=60.0, sonde_s=10.0, liberation_s=5.0),
+                delais=DelaisVerification(service_s=60.0, sonde_s=10.0, liberation_s=5.0),
                 interprete=bash,
             ).verifier(_TACHE, Livraison(sortie="fait", espace=verifiee), modele="m")
         )
@@ -2879,3 +2890,299 @@ def test_le_port_du_critere_tenu_par_un_agent_ne_croise_jamais_la_verification(
     finally:
         serveur_de_l_agent.kill()
         serveur_de_l_agent.wait(timeout=10)
+
+
+# --------------------------------------------------------------------------- #
+# ⑨ Une commande que le projet déclare obtient son verdict (#1715)
+# --------------------------------------------------------------------------- #
+
+_FILET = "bash scripts/ci/local.sh"
+_CRITERE_FILET = "le filet du projet passe"
+
+
+def _verifier_une_commande(tmp_path, controle: dict[str, Any], joueur):
+    """Le vérificateur établit `controle` et le joue par `joueur`, sous ses délais par défaut."""
+    verificateur = VerificateurTaches(
+        _Reponses(json.dumps({"controles": [controle]})),
+        joueur=joueur,
+        interprete=_INTERPRETE,
+    )
+    return asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+
+def test_une_commande_que_rien_ne_borne_se_joue_jusqu_a_son_verdict(tmp_path):
+    """Run `f26576408d0a` (#1688) : le filet du dépôt de Maestro a duré 35 min 26 s chez
+    l'agent, et la vérification l'a coupé à 300 s, un délai que ni le projet ni l'agent
+    n'avaient dit. Une commande que rien ne borne n'a pas de délai : elle rend son verdict."""
+    recus: list[float | None] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        recus.append(delai_s)
+        return Execution(code=0, sortie="Périmètre réduit : vert", duree_s=2126.0)
+
+    controles, verdict = _verifier_une_commande(
+        tmp_path, {"critere": _CRITERE_FILET, "commande": _FILET}, joueur
+    )
+
+    assert recus == [None]
+    assert verdict.tenue
+    assert controles[0].delai_s is None
+
+
+def test_le_delai_d_une_commande_vient_de_ce_que_le_verificateur_en_sait(tmp_path):
+    """Le délai se prend de ce que Maestro sait de la commande — ce que le projet en dit, ou
+    ce que l'agent en a mesuré —, et le vérificateur le nomme avec son origine. Coupée, elle
+    s'abstient, et sa preuve dit le délai et d'où il venait."""
+    origine = "l'agent dit l'avoir jouée en 35 min 26 s, et je lui en laisse le double"
+    recus: list[float | None] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        recus.append(delai_s)
+        return Execution(code=None, sortie="[ 99%]", duree_s=delai_s, expiree=True)
+
+    controles, verdict = _verifier_une_commande(
+        tmp_path,
+        {
+            "critere": _CRITERE_FILET,
+            "commande": _FILET,
+            "timeout_s": 4252,
+            "timeout_source": origine,
+        },
+        joueur,
+    )
+
+    assert recus == [4252.0]
+    assert (controles[0].delai_s, controles[0].origine_delai) == (4252.0, origine)
+    assert controles[0].to_dict()["timeout_s"] == 4252.0
+    assert controles[0].to_dict()["timeout_source"] == origine
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert constat.preuve.startswith(
+        f"coupée — elle n'a pas rendu la main en 4252 s, le délai que lui laisse {origine}"
+    )
+    assert verdict.non_tenus == ()
+
+
+@pytest.mark.parametrize(
+    "champs",
+    [
+        {"timeout_s": 600},
+        {"timeout_s": 600, "timeout_source": "  "},
+        {"timeout_s": 0, "timeout_source": "la CI"},
+        {"timeout_s": True, "timeout_source": "la CI"},
+        {"timeout_s": "600", "timeout_source": "la CI"},
+    ],
+)
+def test_un_delai_sans_origine_ou_sans_duree_n_en_est_pas_un(tmp_path, champs):
+    """Un délai qui ne dit pas d'où il vient est un délai inventé : la commande n'en reçoit
+    aucun, et se joue jusqu'à son verdict."""
+    recus: list[float | None] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        recus.append(delai_s)
+        return Execution(code=0, sortie="", duree_s=1.0)
+
+    controles, _ = _verifier_une_commande(
+        tmp_path, {"critere": _CRITERE_FILET, "commande": _FILET, **champs}, joueur
+    )
+
+    assert recus == [None]
+    assert "timeout_s" not in controles[0].to_dict()
+
+
+def test_le_prompt_du_verificateur_dit_d_ou_vient_un_delai():
+    """Le contrat est écrit au vérificateur : d'où un délai se prend, et qu'aucun ne s'invente."""
+    assert '"timeout_s"' in SYSTEME and '"timeout_source"' in SYSTEME
+    assert "ne lui en invente pas" in SYSTEME
+    assert "chaque commande a déjà son délai" not in SYSTEME
+
+
+def test_une_commande_reecrite_garde_le_delai_de_son_controle(tmp_path):
+    """Réécrire une commande que la portée refuse ne change pas ce qu'on sait de sa durée."""
+    origine = "la limite du job `tests` de son intégration continue"
+    recus: list[float | None] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        recus.append(delai_s)
+        return Execution(code=0, sortie="", duree_s=1.0)
+
+    verificateur = VerificateurTaches(
+        _Reponses(
+            json.dumps(
+                {
+                    "controles": [
+                        {
+                            "critere": _CRITERE_FILET,
+                            "commande": "cd .. && bash scripts/ci/local.sh",
+                            "timeout_s": 1800,
+                            "timeout_source": origine,
+                        }
+                    ]
+                }
+            ),
+            json.dumps({"commandes": [{"n": 1, "commande": _FILET}]}),
+        ),
+        joueur=joueur,
+        interprete=_INTERPRETE,
+    )
+    controles, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert controles[0].commande == _FILET
+    assert (controles[0].delai_s, controles[0].origine_delai) == (1800.0, origine)
+    assert recus == [1800.0] and verdict.tenue
+
+
+@pytest.mark.commandes_jouees
+def test_une_commande_sans_delai_va_au_bout_pour_de_vrai(tmp_path):
+    from maestro.sandbox.verification import jouer
+
+    fait = jouer("sleep 1; echo fini; exit 3", tmp_path, interprete=_bash_ou_rien(), delai_s=None)
+
+    assert (fait.code, fait.expiree, fait.sortie) == (3, False, "fini")
+
+
+@pytest.mark.commandes_jouees
+def test_une_commande_sans_delai_s_arrete_quand_on_cesse_de_l_attendre(tmp_path):
+    """Sans délai, rien ne borne la commande que l'attente du run : un run qu'on arrête
+    arrête ce qu'il jouait, avec sa descendance, au lieu de le laisser tourner derrière lui."""
+    import time
+
+    controle = {"critere": _CRITERE_FILET, "commande": "sleep 3 && touch fini"}
+    verificateur = VerificateurTaches(
+        _Reponses(json.dumps({"controles": [controle]})), interprete=_bash_ou_rien()
+    )
+
+    async def deroule():
+        verification = asyncio.ensure_future(
+            verificateur.verifier(
+                _TACHE,
+                Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+                modele="m",
+            )
+        )
+        await asyncio.sleep(1.0)
+        verification.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await verification
+
+    asyncio.run(deroule())
+    time.sleep(4.0)
+
+    assert not (tmp_path / "fini").exists(), "la commande a survécu à l'arrêt de son attente"
+
+
+# --------------------------------------------------------------------------- #
+# ⑩ Ce qui n'a pas pu être joué ne voue pas la tâche à l'échec (#1715)
+# --------------------------------------------------------------------------- #
+
+
+def _joueur_filet_coupe(commande, cwd, *, interprete, delai_s):
+    """`_COMMANDE` jouée pour de vrai ; le filet, coupé par le délai que le projet lui laisse."""
+    if commande == _FILET:
+        return Execution(code=None, sortie="[ 15%]", duree_s=60.0, expiree=True)
+    return joueur_grep(commande, cwd, interprete=interprete, delai_s=delai_s)
+
+
+class AgentEtFiletCoupe(AgentEtVerificateur):
+    """Le vérificateur établit deux contrôles pour `salut` : son grep, et le filet du projet."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            [{"bonjour.txt": "Bonjour"}],
+            {
+                "Écrire le salut": [
+                    {
+                        "controles": [
+                            {"critere": _CRITERE, "commande": _COMMANDE},
+                            {
+                                "critere": _CRITERE_FILET,
+                                "commande": _FILET,
+                                "timeout_s": 60,
+                                "timeout_source": "la limite du job `tests` de sa CI",
+                            },
+                        ]
+                    }
+                ]
+            },
+        )
+
+
+def test_sans_reponse_a_la_borne_une_livraison_non_verifiee_attend_toujours():
+    """Run `f26576408d0a` : la question du Chef de projet a été retirée sans réponse au bout
+    de 240 s, la tâche est partie en échec, et le run avec elle. L'absence de réponse n'est
+    pas un jugement : la question attend la personne, sans borne, et sa réponse tardive sert
+    encore — ici, elle prend la livraison, et l'aval repart dessus."""
+    questions: list[DemandeQuestion] = []
+
+    async def personne_en_retard(demande: DemandeQuestion) -> str:
+        questions.append(demande)
+        await asyncio.sleep(0.3)  # six fois la borne des questions de ce moteur
+        return CHOIX_LIVRAISON_ACCEPTEE
+
+    agent = AgentEtFiletCoupe()
+    chef = ChefQuiCompte(_plan(_SALUT, _SUITE))
+    journal = RunJournal(run_id="run-1715")
+    engine = OrchestrationEngine(
+        agent,
+        Orchestrator(chef, model="claude-opus-4-8"),
+        relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
+        rattrapage=PolitiqueRattrapage(),
+        verificateur=VerificateurTaches(
+            agent, joueur=_joueur_filet_coupe, interprete=_INTERPRETE
+        ),
+        questionneur=personne_en_retard,
+        bornes_question=BornesArbitrage(attente_s=0.05),
+    )
+
+    rapport = asyncio.run(engine.run("Salut", journal=journal))
+
+    salut, suite = rapport.resultats
+    assert salut.ok and salut.statut == STATUT_TERMINEE
+    assert suite.ok
+    assert len(agent.sessions) == 2  # une pour `salut`, une pour `suite` : rien n'a été refait
+    (question,) = questions
+    # Aucune borne n'est annoncée : personne ne tranchera à la place de la personne.
+    assert question.attente_s is None
+    assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
+    # Elle voit ce qui tient, ce qui n'a pas pu être joué, et pourquoi.
+    assert f"[tenu] « {_CRITERE} »" in question.question
+    assert f"[non joué] « {_CRITERE_FILET} »" in question.question
+    assert "coupée — elle n'a pas rendu la main en 60 s" in question.question
+    # La carte dit l'attente d'un humain tant que la question attend.
+    statuts = [r.statut for r in journal.records if r.etape == "salut"]
+    assert statuts[-2:] == [STATUT_EN_ATTENTE_VALIDATION, STATUT_TERMINEE]
+    (echange,) = [r for r in journal.records if r.etape == f"salut{SUFFIXE_ETAPE_QUESTION}"]
+    assert echange.statut == STATUT_QUESTION_REPONDUE
+
+
+def test_la_phrase_d_attente_d_une_question_sans_borne_ne_promet_aucune_issue():
+    """Une question qui attend sans borne ne dit pas « d'ici 240 s », et n'a pas d'échéance."""
+    from maestro.controltower.question import evenement_question
+
+    demande = DemandeQuestion(
+        question_id="salut:0123456789",
+        question="La prendre telle quelle ?",
+        hypothese="la tâche garde sa livraison, et rien ne part dessus",
+        tache_id="salut",
+        agent=ACTEUR_ORCHESTRATEUR,
+        attente_s=None,
+    )
+
+    event = evenement_question(demande)
+
+    assert event.echeance == ""
+    assert "d'ici" not in event.detail
+    assert event.detail.startswith("elle attend votre réponse, sans délai")
+    assert event.detail.endswith("la tâche garde sa livraison, et rien ne part dessus")
