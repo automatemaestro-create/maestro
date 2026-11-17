@@ -76,6 +76,7 @@ from maestro.emplacements import jetable
 from maestro.projets.modele import ENV_IDENTITE_GIT, Projet
 from maestro.projets.perimetre import Exclu, exclusions
 from maestro.projets.racine import canonique
+from maestro.sandbox import low_integrity
 from maestro.sandbox.depot_conteneur import (
     POINT_DEPOT,
     Rapatriement,
@@ -85,8 +86,22 @@ from maestro.sandbox.depot_conteneur import (
 )
 
 #: Valeur de `MAESTRO_ISOLATION` qui active le mode isolé. Toute autre valeur non
-#: vide est une erreur de config explicite (pas d'isolation « silencieusement absente »).
+#: vide hors de `MODES_ISOLATION` est une erreur de config explicite (pas d'isolation
+#: « silencieusement absente »).
 MODE_CONTENEUR = "conteneur"
+
+#: Valeur de `MAESTRO_ISOLATION` qui fait naître l'arbre de l'agent à l'intégrité
+#: basse, sur l'hôte (#1515, docs/17 §7) : il n'arrête aucun processus de la personne
+#: et n'écrit que ce qui porte une étiquette basse. Le défaut sous Windows.
+MODE_INTEGRITE_BASSE = "integrite-basse"
+
+#: Valeur de `MAESTRO_ISOLATION` qui fait tourner l'agent sur l'hôte, au niveau de la
+#: personne : le régime d'avant #1515, demandé en toutes lettres. Le défaut ailleurs
+#: que sous Windows, où il n'y a pas d'intégrité basse.
+MODE_HOTE = "hote"
+
+#: Les valeurs admises de `MAESTRO_ISOLATION`, vide exceptée.
+MODES_ISOLATION: tuple[str, ...] = (MODE_INTEGRITE_BASSE, MODE_HOTE, MODE_CONTENEUR)
 
 #: Image par défaut du conteneur d'exécution — construite depuis `infra/sandbox/` :
 #: `docker build -t maestro-sandbox:latest infra/sandbox`.
@@ -187,14 +202,8 @@ class IsolationConfig:
         elles, ne se constatent qu'au lancement — leur absence remonte en échec
         de tâche, consigné comme les autres.
         """
-        mode = settings.isolation
-        if mode is None:
+        if mode_isolation(settings) != MODE_CONTENEUR:
             return None
-        if mode != MODE_CONTENEUR:
-            raise ConfigError(
-                f"MAESTRO_ISOLATION={mode!r} inconnu. Valeurs acceptées : vide "
-                f"(exécution sur l'hôte, défaut) ou {MODE_CONTENEUR!r}."
-            )
         reseau = settings.isolation_reseau or RESEAU_DEFAUT
         if reseau not in RESEAUX_VALIDES:
             valides = ", ".join(RESEAUX_VALIDES)
@@ -543,6 +552,32 @@ def _racine_des_masques() -> Path:
         (_RACINE_VIDES / "vide.d").mkdir()
         (_RACINE_VIDES / "gitdir").write_text(pointeur(), encoding="ascii", newline="\n")
     return _RACINE_VIDES
+
+
+def mode_isolation(settings: Settings) -> str:
+    """Le mode d'isolation retenu : `MAESTRO_ISOLATION` lue, son défaut sinon (#1515).
+
+    Vide, c'est `MODE_INTEGRITE_BASSE` sous Windows et `MODE_HOTE` ailleurs : un
+    agent n'a besoin d'aucun réglage pour être borné par le poste. Une valeur
+    inconnue lève `ConfigError` au câblage, et l'intégrité basse demandée là où le
+    système ne la connaît pas aussi : un réglage qu'on ne peut pas tenir se dit,
+    il ne retombe jamais sur un autre mode.
+    """
+    mode = settings.isolation
+    if mode is None:
+        return MODE_INTEGRITE_BASSE if low_integrity.available() else MODE_HOTE
+    if mode not in MODES_ISOLATION:
+        valeurs = ", ".join(repr(valeur) for valeur in MODES_ISOLATION)
+        raise ConfigError(
+            f"MAESTRO_ISOLATION={mode!r} inconnu. Valeurs acceptées : vide (le défaut "
+            f"du poste), {valeurs}."
+        )
+    if mode == MODE_INTEGRITE_BASSE and not low_integrity.available():
+        raise ConfigError(
+            f"MAESTRO_ISOLATION={mode!r} : l'intégrité basse n'existe que sous Windows. "
+            f"Retirez le réglage, ou choisissez {MODE_HOTE!r} ou {MODE_CONTENEUR!r}."
+        )
+    return mode
 
 
 def _chemin_shim() -> Path:

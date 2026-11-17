@@ -112,6 +112,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
+from maestro.sandbox import low_integrity
+from maestro.sandbox.low_integrity import LowIntegrityProcess
+
 #: La période du balayage du veilleur (Windows) **pendant l'activité** du job — une
 #: naissance ou une mort depuis moins de `FENETRE_ACTIVITE_S` : ce qui est né hors du
 #: job d'un membre encore vivant est adopté au plus tard après ce délai. Au repos, le
@@ -169,7 +172,7 @@ class Arbre:
 
     def __init__(
         self,
-        process: subprocess.Popen[bytes],
+        process: subprocess.Popen[bytes] | LowIntegrityProcess,
         job: int | None,
         *,
         racine: int | None = None,
@@ -193,6 +196,7 @@ class Arbre:
         console_propre: bool = True,
         racine: int | None = None,
         veiller: bool = False,
+        integrite_basse: bool = False,
     ) -> Arbre:
         """Lance `argv`, déjà rangé dans son arbre.
 
@@ -212,8 +216,19 @@ class Arbre:
         `veiller` (Windows) arme le veilleur qui adopte ce qui sort du job par un
         alias d'application (voir l'en-tête). Un veilleur que le système refuse
         laisse le job seul, qui reste l'arrêt nominal.
+
+        `integrite_basse` (Windows, #1515) fait naître le processus sous le jeton de
+        la personne abaissé à l'intégrité basse (`maestro.sandbox.low_integrity`) :
+        suspendu comme les autres, rangé dans son job, puis relâché. L'appelant reste
+        au niveau de la personne, et le job avec lui : l'arbre ne peut ni le quitter
+        ni l'arrêter. Demandé ailleurs que sous Windows, il lève `LowIntegrityError`
+        — jamais un lancement qui ne serait abaissé qu'en apparence.
         """
         if sys.platform != "win32":
+            if integrite_basse:
+                raise low_integrity.LowIntegrityError(
+                    "l'intégrité basse n'existe que sous Windows"
+                )
             process = subprocess.Popen(  # noqa: S603 - argv construit par l'appelant
                 list(argv),
                 cwd=cwd,
@@ -230,15 +245,27 @@ class Arbre:
             drapeaux = _CREATE_SUSPENDED
             if console_propre:
                 drapeaux |= subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-            process = subprocess.Popen(  # noqa: S603 - argv construit par l'appelant
-                list(argv),
-                cwd=cwd,
-                stdin=stdin,
-                stdout=stdout,
-                stderr=stderr,
-                env=None if env is None else dict(env),
-                creationflags=drapeaux,
-            )
+            process: subprocess.Popen[bytes] | LowIntegrityProcess
+            if integrite_basse:
+                process = low_integrity.spawn_suspended(
+                    argv,
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    creationflags=drapeaux & ~_CREATE_SUSPENDED,
+                )
+            else:
+                process = subprocess.Popen(  # noqa: S603 - argv construit par l'appelant
+                    list(argv),
+                    cwd=cwd,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    env=None if env is None else dict(env),
+                    creationflags=drapeaux,
+                )
             try:
                 job, veilleur = _ranger_puis_reprendre(process.pid, veiller=veiller)
             except OSError:
@@ -246,6 +273,8 @@ class Arbre:
                 # il est arrêté tout de suite, et l'appelant en fait un verdict.
                 process.kill()
                 process.wait()
+                if isinstance(process, LowIntegrityProcess):
+                    process.close()
                 raise
             return cls(process, job, racine=racine, veilleur=veilleur)
 
@@ -335,6 +364,8 @@ class Arbre:
         """Rend les poignées et le tube de sortie — ce qui vit encore meurt avec."""
         if self.process.stdout is not None:
             self.process.stdout.close()
+        if isinstance(self.process, LowIntegrityProcess):
+            self.process.close()
         if sys.platform == "win32":
             if self._veilleur is not None:
                 self._veilleur.fermer()

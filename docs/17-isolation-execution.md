@@ -7,18 +7,13 @@ activé par configuration — chaque exécution outillée d'agent tourne dans un
 **conteneur Docker durci** jetable au lieu de s'exécuter avec les droits du
 process hôte. Cette page consigne la décision technique (conteneur vs micro-VM),
 l'architecture, les **accès accordés** au conteneur (le contrat du mode), son
-activation et ses limites. Le mode **non isolé reste le défaut** à ce stade.
+activation et ses limites. Ce mode reste une **option plus forte, jamais exigée**.
 
-> ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518),
-> à la demande de la personne : les agents tournent **isolés par défaut**. La portée reste
-> l'arbitrage, et cesse d'être la seule barrière.
-> - Le défaut sera un **mécanisme natif Windows**, choisi sur pièces par #1514 : l'**intégrité
->   basse** ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). Elle ferme l'arrêt d'un
->   processus hors de l'arbre et l'écriture hors du projet. La lecture des secrets reste ouverte
->   tant que #1515 n'a pas posé son complément. Docker et ce mode conteneur restent une option plus
->   forte, jamais exigée.
-> - **Décidé, pas encore livré** : tant que #1515 n'est pas livré, ce qui suit décrit l'état
->   présent, et le défaut reste le mode non isolé.
+> **Le défaut sous Windows est l'intégrité basse** (§7, #1515). #1514 l'a choisie sur pièces
+> ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)) : sans aucun réglage, le CLI d'un
+> agent naît abaissé. Il n'arrête aucun processus de la personne, et n'écrit que dans son projet
+> et son établi. La portée reste l'arbitrage, mais elle n'est plus la seule barrière. Ailleurs que
+> sous Windows, le défaut est l'exécution sur l'hôte, confinée (§6).
 
 > **Pourquoi** : les agents exécutent du code (outils `Bash`, fichiers produits,
 > serveurs MCP stdio) avec les droits du process qui les héberge. L'ouverture
@@ -215,10 +210,9 @@ consigné au journal, comme les autres échecs.
   [docs/19 §2.4](./19-securite-modele-de-menace.md) : le filet y est alors le
   **périmètre du projet**, pas le conteneur ([docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md)).
 
-> ⚠ **Ce dernier point est renversé le 2026-10-14** ([docs/48 §2.1](./48-decision-produit-pro-exploitable.md),
-> #1518). En distribution bureau, le défaut deviendra le mode **isolé**, par le mécanisme natif
-> retenu : l'intégrité basse ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md), #1514),
-> posée par #1515. Le conteneur reste une option.
+> ⚠ **Ce dernier point ne vaut plus** ([docs/48 §2.1](./48-decision-produit-pro-exploitable.md),
+> #1518). En distribution bureau, le défaut est l'**intégrité basse** (§7), et l'installeur la pose
+> en toutes lettres (`MAESTRO_ISOLATION=integrite-basse`, #1515). Le conteneur reste une option.
 > - **#1514 l'a joué une fois contre un vrai démon Docker**, par la commande de `commande_docker`
 >   puis le vrai shim. Il ferme les trois menaces du bilan.
 > - **git y accepte le workspace** : le montage venu de Windows appartient à root et non à
@@ -230,7 +224,7 @@ consigné au journal, comme les autres échecs.
 ## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
 
 En mode isolé, le conteneur jetable emporte avec lui tout ce que le CLI y a lancé.
-Hors mode isolé — le défaut —, rien ne le faisait : le run `3fe501fc0878`
+Hors conteneur, qu'il soit abaissé (§7) ou non, rien ne le faisait : le run `3fe501fc0878`
 (2026-09-24) a laissé tourner un Edge headless que l'agent avait lancé en arrière-plan
 pour vérifier sa maquette, **son port de débogage ouvert** à tout processus du poste,
 rattaché à un `bash.exe` déjà mort. Le SDK ferme **son** sous-processus, le CLI ; ce que
@@ -284,3 +278,118 @@ lanceur, faux CLI) en succès, échec et annulation, le `sleep &` de `bash`, l'a
 Store, le lanceur terminé en pleine session, et la ligne du journal ;
 `tests/test_arbre.py` — un évadé suspendu n'est ni adopté ni tué, il l'est une fois
 relâché, et le reste d'un créateur mort est achevé.
+
+## 7. L'intégrité basse : le défaut sous Windows (#1515)
+
+La portée lit le **texte** d'une commande. Un script que l'agent lance ne lui en dit rien :
+`bash nettoyer.sh`, s'il contient `taskkill //IM python.exe //F`, passe la portée et arrête Maestro
+(#1502). Ce qui borne le script est donc le **poste**. Le CLI de l'agent naît sous le jeton de la
+personne, **abaissé à l'intégrité basse**. C'est le mécanisme que #1514 a choisi sur pièces
+([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). Il n'exige rien du poste : ni
+élévation, ni Docker, ni compte.
+
+**Le réglage** est `MAESTRO_ISOLATION` (ENF-12) :
+
+| Valeur | Ce que fait l'agent |
+|---|---|
+| vide | le défaut du poste : `integrite-basse` sous Windows, `hote` ailleurs |
+| `integrite-basse` | son CLI naît abaissé. L'installeur pose cette valeur en toutes lettres. Ailleurs que sous Windows, elle est refusée au câblage, jamais remplacée par une autre |
+| `hote` | il tourne au niveau de la personne, confiné (§6) |
+| `conteneur` | le mode isolé (§1 à §5) |
+
+**Le mécanisme.** Le lanceur `maestro-confinement` (§6) reste au niveau de la personne, et le job
+qui borne la vie de l'arbre reste avec lui. Seul le CLI naît abaissé
+(`maestro/sandbox/low_integrity.py`) : suspendu, rangé dans son job, puis relâché. Tout ce qu'il
+lance naît abaissé à son tour. Si le système refuse l'abaissement, la session échoue avec sa
+cause : un CLI ne tourne jamais au niveau de la personne en se croyant abaissé.
+
+**Ce que l'agent écrit reçoit une étiquette basse héritée** (`maestro/sandbox/low_session.py`) :
+- son **espace de travail** ;
+- le **dépôt Git** dans lequel écrit le worktree d'un projet versionné (objets, références) ;
+- le **dossier du CLI de Maestro**, `~/.maestro/claude` ;
+- son **établi** : un dossier propre à la session, retiré avec elle. `TEMP`, `TMP` et `TMPDIR` y
+  mènent, si bien qu'un `mktemp -d` y crée un dossier que la portée reconnaît. `APPDATA` et
+  `LOCALAPPDATA` y mènent aussi : ce qu'un outil écrit dans le profil (un verrou, un cache) y
+  atterrit.
+
+Poser une étiquette demande le droit `WRITE_OWNER`, que « Modifier » ne donne pas. Sur un disque où
+la personne n'a que « Modifier », elle s'accorde d'abord le contrôle total sur le dossier, sans
+élévation. Une étiquette posée reste en place, et un dossier déjà étiqueté n'est pas reparcouru.
+
+**Le dossier du CLI de Maestro.** À l'intégrité basse, le CLI ne peut pas écrire dans `~/.claude`.
+Or la reprise d'une session d'une tâche à l'autre (#1513) relit les transcriptions du CLI, et un
+jeton rafraîchi doit pouvoir se réécrire. **Toutes** les sessions Claude de Maestro font donc
+tourner le CLI dans `~/.maestro/claude` (`CLAUDE_CONFIG_DIR`) : les agents, le Chef de projet,
+l'assistant et la sonde. Ce dossier ne voit pas la connexion du CLI de la personne. Maestro se
+connecte donc une fois par poste, par l'une de ces voies :
+- `maestro-connexion` (ou `python -m maestro.providers.claude_login`), qui joue `claude auth
+  login` dans ce dossier ;
+- un `CLAUDE_CODE_OAUTH_TOKEN` ;
+- une clé d'API.
+
+`maestro-connexion --etat` dit si Maestro est connecté. Le `~/.claude` de la personne n'est pas
+touché.
+
+**Git for Windows est copié.** À l'intégrité basse, son runtime meurt s'il tourne depuis son propre
+chemin : le répertoire d'objets nommés qui porte ce chemin existe déjà au niveau de la personne, et
+un processus bas ne peut pas l'ouvrir. Depuis un autre chemin, il crée le sien.
+
+Maestro copie donc l'installation entière sous `~/.maestro/outils/git-<empreinte>`, une fois par
+version. La copie passe en tête du `PATH`, et le CLI la reçoit par `CLAUDE_CODE_GIT_BASH_PATH`.
+Ainsi, le `git` que l'agent lance et le `sh` de ses hooks sont ceux de la copie : le Git d'origine
+mourrait dès qu'un hook appelle `sh`. La copie ne porte aucune étiquette, si bien que l'agent ne
+peut pas modifier ses propres outils. La copie d'une version antérieure est retirée dès qu'aucun
+processus ne la tient plus.
+
+**Ce que Maestro ferme à la lecture.** Une étiquette moyenne « pas de lecture vers le haut »
+(`NO_READ_UP`) rend illisible à l'agent ce qui lui permettrait d'agir en Maestro :
+- le jeton de l'API ;
+- le coffre des secrets ;
+- les `.env` que Maestro charge.
+
+Pour la personne, rien ne change. L'étiquette est reposée à chaque session, parce qu'un fichier
+réécrit ne la garde pas.
+
+Maestro charge ses `.env` dans son propre environnement : leurs valeurs y sont, même si les
+fichiers sont fermés. Le lanceur retient donc au CLI abaissé les variables `MAESTRO_*`, ainsi que
+toutes celles que ces fichiers déclarent (un jeton de forge, un jeton Slack, la clé Langfuse).
+Seul l'espace du fournisseur (`ANTHROPIC_*`, `CLAUDE_*`) passe, parce que c'est par lui que le CLI
+joint le modèle.
+
+**Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py`, sous Windows, marqueur
+`integrite_basse`) :
+- `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
+  l'agent ne le trouve pas, et le témoin vit ;
+- la commande de #1502 (`taskkill //IM python.exe //F`), lancée directement ou par un script :
+  aucun `python.exe` de la personne n'est arrêté. Cette commande ne se joue qu'après deux preuves
+  sur le même poste : l'enfant tourne bien à l'intégrité basse, et le témoin a survécu ;
+- écrire dans l'espace, l'établi et le dossier du CLI réussit ; écrire à côté échoue, et lire un
+  fichier fermé échoue aussi ;
+- le lanceur abaisse le CLI et lui retire les variables `MAESTRO_*` et celles qu'il doit retenir.
+  Le reste de l'environnement passe.
+
+**Ce que l'isolation ne couvre pas.** L'agent en est informé sous « La machine »
+(`maestro.machine.LIGNE_INTEGRITE_BASSE`), et voici la liste :
+- **la lecture** : l'agent lit ce que la personne lit, hors ce que Maestro ferme. Cela comprend
+  les identifiants du CLI de la personne, `~/.ssh`, le jeton du CLI GitHub et le `.env` d'un autre
+  clone. Le profil de la personne n'est pas touché : y poser une étiquette est une décision à
+  prendre avec elle ;
+- **ce qui est étiqueté bas** : tout processus bas du poste peut y écrire. Deux agents qui
+  tournent en même temps écrivent l'un chez l'autre, et l'un peut arrêter les processus de
+  l'autre. Les étiquettes restent après la session ;
+- **le réseau**, bouclage compris : l'agent joint ce qui écoute sur `127.0.0.1`, comme l'API de
+  Maestro, un Redis ou le port de débogage d'un navigateur ;
+- **l'environnement** de la personne : l'agent en hérite, hors ce qui est retenu ci-dessus. Une
+  clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
+- **un cache par session** : ce qu'un outil range dans le profil (le cache de `npx`, par
+  exemple) part avec l'établi, et se retélécharge à la session suivante ;
+- **les vérifications** que Maestro joue lui-même (`maestro/sandbox/verification.py`) : elles
+  tournent au niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la
+  portée ne juge pas ;
+- **les autres systèmes** : ailleurs que sous Windows, rien n'est abaissé. Le défaut y est `hote`,
+  et le conteneur reste l'option qui isole.
+
+**La portée reste l'arbitre.** Un arrêt par nom ou par motif revient toujours à une personne
+(`tests/test_portee.py::test_tuer_python_par_son_nom_revient_a_une_personne`), que le poste l'eût
+refusé ou non. Le poste borne ce que le texte d'une commande ne dit pas ; il ne remplace pas le
+jugement.

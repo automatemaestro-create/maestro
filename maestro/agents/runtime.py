@@ -566,7 +566,9 @@ class AgentRuntime:
                 ws.consigne_espace(),
                 outillage.consigne(espace=espace),
                 machine=(
-                    machine.consigne(port_d_essai=port)
+                    machine.consigne(
+                        port_d_essai=port, integrite_basse=self._provider.integrite_basse
+                    )
                     if machine is not None and sur_le_poste
                     else ""
                 ),

@@ -455,6 +455,7 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau depuis un `Bash` | Politique d'outils par agent (#110) ; l'égress non filtré reste la limite connue ([docs/19 §5](./19-securite-modele-de-menace.md)) — un filtrage par domaine devient plus urgent qu'avant |
 | **Prompt injection par le contenu du projet** | un `README`, un commentaire ou une dépendance qui contient des instructions | Le contenu lu est **une donnée, pas une consigne** : à porter dans les prompts systèmes ; les actions sensibles restent derrière la validation, ce qui borne les dégâts |
 | Fuite de secrets du projet | `.env`, clés, tokens présents dans le dépôt de l'utilisateur | Exclusions par défaut au périmètre (`.env`, `**/secrets/**`) ; rédaction existante (#109) élargie aux valeurs lues dans le projet |
+| **Un script de l'agent arrête un processus de la personne ou écrit hors du projet** (#1515) | `bash nettoyer.sh` qui contient `taskkill //IM python.exe //F`, que la portée ne lit pas | **Intégrité basse**, le défaut sous Windows : l'agent ne voit aucun processus de la personne, et n'écrit que dans son espace, son dépôt Git et son établi. La lecture reste ouverte, hors ce qui est à Maestro ([docs/17 §7](./17-isolation-execution.md)) |
 | **Un processus d'agent survit à sa tâche** (#1279) | un serveur ou un navigateur headless lancé en arrière-plan par `Bash` — un port de débogage resté ouvert au poste | Session **confinée** hors mode isolé : tout ce qu'elle lance est arrêté à sa clôture, ce qui résiste est nommé au journal du run ([docs/17 §6](./17-isolation-execution.md)) |
 
 **Élargir ce que l'explorateur parcourt n'élargit pas ce qui se déclare** (#1610). Un dossier
@@ -920,21 +921,17 @@ Empaqueter Next.js est un problème résolu. Empaqueter **Python + le Claude Age
 
 - il faut un runtime Python embarqué (PyInstaller ou équivalent) et vérifier que le SDK, qui
   lance le **CLI Claude Code en sous-processus**, survit au gel ;
-- le **mode isolé** ([docs/17](./17-isolation-execution.md)) suppose Docker sur le poste — une
-  application « double-clic » ne peut pas l'exiger. Corollaire à assumer : **en distribution
-  bureau, le défaut est le mode non isolé** (déjà le défaut aujourd'hui), et l'isolation
-  devient une option pour postes équipés. Le vrai filet du mode bureau, c'est le **périmètre du
-  projet** (§2.5), pas le conteneur ;
+- le **mode isolé** ([docs/17](./17-isolation-execution.md)) suppose Docker sur le poste, et une
+  application « double-clic » ne peut pas l'exiger. Il reste une option pour les postes équipés ;
 - les **mises à jour** deviennent un sujet à part entière (front, backend, dépendances Python,
   version du CLI).
 
-> ⚠ **Le corollaire sur l'isolation est renversé le 2026-10-14** par
-> [docs/48 §2.1](./48-decision-produit-pro-exploitable.md) (#1518), à la demande de la personne.
-> - **Ce qui tient** : une application « double-clic » ne peut pas exiger Docker.
-> - **Ce qui tombe** : la conclusion. Le défaut en distribution bureau deviendra le mode **isolé**,
->   par un mécanisme natif Windows choisi sur pièces (#1514, #1515). Le filet du mode bureau devient
->   le poste qui borne l'agent, et le périmètre du projet reste l'arbitrage.
-> - **Décidé, pas encore livré** : jusqu'à #1515, le défaut reste le mode non isolé.
+> **L'isolation, en distribution bureau** ([docs/48 §2.1](./48-decision-produit-pro-exploitable.md),
+> #1518). Le défaut est l'**intégrité basse**, un mécanisme natif de Windows que #1514 a choisi sur
+> pièces et que #1515 a posé ([docs/17 §7](./17-isolation-execution.md)) : il ne demande ni Docker
+> ni élévation. Le CLI de l'agent ne voit ni n'arrête aucun processus de la personne, et n'écrit
+> que dans son projet et son établi. Le filet du mode bureau est donc le poste, qui borne ce que
+> fait l'agent. Le périmètre du projet (§2.5) et la portée restent l'arbitrage.
 
 C'est ce coût — pas la fenêtre — qui justifie de commencer par l'option 1.
 

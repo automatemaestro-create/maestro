@@ -40,8 +40,27 @@ internes pour les retrouver serait dépendre du comportement d'un outil tiers
    dans `ENV_RELEVE` ; le fournisseur le lit une fois la session fermée
    (`SessionConfinee.solder`).
 
-Vu du SDK, rien n'a changé : mêmes flux, même code de sortie. Les deux variables
-sont retirées de l'environnement du CLI : l'agent n'a pas à les voir.
+Vu du SDK, rien n'a changé : mêmes flux, même code de sortie. Les variables du
+lanceur sont retirées de l'environnement du CLI : l'agent n'a pas à les voir.
+
+## L'intégrité basse (#1515)
+
+Quand `ENV_INTEGRITE` vaut `basse`, le CLI naît sous le jeton de la personne
+abaissé à l'intégrité basse (`maestro.sandbox.low_integrity`), toujours suspendu,
+rangé dans son job, puis relâché. **Le lanceur reste au niveau de la personne** :
+le job qui borne la vie de l'arbre est hors de sa portée, et ce que l'arbre lance
+ne peut ni arrêter un processus de la personne — `taskkill /IM` ne les voit même
+pas — ni écrire ailleurs que dans ce qui porte une étiquette basse. Ce qui l'est,
+et l'environnement qui y mène, est décidé côté fournisseur
+(`maestro.sandbox.low_session`) : le lanceur ne fait qu'abaisser. Un abaissement
+que le système refuse fait échouer la session, avec sa cause : jamais un CLI qui
+tournerait au niveau de la personne en se croyant abaissé.
+
+Abaissé, le CLI ne reçoit rien de l'espace de noms `MAESTRO_*` : ni le jeton de
+l'API, ni la clé du coffre, ni les réglages. Il ne reçoit pas non plus les variables
+que nomme `ENV_RETENUES`, celles que les `.env` de Maestro déclarent. Au niveau de
+la personne, ce retrait ne fermerait rien — l'agent y lit `~/.maestro` —, et le
+lanceur ne le fait pas.
 
 Trois façons pour une session de finir, et aucune ne laisse l'arbre derrière elle :
 
@@ -85,6 +104,7 @@ from typing import Any
 from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre, ProcessusNomme
+from maestro.sandbox.low_session import LowSession
 
 #: La commande que le lanceur confine — le vrai CLI —, en **liste JSON** : un chemin
 #: d'installation porte volontiers des espaces, et une liste ne se redécoupe pas.
@@ -92,6 +112,19 @@ ENV_COMMANDE = "MAESTRO_CONFINEMENT_COMMANDE"
 
 #: Où le lanceur écrit son relevé. Absente : il confine quand même, sans rendre compte.
 ENV_RELEVE = "MAESTRO_CONFINEMENT_RELEVE"
+
+#: Le niveau d'intégrité où naît le CLI (#1515) : `basse`, ou absente — le niveau de la
+#: personne. Toute autre valeur est refusée : un lancement ne s'abaisse jamais à moitié.
+ENV_INTEGRITE = "MAESTRO_CONFINEMENT_INTEGRITE"
+INTEGRITE_BASSE = "basse"
+
+#: L'espace de noms de Maestro, retiré de l'environnement d'un CLI abaissé (#1515) : jeton
+#: de l'API, clé du coffre, réglages. Ce qui reste est l'environnement de la personne.
+PREFIXE_MAESTRO = "MAESTRO_"
+
+#: Les autres variables retirées d'un CLI abaissé, séparées par des virgules : celles que
+#: les `.env` de Maestro déclarent (`maestro.sandbox.low_session.maestro_variables`).
+ENV_RETENUES = "MAESTRO_CONFINEMENT_RETENUES"
 
 #: Le nom du lanceur (point d'entrée console déclaré dans `pyproject.toml`).
 NOM_LANCEUR = "maestro-confinement"
@@ -223,14 +256,27 @@ class SessionConfinee:
     env: dict[str, str] = field(default_factory=dict)
     non_confinee: str = ""
     _dossier: Path | None = None
+    _basse: LowSession | None = None
 
     @classmethod
-    def preparer(cls, commande: Sequence[str] | None) -> SessionConfinee:
-        """Prépare la session de `commande` (le CLI), ou dit pourquoi elle ne sera pas confinée."""
+    def preparer(
+        cls, commande: Sequence[str] | None, *, basse: LowSession | None = None
+    ) -> SessionConfinee:
+        """Prépare la session de `commande` (le CLI), ou dit pourquoi elle ne sera pas confinée.
+
+        `basse` (#1515) est l'établi d'une session à l'intégrité basse : le lanceur
+        fera naître le CLI abaissé, sous ses variables, et `solder()` le retirera.
+        Une session qui ne sera pas confinée le retire tout de suite : sans
+        lanceur, rien ne l'abaisserait.
+        """
         if not commande:
+            if basse is not None:
+                basse.close()
             return cls(None, non_confinee="le CLI de la session est introuvable")
         lanceur = chemin_lanceur()
         if lanceur is None:
+            if basse is not None:
+                basse.close()
             return cls(
                 None,
                 non_confinee=(
@@ -239,6 +285,11 @@ class SessionConfinee:
                 ),
             )
         env = {ENV_COMMANDE: json.dumps(list(commande))}
+        if basse is not None:
+            env |= basse.env
+            env[ENV_INTEGRITE] = INTEGRITE_BASSE
+            if basse.withheld:
+                env[ENV_RETENUES] = ",".join(sorted(basse.withheld))
         dossier: Path | None
         try:
             dossier = jetable(PREFIXE_RELEVE)
@@ -248,10 +299,18 @@ class SessionConfinee:
             dossier = None
         else:
             env[ENV_RELEVE] = str(dossier / "releve.json")
-        return cls(lanceur, env, _dossier=dossier)
+        return cls(lanceur, env, _dossier=dossier, _basse=basse)
+
+    @property
+    def integrite_basse(self) -> bool:
+        """Le CLI de la session naîtra-t-il à l'intégrité basse ?"""
+        return self._basse is not None
 
     def solder(self) -> ReleveConfinement:
         """Le relevé de la session fermée — vide si le lanceur n'a rien eu à dire ou rien écrit."""
+        if self._basse is not None:
+            self._basse.close()
+            self._basse = None
         if self.non_confinee:
             return ReleveConfinement(non_confinee=self.non_confinee)
         if self._dossier is None:
@@ -314,11 +373,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     environ = dict(os.environ)
     brut = environ.pop(ENV_COMMANDE, "")
     chemin_releve = environ.pop(ENV_RELEVE, "")
+    integrite = environ.pop(ENV_INTEGRITE, "")
+    retenues = {nom.upper() for nom in environ.pop(ENV_RETENUES, "").split(",") if nom}
     try:
         commande = _commande_depuis(brut)
+        basse = _integrite_depuis(integrite)
     except ValueError as exc:
         print(f"{NOM_LANCEUR} : {exc}", file=sys.stderr)
         return 2
+    if basse:
+        environ = {
+            nom: valeur
+            for nom, valeur in environ.items()
+            if not _de_maestro(nom) and nom.upper() not in retenues
+        }
     _recueillir_les_orphelins()
     try:
         arbre = Arbre.lancer(
@@ -330,6 +398,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             console_propre=False,
             racine=os.getpid(),
             veiller=True,
+            integrite_basse=basse,
         )
     except OSError as exc:
         print(f"{NOM_LANCEUR} : la session n'a pas pu être lancée : {exc}", file=sys.stderr)
@@ -343,6 +412,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if chemin_releve:
         _ecrire(releve, Path(chemin_releve))
     return code
+
+
+def _de_maestro(nom: str) -> bool:
+    """La variable `nom` est-elle de l'espace de noms de Maestro ? (casse ignorée, Windows)."""
+    return nom.upper().startswith(PREFIXE_MAESTRO)
+
+
+def _integrite_depuis(brut: str) -> bool:
+    """`ENV_INTEGRITE` lue : vrai pour `basse`, faux absente, `ValueError` sinon."""
+    if not brut:
+        return False
+    if brut == INTEGRITE_BASSE:
+        return True
+    raise ValueError(f"{ENV_INTEGRITE}={brut!r} inconnue — seule {INTEGRITE_BASSE!r} est admise.")
 
 
 def _commande_depuis(brut: str) -> list[str]:

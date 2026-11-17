@@ -254,9 +254,10 @@ class Settings:
     #: l'invariant de `BornesArbitrage`, et ce qui fait que le verdict d'un appel
     #: sensible ne revient jamais au CLI par échéance (#583).
     arbitrage_borne_hook: str | None = None
-    #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
-    #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
-    #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
+    #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None : le
+    #: défaut du poste — `integrite-basse` sous Windows, `hote` ailleurs (#1515). Valeurs
+    #: reconnues : `integrite-basse`, `hote`, `conteneur` (#108). Interprété et validé
+    #: par la couche sandbox (`maestro.sandbox.container.mode_isolation`).
     isolation: str | None = None
     #: Image Docker du mode isolé (`MAESTRO_ISOLATION_IMAGE`), ou None : l'image
     #: dédiée par défaut (`maestro-sandbox:latest`, construite depuis infra/sandbox/).

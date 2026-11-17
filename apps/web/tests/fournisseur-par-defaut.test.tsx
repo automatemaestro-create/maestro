@@ -372,14 +372,19 @@ describe("② présent n'est pas éprouvé", () => {
 });
 
 describe("③ le verdict dit son motif et son geste", () => {
-  it("un abonnement non connecté nomme la commande qui le connecte", async () => {
+  it("un abonnement non connecté nomme la commande qui connecte Maestro, telle que l'API l'a trouvée", async () => {
     poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "authentication_failed" });
     const utilisateur = await monter();
 
     await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
 
     expect(await screen.findByText("Échec de l'épreuve")).toBeInTheDocument();
-    expect(screen.getByText(/« claude auth login »/)).toBeInTheDocument();
+    // Les sessions de Maestro ont leur propre dossier du CLI (#1515) : connecter le CLI
+    // de la personne ne les connecterait pas.
+    expect(
+      screen.getByText(/« "C:\\Program Files\\Maestro\\python\\maestro-connexion\.exe" »/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/auth login/)).toBeNull();
     expect(screen.getByText("authentication_failed").closest("p")).toHaveTextContent(
       "Relevé de l'épreuve : authentication_failed",
     );

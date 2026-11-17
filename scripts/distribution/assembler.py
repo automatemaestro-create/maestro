@@ -135,6 +135,10 @@ REGLAGES_DISTRIBUTION = (
     "#\n"
     "# Installé : ce que Maestro écrit va sous ~/.maestro/, jamais dans ce dossier (#1620).\n"
     "MAESTRO_INSTALLATION=1\n"
+    "#\n"
+    "# Isolation : le CLI d'un agent naît à l'intégrité basse de Windows. Il n'arrête aucun\n"
+    "# processus de la personne et n'écrit que son projet et son établi (#1515, docs/17 §7).\n"
+    "MAESTRO_ISOLATION=integrite-basse\n"
 )
 
 
