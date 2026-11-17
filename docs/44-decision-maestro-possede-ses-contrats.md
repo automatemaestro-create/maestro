@@ -90,3 +90,36 @@ S'y ajoutent trois points notés sur leurs tickets :
 
 - Un fournisseur qui ne peut être conduit **que** par son propre outil, sans API d'appel d'outils. Il se branche alors par un adaptateur dédié (ACP, docs/34), sans que ses noms entrent dans le reste du produit.
 - Une mesure sur le banc montrant que la boucle de Maestro rend un travail **nettement moins bon** que celle du CLI de Claude sur les mêmes tâches. La boucle se corrige : on ne revient pas à la dépendance.
+
+## 7. Le contrat de l'adaptateur Claude (#1312)
+
+<!-- documentation: développement -->
+
+L'adaptateur Claude repose sur des comportements du CLI que son SDK embarque. Ils sont **vérifiés**, jamais supposés : la **suite de contrat** (marqueur `claude_contract`) les prouve sur le vrai CLI, avec un vrai modèle. Chaque test d'isolement a son **échantillon fautif** : la même question posée porte ouverte, dont le témoin doit ressortir. Sans lui, un vert serait de l'aveuglement.
+
+| Ce que l'adaptateur suppose | Où la suite le prouve |
+|---|---|
+| Un chemin texte n'expose aucun outil | `tests/test_claude_contract.py` |
+| Ni le `CLAUDE.md` ni les skills du dossier n'entrent dans une session, texte ou agent ; ni la mémoire du dossier de l'API dans un appel texte (#1397) | `tests/test_claude_contract.py`, `tests/test_dossier_neutre.py` |
+| Un refus de Maestro tient au point de contrôle (#1304) | `tests/test_point_de_controle.py` |
+| L'usage est compté une fois par appel d'API pendant la session, et se solde sur ce que le CLI facture | `tests/test_claude_contract.py` |
+| Le plafond de tours finit la session en erreur typée (#1305) | `tests/test_claude_contract.py` — en échec attendu (`xfail` strict) tant que #1305 n'est pas livré : le jour où il passe, la suite rougit pour qu'on retire l'attente |
+| Une variable du poste que personne ne nomme n'atteint pas le shell de l'agent ([docs/17 §8](./17-isolation-execution.md)) | `tests/test_claude_contract.py` |
+
+**Elle se joue avant toute montée de version du SDK** :
+
+```bash
+env MAESTRO_TESTS_CLI_REEL=1 .venv/Scripts/python.exe -m pytest -m claude_contract
+```
+
+Depuis un worktree dont le venv est celui du clone principal, on la joue sous `env PYTHONPATH=<chemin du worktree>` : le lanceur du confinement, d'où naît le CLI d'un agent, importerait sinon le `maestro` du clone principal, et la suite prouverait un autre code. Elle le vérifie avant chaque test qui lance le CLI, et le dit.
+
+Une montée qui la rougit ne passe pas : le contrat rompu se corrige dans l'adaptateur, ou s'ouvre en ticket et se nomme dans la suite, avant de monter. Verte, la version entre au tableau ci-dessous, et `pyproject.toml` la verrouille. La CI joue la part de la suite qui ne lance pas le CLI : la version verrouillée figure au tableau, et l'image du mode isolé reçoit sa version du CLI.
+
+**Le verrou** sert la reproductibilité et la détection d'un contrat rompu (§4), rien d'autre : un comportement dont Maestro a besoin s'écrit dans ses contrats. Il tient en deux endroits : `pyproject.toml` (`claude-agent-sdk==…`, qui embarque son CLI), et l'image du mode isolé, construite avec la version du CLI de l'hôte ([docs/17 §4](./17-isolation-execution.md)). Chaque run écrit à son journal ce sur quoi il a tourné (« Versions du fournisseur » : SDK, CLI, et en mode isolé le CLI de l'image), et `maestro-check-env` le montre avant tout run.
+
+**Versions vérifiées**
+
+| SDK `claude-agent-sdk` | CLI `claude` embarqué | Suite verte le | Ce qu'elle a nommé |
+|---|---|---|---|
+| 0.2.159 | 2.1.281 | 2026-11-17 | le plafond de tours n'est pas typé (#1305) |

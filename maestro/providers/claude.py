@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -130,7 +131,8 @@ from maestro.providers.base import (
     attache_stderr,
     motif_du_statut_http,
 )
-from maestro.sandbox import low_session
+from maestro.providers.claude_runtime import ClaudeRuntime
+from maestro.sandbox import low_session, session_env
 from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import MODE_INTEGRITE_BASSE, IsolationConfig, mode_isolation
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
@@ -162,6 +164,12 @@ _MARQUEUR_MAX_TURNS = "error_max_turns"
 #: Maestro quand ils le déclarent ; le reste de ce qu'ils déclarent lui est retenu
 #: (#1515).
 ESPACE_DU_CLI = ("ANTHROPIC_", "CLAUDE_")
+
+#: Ce dont le CLI a besoin du poste au-delà du socle de toute session (#1312,
+#: `maestro.sandbox.session_env.BASE_NAMES`) : sous Windows, il lance son shell par
+#: Git Bash, et une personne dont le Git n'est pas où le CLI le cherche le lui désigne
+#: par cette variable. À l'intégrité basse, le fournisseur la pose sur la copie de Git.
+VARIABLES_NOMMEES_DU_CLI = ("CLAUDE_CODE_GIT_BASH_PATH",)
 
 #: États d'un serveur MCP qui valent échec définitif (statut `get_mcp_status`) :
 #: démarrage/connexion en échec, authentification requise, serveur désactivé.
@@ -455,8 +463,17 @@ class ClaudeProvider(ModelProvider):
         arbitrage: BornesArbitrage | None = None,
         integrite_basse: bool = False,
         dossier_cli: Path | None = None,
+        env_agent: Sequence[str] = (),
+        lecteur_versions: ClaudeRuntime | None = None,
     ) -> None:
         self._credentials = credentials
+        # Les variables du poste que la personne nomme pour les sessions d'agent,
+        # au-delà du socle (#1312, `MAESTRO_AGENT_ENV`) : des noms, ou des familles en `*`.
+        self._env_agent = tuple(env_agent)
+        # Ce qui lit les versions sur lesquelles tourne cet adaptateur (#1312). None :
+        # il n'en déclare aucune — un fournisseur construit à la main, celui d'un
+        # test —, et aucun run ne les écrit.
+        self._lecteur_versions = lecteur_versions
         # L'intégrité basse (#1515) : sur l'hôte, le CLI d'une session outillée naît
         # abaissé, et ce qu'il écrit reçoit son étiquette (`maestro.sandbox.low_session`).
         # Sans effet en mode isolé, où le conteneur est la frontière.
@@ -516,17 +533,28 @@ class ClaudeProvider(ModelProvider):
                 "est absente. Renseignez la clé, ou passez CLAUDE_AUTH_MODE=subscription "
                 "pour utiliser l'abonnement Claude Code."
             )
+        isolation = IsolationConfig.from_settings(settings)
         return cls(
             Credentials(
                 auth_mode=mode,
                 api_key=settings.anthropic_api_key,
                 oauth_token=settings.claude_oauth_token,
             ),
-            isolation=IsolationConfig.from_settings(settings),
+            isolation=isolation,
             arbitrage=BornesArbitrage.from_settings(settings),
             integrite_basse=mode_isolation(settings) == MODE_INTEGRITE_BASSE,
             dossier_cli=dossier_du_cli_claude(),
+            env_agent=session_env.parse_names(settings.env_agent),
+            lecteur_versions=ClaudeRuntime(
+                image=isolation.image if isolation is not None else None
+            ),
         )
+
+    def versions_du_fournisseur(self) -> Mapping[str, str]:
+        """Le SDK, son CLI et, en mode isolé, le CLI de l'image — lus maintenant (#1312)."""
+        if self._lecteur_versions is None:
+            return {}
+        return self._lecteur_versions.versions().as_lines()
 
     def supports(self, model: str) -> bool:
         return model.startswith(self._MODEL_PREFIX)
@@ -600,6 +628,34 @@ class ClaudeProvider(ModelProvider):
             # Le Git Bash que le CLI lance : la copie, seule à démarrer abaissée.
             session.env["CLAUDE_CODE_GIT_BASH_PATH"] = str(session.bash)
         return session
+
+    def _ambiantes_retenues(
+        self, env: Mapping[str, str], basse: low_session.LowSession | None
+    ) -> dict[str, str]:
+        """Les variables du poste qu'une session d'agent ne reçoit pas (#1312).
+
+        Nommées, donc reçues : le socle de toute session, ce dont le CLI a besoin
+        (`VARIABLES_NOMMEES_DU_CLI`), ce que ce fournisseur pose lui-même (`env`, et
+        l'établi d'une session basse), les variables de l'espace du CLI
+        (`ESPACE_DU_CLI`) que les `.env` de Maestro déclarent — c'est ainsi qu'une
+        personne désigne une passerelle au CLI —, et ce que la personne nomme
+        (`MAESTRO_AGENT_ENV`). Toute autre variable ambiante est retenue, par
+        l'empreinte de sa valeur (`maestro.sandbox.session_env`).
+        """
+        declarees = (
+            nom
+            for nom in low_session.maestro_variables()
+            if nom.upper().startswith(ESPACE_DU_CLI)
+        )
+        nommees = {
+            *session_env.BASE_NAMES,
+            *VARIABLES_NOMMEES_DU_CLI,
+            *env,
+            *(basse.env if basse is not None else ()),
+            *declarees,
+            *self._env_agent,
+        }
+        return session_env.withheld(os.environ, nommees)
 
     async def generate(
         self,
@@ -1017,9 +1073,13 @@ class ClaudeProvider(ModelProvider):
             # Hors du conteneur jetable, plus rien n'emporte ce que la session
             # lance en arrière-plan : le lanceur du confinement s'en charge (#1279).
             # À l'intégrité basse (#1515), il fait naître le CLI abaissé, et ce que
-            # l'agent écrit reçoit d'abord son étiquette.
+            # l'agent écrit reçoit d'abord son étiquette. À tous les niveaux, il ne
+            # laisse passer du poste que les variables nommées (#1312).
+            basse = self._session_basse(workspace)
             confinement = SessionConfinee.preparer(
-                _commande_du_cli(), basse=self._session_basse(workspace)
+                _commande_du_cli(),
+                basse=basse,
+                ambiantes=self._ambiantes_retenues(env, basse),
             )
             cli_path = confinement.lanceur
             env |= confinement.env

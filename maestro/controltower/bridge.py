@@ -60,7 +60,13 @@ from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depu
 from maestro.espace import nom_redis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
-from maestro.telemetry import LOGGER_NAME, STEP_ACCEPTANCE, STEP_PROBE, redact_secrets
+from maestro.telemetry import (
+    LOGGER_NAME,
+    STEP_ACCEPTANCE,
+    STEP_PROBE,
+    STEP_VERSIONS,
+    redact_secrets,
+)
 from maestro.telemetry.journal import SUFFIXE_ETAPE_USAGE
 from maestro.telemetry.usage import StepUsage
 
@@ -112,7 +118,8 @@ _ETAPE_PLAFOND = "plafond"
 #: reconnue, elle ne serait pas perdue mais comptée dans une tâche fantôme —, et
 #: Maestro recette le livrable intégré contre le brief — la **recette**, #1530,
 #: importée pour la même raison, et qui porte son verdict structuré comme une
-#: vérification de tâche porte le sien).
+#: vérification de tâche porte le sien —, et le run dit sur quoi tourne son
+#: fournisseur — les **versions**, #1312, importées pour la même raison).
 _ETAPES_RUN = (
     _ETAPE_PLANIFICATION,
     _ETAPE_BRIEF,
@@ -122,6 +129,7 @@ _ETAPES_RUN = (
     _ETAPE_PLAFOND,
     STEP_PROBE,
     STEP_ACCEPTANCE,
+    STEP_VERSIONS,
 )
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).

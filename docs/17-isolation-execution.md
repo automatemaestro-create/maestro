@@ -122,11 +122,18 @@ chaque git de l'hôte joué dans l'espace. Le conteneur reçoit donc un dépôt 
 
 ## 4. Activation (opt-in)
 
-1. **Construire l'image dédiée** (une fois, Docker démarré) :
+1. **Construire l'image dédiée** (Docker démarré, dans Git Bash) :
 
    ```bash
-   docker build -t maestro-sandbox:latest infra/sandbox
+   docker build --build-arg CLAUDE_CODE_VERSION=$(.venv/Scripts/python.exe -m maestro.sandbox.image_cli) -t maestro-sandbox:latest infra/sandbox
    ```
+
+   L'image installe le CLI **de la version que le SDK de l'hôte embarque** (#1312) : le shim
+   relaie au CLI du conteneur les arguments du SDK de l'hôte, et les deux doivent être de la même
+   version. Sans cette version, la construction s'arrête. L'image le dit par son label
+   `maestro.claude-cli`, que le journal de chaque run lit (« Versions du fournisseur ») : une image
+   construite pour un autre SDK, ou avant ce label, y est dite **à reconstruire**. Après une montée
+   du SDK, on la reconstruit ([docs/44 §7](./44-decision-maestro-possede-ses-contrats.md)).
 
 2. **Configurer l'authentification par variable** : l'état de connexion du
    poste (`claude` connecté) n'est **jamais monté** dans le conteneur. Il faut
@@ -366,7 +373,7 @@ joint le modèle.
 - écrire dans l'espace, l'établi et le dossier du CLI réussit ; écrire à côté échoue, et lire un
   fichier fermé échoue aussi ;
 - le lanceur abaisse le CLI et lui retire les variables `MAESTRO_*` et celles qu'il doit retenir.
-  Le reste de l'environnement passe.
+  Le reste passe au filtre des variables nommées (§8).
 
 **Ce que l'isolation ne couvre pas.** L'agent en est informé sous « La machine »
 (`maestro.machine.LIGNE_INTEGRITE_BASSE`), et voici la liste :
@@ -379,8 +386,8 @@ joint le modèle.
   l'autre. Les étiquettes restent après la session ;
 - **le réseau**, bouclage compris : l'agent joint ce qui écoute sur `127.0.0.1`, comme l'API de
   Maestro, un Redis ou le port de débogage d'un navigateur ;
-- **l'environnement** de la personne : l'agent en hérite, hors ce qui est retenu ci-dessus. Une
-  clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
+- **l'environnement** : l'agent ne reçoit que les variables nommées (§8), mais celles-là, il les
+  lit. Une clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
 - **un cache par session** : ce qu'un outil range dans le profil (le cache de `npx`, par
   exemple) part avec l'établi, et se retélécharge à la session suivante ;
 - **les vérifications** que Maestro joue lui-même (`maestro/sandbox/verification.py`) : elles
@@ -393,3 +400,43 @@ joint le modèle.
 (`tests/test_portee.py::test_tuer_python_par_son_nom_revient_a_une_personne`), que le poste l'eût
 refusé ou non. Le poste borne ce que le texte d'une commande ne dit pas ; il ne remplace pas le
 jugement.
+
+## 8. L'environnement d'une session : les variables nommées seules (#1312)
+
+Une session d'agent ne reçoit du poste que les variables que quelqu'un a **nommées**. Une variable
+ambiante que personne n'a nommée — un jeton de forge, la clé d'un autre service, une variable de
+Maestro — n'y entre pas, à tous les niveaux d'intégrité.
+
+**Ce qui nomme une variable** (`maestro/sandbox/session_env.py`) :
+- le **socle** de toute session (`BASE_NAMES`) : ce sans quoi un programme ne démarre pas, ne
+  trouve ni le profil ni le temporaire (`PATH`, `SYSTEMROOT`, `USERPROFILE`, `HOME`, `TEMP`…), la
+  langue (`LANG`, `LC_*`), et les réglages réseau du poste (mandataire, certificats) ;
+- le **fournisseur** : ce qu'il pose lui-même (l'authentification, l'identité Git des commits de
+  l'agent, l'établi d'une session basse), ce dont son CLI a besoin (`CLAUDE_CODE_GIT_BASH_PATH`),
+  et les variables de l'espace du CLI (`ANTHROPIC_*`, `CLAUDE_*`) que les `.env` de Maestro
+  déclarent — c'est ainsi qu'on désigne une passerelle au CLI ;
+- la **personne**, par `MAESTRO_AGENT_ENV` : des noms séparés par des virgules, un `*` final pour
+  une famille (`JAVA_HOME,GRADLE_*`). C'est le geste pour un outil du projet qui a besoin d'une
+  variable du poste.
+
+**Comment.** Le SDK transmet toujours au CLI l'environnement entier de son processus, et n'offre
+aucun moyen d'en retirer une variable. Le filtre est donc posé au lanceur du confinement (§6), qui
+fait naître le CLI. Le fournisseur lui passe les variables ambiantes non nommées, chacune avec
+l'**empreinte** de sa valeur, jamais la valeur, et le lanceur retire celles qui arrivent
+inchangées. Ce que le SDK pose en chemin (son protocole, le dossier courant) a changé de valeur et
+reste : Maestro n'a pas à connaître les variables internes du SDK
+([docs/44](./44-decision-maestro-possede-ses-contrats.md)). La sonde du point de contrôle passe par
+le même lanceur, sous le même filtre.
+
+**Ce que ce filtre ne couvre pas :**
+- le **mode isolé** a sa propre liste blanche, plus étroite : les variables d'authentification
+  seules (§3) ;
+- une session **non confinée** — lanceur absent, CLI introuvable — reçoit l'environnement entier,
+  et la ligne « session non confinée » du journal le dit ;
+- les **chemins texte** (`generate`) : ils n'exposent aucun outil, rien n'y lit l'environnement ;
+- les **vérifications** que Maestro joue lui-même (§7) : elles tournent dans son environnement.
+
+**Prouvé** : `tests/test_session_env.py` (la règle, le lanceur joué pour de vrai, ce que le
+fournisseur nomme) ; sur le vrai CLI, la suite de contrat
+([docs/44 §7](./44-decision-maestro-possede-ses-contrats.md)) — une variable ambiante non nommée ne
+sort pas du shell de l'agent, la même nommée en sort.

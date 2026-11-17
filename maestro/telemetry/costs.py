@@ -187,6 +187,13 @@ STEP_PROBE = "sonde"
 #: phantom "recette" task.
 STEP_ACCEPTANCE = "recette"
 
+#: Step that belongs to no task: **what the provider runs on** (#1312) — the SDK,
+#: its CLI and, in container mode, the image's CLI, written once per run at its
+#: first task (`maestro.engine.executor`). Null usage by construction: reading a
+#: version calls no model. To declare here for the reason of `STEP_BRIEF`: without
+#: this line, a phantom "versions" task.
+STEP_VERSIONS = "versions"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -362,10 +369,11 @@ class RunCost:
                 # and the ledger must carry the sum.
                 brief = brief.merge(record.usage)
                 continue
-            if record.etape == STEP_RESUME:
-                # Run marker (#96), attached to no task: nothing to account for —
-                # the steps it announces are themselves reintegrated into the
-                # journal (`RunJournal.reconstitue`) and counted in their place.
+            if record.etape in (STEP_RESUME, STEP_VERSIONS):
+                # Run markers, attached to no task: nothing to account for. The
+                # resumption (#96) announces steps that are themselves reintegrated
+                # into the journal (`RunJournal.reconstitue`) and counted in their
+                # place; the versions (#1312) say what the run ran on.
                 continue
             if record.etape in (STEP_TEAM, STEP_SPENDING_CAP, STEP_CADENCE):
                 # The confrontation of the team with the plan (#1227), the

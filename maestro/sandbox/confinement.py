@@ -43,6 +43,14 @@ internes pour les retrouver serait dépendre du comportement d'un outil tiers
 Vu du SDK, rien n'a changé : mêmes flux, même code de sortie. Les variables du
 lanceur sont retirées de l'environnement du CLI : l'agent n'a pas à les voir.
 
+## L'environnement : les variables nommées seules (#1312)
+
+À tous les niveaux d'intégrité, le lanceur retire de l'environnement du CLI les
+variables **ambiantes** que personne n'a nommées : celles que `ENV_AMBIANTES` désigne,
+chacune par l'empreinte de sa valeur, et qui arrivent inchangées du poste. Ce que le
+SDK ou le fournisseur ont posé en chemin reste. La règle, et ce qui nomme une
+variable, vivent dans `maestro.sandbox.session_env`.
+
 ## L'intégrité basse (#1515)
 
 Quand `ENV_INTEGRITE` vaut `basse`, le CLI naît sous le jeton de la personne
@@ -80,7 +88,8 @@ Trois façons pour une session de finir, et aucune ne laisse l'arbre derrière e
 - **Un lanceur absent** — le paquet n'a pas été réinstallé depuis ce ticket — ou un
   **CLI introuvable** : la session tourne comme avant, et le journal du run dit
   qu'elle n'était pas confinée (`ReleveConfinement.non_confinee`), plutôt que de
-  laisser croire que rien n'a survécu.
+  laisser croire que rien n'a survécu. Son environnement n'est pas filtré non plus,
+  et la même phrase le dit.
 
 Le chemin texte (`generate`) n'expose aucun outil : il ne lance rien, il n'a rien à
 confiner.
@@ -103,6 +112,7 @@ from typing import Any
 
 from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
+from maestro.sandbox import session_env
 from maestro.sandbox.arbre import Arbre, ProcessusNomme
 from maestro.sandbox.low_session import LowSession
 
@@ -125,6 +135,11 @@ PREFIXE_MAESTRO = "MAESTRO_"
 #: Les autres variables retirées d'un CLI abaissé, séparées par des virgules : celles que
 #: les `.env` de Maestro déclarent (`maestro.sandbox.low_session.maestro_variables`).
 ENV_RETENUES = "MAESTRO_CONFINEMENT_RETENUES"
+
+#: Les variables ambiantes que personne n'a nommées (#1312), chacune avec l'empreinte de
+#: sa valeur (`maestro.sandbox.session_env.encode`) : retirées à tous les niveaux. Un nom
+#: neuf qui voyage d'un processus à l'autre naît en anglais (docs/55 §3).
+ENV_AMBIANTES = "MAESTRO_CONFINEMENT_WITHHELD"
 
 #: Le nom du lanceur (point d'entrée console déclaré dans `pyproject.toml`).
 NOM_LANCEUR = "maestro-confinement"
@@ -182,7 +197,8 @@ class ReleveConfinement:
         if self.non_confinee:
             return (
                 f"Session de l'agent non confinée : {self.non_confinee}. Ce qu'elle a "
-                "lancé en arrière-plan peut survivre à la tâche."
+                "lancé en arrière-plan peut survivre à la tâche, et elle a reçu "
+                "l'environnement du poste entier."
             )
         morceaux: list[str] = []
         if self.survivants:
@@ -260,7 +276,11 @@ class SessionConfinee:
 
     @classmethod
     def preparer(
-        cls, commande: Sequence[str] | None, *, basse: LowSession | None = None
+        cls,
+        commande: Sequence[str] | None,
+        *,
+        basse: LowSession | None = None,
+        ambiantes: Mapping[str, str] | None = None,
     ) -> SessionConfinee:
         """Prépare la session de `commande` (le CLI), ou dit pourquoi elle ne sera pas confinée.
 
@@ -268,6 +288,10 @@ class SessionConfinee:
         fera naître le CLI abaissé, sous ses variables, et `solder()` le retirera.
         Une session qui ne sera pas confinée le retire tout de suite : sans
         lanceur, rien ne l'abaisserait.
+
+        `ambiantes` (#1312) : les variables ambiantes que personne n'a nommées, chacune
+        avec l'empreinte de sa valeur (`maestro.sandbox.session_env.withheld`) — le
+        lanceur les retire.
         """
         if not commande:
             if basse is not None:
@@ -285,6 +309,8 @@ class SessionConfinee:
                 ),
             )
         env = {ENV_COMMANDE: json.dumps(list(commande))}
+        if ambiantes:
+            env[ENV_AMBIANTES] = session_env.encode(ambiantes)
         if basse is not None:
             env |= basse.env
             env[ENV_INTEGRITE] = INTEGRITE_BASSE
@@ -375,12 +401,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     chemin_releve = environ.pop(ENV_RELEVE, "")
     integrite = environ.pop(ENV_INTEGRITE, "")
     retenues = {nom.upper() for nom in environ.pop(ENV_RETENUES, "").split(",") if nom}
+    ambiantes = environ.pop(ENV_AMBIANTES, "")
     try:
         commande = _commande_depuis(brut)
         basse = _integrite_depuis(integrite)
+        empreintes = session_env.decode(ambiantes) if ambiantes else {}
     except ValueError as exc:
         print(f"{NOM_LANCEUR} : {exc}", file=sys.stderr)
         return 2
+    # Les variables arrivées du poste sans que personne ne les nomme (#1312).
+    environ = session_env.without_withheld(environ, empreintes)
     if basse:
         environ = {
             nom: valeur

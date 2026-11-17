@@ -11,11 +11,13 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     # Moteur d'agents (cf. docs/02-stack-technique.md §2). Import : `claude_agent_sdk`.
-    # Le SDK embarque son CLI, et c'est lui qui sert — ou refuse — un modèle : le
-    # plancher est la première version dont le CLI sert la dernière Opus de
-    # `maestro/providers/familles-claude.tsv` (0.2.158 → CLI 2.1.280, qu'exige Opus 5.5 ;
-    # #1270). Une ligne de famille qui monte peut exiger de relever ce plancher.
-    "claude-agent-sdk>=0.2.158",
+    # Le SDK embarque son CLI, et c'est lui qui sert — ou refuse — un modèle : la
+    # version doit servir la dernière Opus de `maestro/providers/familles-claude.tsv`
+    # (0.2.158 → CLI 2.1.280 au moins, qu'exige Opus 5.5 ; #1270).
+    # VERROUILLÉE (#1312) pour la reproductibilité et la vérification, jamais pour
+    # garder un comportement (docs/44) : la monter, c'est rejouer d'abord la suite
+    # de contrat sur le vrai CLI, puis inscrire la version vérifiée (docs/44 §7).
+    "claude-agent-sdk==0.2.159",
     # Chargement du .env local (non versionné).
     "python-dotenv>=1.0.0",
     # Validation du schéma de tâche de l'orchestrateur (packages/shared, draft 2020-12).
