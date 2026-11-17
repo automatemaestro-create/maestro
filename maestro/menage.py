@@ -95,10 +95,12 @@ from maestro.controltower.hote_detache import PREFIXE_ATELIER
 from maestro.controltower.persistence import SUFFIXE_SAUVEGARDE, SUFFIXE_SQLITE
 from maestro.emplacements import (
     NOM_ATELIERS,
+    NOM_CLI_CLAUDE,
     NOM_CONFIGURATION,
     NOM_ETAT,
     NOM_JETABLE,
     NOM_LANCEUR,
+    NOM_OUTILS,
     NOM_PROJETS,
     NOM_REPRISE,
     configuration_du_poste,
@@ -516,6 +518,13 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
         NOM_PROFIL_NAVIGATEUR: "profil de navigateur du clone principal (scripts/setup.sh)",
         NOM_CONFIGURATION: (
             "configuration d'une installation (maestro.emplacements.configuration_du_poste)"
+        ),
+        NOM_CLI_CLAUDE: (
+            "connexion et transcriptions du CLI des sessions de Maestro "
+            "(maestro.providers.claude, maestro-connexion)"
+        ),
+        NOM_OUTILS: (
+            "copie de Git for Windows des agents à l'intégrité basse (maestro.sandbox.low_session)"
         ),
         NOM_LANCEUR: "journaux et session du lanceur installé (maestro.lanceur.emplacement)",
         NOM_REPRISE: "copie d'une installation antérieure (maestro.lanceur.reprise)",

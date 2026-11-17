@@ -15,6 +15,7 @@ Ce que ce fichier tient (`maestro.menage` en porte la démonstration) :
 
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import os
@@ -29,7 +30,7 @@ from typing import TextIO, cast
 import pytest
 from balayage import fichiers_du_depot
 
-from maestro import menage
+from maestro import emplacements, menage
 from maestro.controltower.donnees import donnees_du_banc
 from maestro.controltower.persistence import SUFFIXE_SQLITE, chemin_sauvegarde
 from maestro.emplacements import (
@@ -37,6 +38,8 @@ from maestro.emplacements import (
     NOM_JETABLE,
     NOM_PROJETS,
     TEMOIN_PID,
+    dossier_du_cli_claude,
+    outils_du_poste,
     racine_ateliers,
     racine_etat,
     racine_projets,
@@ -159,6 +162,8 @@ def poste(maison: Path, temporaire: Path) -> dict[str, Path]:
     elements = {
         "projet": _dossier(racine_projets() / "depensio"),
         "jeton": etat / "jeton-api",
+        "cli_claude": _dossier(dossier_du_cli_claude()),
+        "outils": _dossier(outils_du_poste()),
         "ateliers": _dossier(racine_ateliers() / "scenarios"),
         "profil": _dossier(etat / NOM_PROFIL_NAVIGATEUR),
         "intrus_etat": _dossier(etat / "banc-728"),
@@ -197,6 +202,8 @@ def test_le_check_montre_chaque_racine_et_le_hors_racine_avec_taille_et_propriet
     attendus = {
         "projet": None,  # la racine des projets se montre entière, pas projet par projet
         "jeton": (RACINE_ETAT, DECLARE),
+        "cli_claude": (RACINE_ETAT, DECLARE),
+        "outils": (RACINE_ETAT, DECLARE),
         "profil": (RACINE_ETAT, DECLARE),
         "intrus_etat": (RACINE_ETAT, A_RETIRER),
         "hote_mort": (RACINE_JETABLE, RAMASSABLE),
@@ -298,6 +305,60 @@ def test_chaque_famille_que_le_ramassage_laisse_a_un_autre_a_son_proprietaire() 
     assert set(menage.PROPRIETAIRES_TIERS_JETABLES) == set(FAMILLES_TIERCES_JETABLES)
 
 
+def _dossiers_declares_sous_l_etat() -> dict[str, Path]:
+    """Chaque dossier que `maestro.emplacements` déclare juste sous `~/.maestro/` — dérivé.
+
+    Une fonction publique du module, sans argument obligatoire, qui rend un `Path` posé
+    directement sous `racine_etat()`. Jamais listé : c'est la liste recopiée qui a laissé
+    deux dossiers sans déclaration (#1712). L'appel ne crée rien — le module ne crée que par
+    `jetable`, qui demande son préfixe.
+    """
+    trouves = {}
+    for nom, fonction in inspect.getmembers(emplacements, inspect.isfunction):
+        if nom.startswith("_") or fonction.__module__ != emplacements.__name__:
+            continue
+        signature = inspect.signature(fonction)
+        obligatoires = [
+            parametre for parametre in signature.parameters.values()
+            if parametre.default is parametre.empty
+            and parametre.kind not in (parametre.VAR_POSITIONAL, parametre.VAR_KEYWORD)
+        ]
+        if signature.return_annotation not in ("Path", Path) or obligatoires:
+            continue
+        chemin = fonction()
+        if chemin.parent == racine_etat():
+            trouves[nom] = chemin
+    return trouves
+
+
+def test_chaque_dossier_que_les_emplacements_declarent_sous_l_etat_y_est_declare(
+    maison: Path, temporaire: Path
+) -> None:
+    """Un dossier que `maestro.emplacements` déclare sous `~/.maestro/` n'est jamais à retirer.
+
+    `~/.maestro/claude` et `~/.maestro/outils` (#1515) se disaient « non déclaré » : passé six
+    heures sans activité, la purge aurait retiré la connexion de Maestro au modèle et les
+    transcriptions que la reprise d'une session relit (#1712).
+    """
+    declares = _dossiers_declares_sous_l_etat()
+    # La sonde voit ce qu'elle doit voir — sans quoi un ensemble vide passerait.
+    attendus = {"configuration_du_poste", "dossier_du_cli_claude", "outils_du_poste"}
+    assert attendus <= set(declares), sorted(declares)
+    for chemin in declares.values():
+        _dossier(chemin)
+
+    entrees = _par_chemin(
+        inventorier(_gardes(), anciennes_adresses=(), environnement={"TMPDIR": str(temporaire)})
+    )
+
+    inconnus = {
+        nom: (entrees[chemin].sort, entrees[chemin].proprietaire)
+        for nom, chemin in declares.items()
+        if entrees[chemin].sort != DECLARE
+    }
+    assert not inconnus, f"déclarés par maestro.emplacements, inconnus du ménage : {inconnus}"
+
+
 def test_un_profil_de_navigateur_part_avec_son_worktree(maison: Path, temporaire: Path) -> None:
     vivant = _dossier(racine_etat() / f"{NOM_PROFIL_NAVIGATEUR}-1458")
     orphelin = _dossier(racine_etat() / f"{NOM_PROFIL_NAVIGATEUR}-999")
@@ -333,8 +394,8 @@ def test_purger_sur_oui_ne_retire_que_ce_qu_aucun_ramasseur_ne_connait(
     assert code == CODE_FAIT, sortie
     assert not poste["intrus_etat"].exists()
     assert not poste["essais"].exists()
-    restent = ("projet", "jeton", "ateliers", "profil", "hote_mort", "stack", "ancien_banc",
-               "ancienne_relecture", "demo", "presentation", "etranger")
+    restent = ("projet", "jeton", "cli_claude", "outils", "ateliers", "profil", "hote_mort",
+               "stack", "ancien_banc", "ancienne_relecture", "demo", "presentation", "etranger")
     for nom in restent:
         assert poste[nom].exists(), f"{nom} n'était pas à retirer"
     assert "Retiré(s) : 2 élément(s)" in sortie
