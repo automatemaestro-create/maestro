@@ -60,8 +60,9 @@ case "${OSTYPE:-}" in
 esac
 
 # --- La table des écoutes --------------------------------------------------------------------------
-# Qui écoute sur quel port : ce qui fait une stack vivante ici, et ce par quoi `start.sh` retrouve,
-# après ses témoins, le processus qui tient un port (#1579). La lecture vit ici seulement.
+# Qui écoute sur quel port : ce qui fait une stack vivante ici, et ce par quoi `start.sh` (après ses
+# témoins, #1579) et `scripts/presentation/captures.sh` retrouvent le processus qui tient un port.
+# La lecture vit ici seulement.
 #
 #   - Sous Windows, la table du système, `TCP_TABLE_OWNER_PID_LISTENER`, lue par `ecoutes.py` avec
 #     le Python du dépôt. Pas `netstat` : il n'affiche une écoute que dans l'état `LISTENING`, et un
@@ -112,6 +113,22 @@ etat_stack_ecoutes() {
   sortie="${sortie//$'\r'/}"
   ETAT_STACK_ECOUTES_AVIS="$lecteur illisible (${sortie%%$'\n'*}, code $code)"
   _etat_stack_ecoutes_netstat
+}
+
+# etat_stack_pids_du_port <port> : les pids qui écoutent sur ce port, dans ETAT_STACK_PIDS (séparés
+# par une espace, sans doublon), lus par `etat_stack_ecoutes`, dont il rend le code et laisse l'avis.
+# C'est par lui que `start.sh` et `scripts/presentation/captures.sh` désignent ce qu'ils arrêtent. Un
+# pid que la table ne sait pas lire (`-`) n'y entre jamais : ce qu'on ne sait pas nommer ne se tue pas.
+etat_stack_pids_du_port() {
+  local port="$1" port_lu pid_lu code=0
+  ETAT_STACK_PIDS=""
+  etat_stack_ecoutes || code=$?
+  while read -r port_lu pid_lu; do
+    [ "$port_lu" = "$port" ] || continue
+    case "$pid_lu" in '' | *[!0-9]*) continue ;; esac
+    case " $ETAT_STACK_PIDS " in *" $pid_lu "*) ;; *) ETAT_STACK_PIDS="$ETAT_STACK_PIDS $pid_lu" ;; esac
+  done <<<"$ETAT_STACK_ECOUTES"
+  return "$code"
 }
 
 # Le repli : les lignes `LISTENING` de `netstat`. Rend 2, ou 1 sans `netstat` qui réponde.

@@ -55,8 +55,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -1471,6 +1474,193 @@ def test_l_api_des_captures_admet_l_origine_de_l_ui_qu_elles_servent(
 
     assert reponse.status_code == 200, f"l'API des captures refuse l'origine de leur UI ({origine})"
     assert reponse.headers["access-control-allow-origin"] == origine
+
+
+# --- Les écoutes de la stack des captures se lisent dans la table qui les porte (#1701) -----------
+#
+# Sur un poste Windows, la table TCP peut ranger une écoute dans un état 0 que `netstat` tait
+# (#1579). `captures.sh` libère ses ports par ce que lit `etat-stack.sh`, seul lecteur de la table
+# (#1696). Le script joue pour de vrai, dans une copie de l'arbre où `start.sh --stop` ne fait rien
+# et où le venv manque : il s'arrête juste après avoir libéré ses ports, sans rien démarrer. La
+# table est imposée par `MAESTRO_TABLE_DES_ECOUTES`, et le processus visé est un processus du test.
+
+#: Les ports de la stack des captures pendant ces tests : la table imposée ne parle que d'eux.
+PORT_API_ECOUTES = 8917
+PORT_UI_ECOUTES = 3917
+
+#: Ce qu'il faut de l'arbre pour que `captures.sh` libère ses ports : lui-même et le lecteur de la
+#: table, copiés tels quels.
+_ARBRE_DES_ECOUTES = (
+    Path("scripts") / "presentation" / "captures.sh",
+    Path("scripts") / "controltower" / "etat-stack.sh",
+)
+
+#: Le processus qu'une écoute désigne : il écrit son pid, puis attend qu'on le tue.
+_VICTIME = "import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(120)\n"
+
+
+def _executable_bash(chemin: Path, corps: str) -> Path:
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(f"#!/usr/bin/env bash\n{corps}\n", encoding="utf-8", newline="\n")
+    chemin.chmod(0o755)
+    return chemin
+
+
+def _liberer_les_ports(
+    tmp_path: Path, table: str, *, netstat: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Joue `captures.sh` jusqu'à la libération de ses ports, sous la table `table`."""
+    arbre = tmp_path / "arbre"
+    for relatif in _ARBRE_DES_ECOUTES:
+        (arbre / relatif).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(RACINE / relatif, arbre / relatif)
+    _executable_bash(arbre / "scripts" / "controltower" / "start.sh", "exit 0")
+    temp = tmp_path / "temp"
+    (temp / "maestro-presentation" / "node" / "node_modules" / "playwright-core").mkdir(
+        parents=True
+    )
+    environnement = os.environ.copy()
+    environnement.update(
+        {
+            "TMPDIR": temp.as_posix(),
+            "MAESTRO_PORT_API_CAPTURES": str(PORT_API_ECOUTES),
+            "MAESTRO_PORT_UI_CAPTURES": str(PORT_UI_ECOUTES),
+            "MAESTRO_TABLE_DES_ECOUTES": _executable_bash(tmp_path / "table", table).as_posix(),
+        }
+    )
+    if netstat is not None:
+        _executable_bash(tmp_path / "bin" / "netstat", netstat)
+        environnement["PATH"] = str(tmp_path / "bin") + os.pathsep + environnement["PATH"]
+    assert BASH is not None
+    acheve = subprocess.run(  # noqa: S603
+        [
+            BASH,
+            str(arbre / "scripts" / "presentation" / "captures.sh"),
+            "--sortie",
+            str(tmp_path / "sortie"),
+            "--sans-videos",
+            # La sortie ne relibère pas les ports : ce que le test regarde est le départ.
+            "--garder",
+        ],
+        cwd=str(arbre),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    # Sans venv dans la copie, le script s'arrête là, ports libérés.
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert "python du venv introuvable" in acheve.stderr, acheve.stdout + acheve.stderr
+    return acheve
+
+
+@pytest.fixture
+def victime(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], int]]:
+    """Un processus du test, et le pid qu'il a lui-même écrit.
+
+    Sous Windows, le lanceur du venv fait naître un second python (#1279) : le pid écrit est celui
+    qui tourne, et c'est lui que la table désigne.
+    """
+    temoin = tmp_path / "victime.pid"
+    processus = subprocess.Popen([sys.executable, "-c", _VICTIME, str(temoin)])  # noqa: S603
+    limite = time.monotonic() + 30
+    while not (temoin.exists() and temoin.read_text(encoding="utf-8").strip()):
+        assert processus.poll() is None, "la victime est morte avant d'écrire son pid"
+        assert time.monotonic() < limite, "la victime n'a pas écrit son pid"
+        time.sleep(0.05)
+    pid = int(temoin.read_text(encoding="utf-8"))
+    try:
+        yield processus, pid
+    finally:
+        for cible in {processus.pid, pid}:
+            try:
+                os.kill(cible, signal.SIGTERM)
+            except OSError:
+                pass
+        try:
+            processus.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            processus.kill()
+
+
+def _mort(processus: subprocess.Popen[bytes]) -> bool:
+    try:
+        processus.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+besoin_de_bash = pytest.mark.skipif(BASH is None, reason="bash est requis pour jouer captures.sh")
+
+
+def test_captures_sh_ne_lit_la_table_des_ecoutes_que_par_etat_stack() -> None:
+    """Critère 1 — aucun lecteur à lui : ni `netstat` ni `lsof`, la lecture d'`etat-stack.sh`."""
+    code = _code_shell(CAPTURES_SH.read_text(encoding="utf-8"))
+    assert [outil for outil in ("netstat", "lsof") if outil in code] == []
+    assert "scripts/controltower/etat-stack.sh" in code
+    assert "etat_stack_pids_du_port" in code
+
+
+@besoin_de_bash
+def test_captures_sh_libere_l_ecoute_que_la_table_porte(
+    tmp_path: Path, victime: tuple[subprocess.Popen[bytes], int]
+) -> None:
+    """Critère 1 — l'écoute que la table porte, `netstat` l'aurait tue : `captures.sh` la voit,
+    la nomme et l'arrête. Le `netstat` du test ne voit rien, comme celui du poste de #1579."""
+    processus, pid = victime
+    acheve = _liberer_les_ports(tmp_path, f"echo '{PORT_API_ECOUTES} {pid}'", netstat="exit 0")
+    assert (
+        f"[captures] ancienne session API sur :{PORT_API_ECOUTES} (PID {pid}) — arrêt"
+        in acheve.stdout
+    ), acheve.stdout
+    assert _mort(processus), "la session que la table désigne écoute encore"
+    assert "⚠" not in acheve.stdout, "une table lue entière n'a rien à dire"
+
+
+@besoin_de_bash
+def test_captures_sh_annonce_le_repli_sur_netstat(
+    tmp_path: Path, victime: tuple[subprocess.Popen[bytes], int]
+) -> None:
+    """Critère 2 — la table refusée, on retombe sur `netstat` et on le dit sous `[captures]`. Ce
+    qu'il voit écouter s'arrête : une ligne `LISTENING` est une vraie écoute."""
+    processus, pid = victime
+    ligne = f"  TCP    0.0.0.0:{PORT_UI_ECOUTES}   0.0.0.0:0   LISTENING   {pid}"
+    acheve = _liberer_les_ports(
+        tmp_path, 'echo "appel refusé" >&2\nexit 1', netstat=f"printf '{ligne}\\r\\n'"
+    )
+    avis = [ligne for ligne in acheve.stdout.splitlines() if ligne.startswith("[captures] ⚠")]
+    assert avis, acheve.stdout
+    assert all("illisible (appel refusé, code 1)" in ligne for ligne in avis), avis
+    assert all("repli sur netstat" in ligne for ligne in avis), avis
+    assert f"ancienne session UI sur :{PORT_UI_ECOUTES} (PID {pid}) — arrêt" in acheve.stdout
+    assert _mort(processus)
+
+
+@besoin_de_bash
+def test_une_table_illisible_se_dit_et_ne_tue_rien(
+    tmp_path: Path, victime: tuple[subprocess.Popen[bytes], int]
+) -> None:
+    """Critère 2 — la table nomme la victime mais dit qu'elle n'a pas pu se lire, et `netstat` ne
+    répond pas : ce qu'une lecture manquée a imprimé ne désigne personne, et cela se dit."""
+    processus, pid = victime
+    acheve = _liberer_les_ports(
+        tmp_path, f"echo '{PORT_API_ECOUTES} {pid}'\nexit 1", netstat="exit 1"
+    )
+    avis = [ligne for ligne in acheve.stdout.splitlines() if ligne.startswith("[captures] ⚠")]
+    assert avis and all("aucune écoute ne se lit" in ligne for ligne in avis), acheve.stdout
+    assert "ancienne session" not in acheve.stdout, acheve.stdout
+    assert processus.poll() is None, "une lecture manquée a tué un processus"
+
+
+@besoin_de_bash
+def test_un_pid_que_la_table_ne_sait_pas_lire_ne_se_tue_pas(tmp_path: Path) -> None:
+    """Critère 2 — une écoute sans pid lisible (`-`) ne désigne rien à arrêter."""
+    acheve = _liberer_les_ports(tmp_path, f"echo '{PORT_API_ECOUTES} -'", netstat="exit 0")
+    assert "ancienne session" not in acheve.stdout, acheve.stdout
+    assert "⚠" not in acheve.stdout, acheve.stdout
 
 
 # ==================================================================================================
