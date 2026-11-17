@@ -3346,15 +3346,58 @@ partira au push), fichier par fichier :
 | `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
 | `tests/test_*.py` | elles-mêmes ; une suite **supprimée**, celles qui la **nomment**, et personne → la suite entière (#1252, ci-dessous) |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
-| `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
+| `docs/**`, `apps/web/**`, prose de la racine | les suites qui les **lisent**, et aucune s'il n'y en a pas (`web-build` couvre le front) (#1689, ci-dessous) |
 | `apps/desktop/**` | les suites qui la **nomment**, et **aucune** s'il n'y en a pas (#948, ci-dessous) |
 | **tout le reste** | la suite entière |
 
 Ces points de conception valent d'être compris avant d'y toucher.
 
+**La prose et le front jouent les suites qui les lisent (#1689).** pytest n'exécute ni `docs/**`,
+ni `apps/web/**`, ni la prose de la racine, et ces fichiers ne jouaient donc aucune suite. Or des
+suites les lisent. `test_audit_commandes` garde le budget de `CLAUDE.md` en cliquet (#1523),
+`test_documentation` exige de chaque document qu'il déclare son public (#1321), et
+`test_wire_names` relit les types du front. Un diff qui ne touchait que ces fichiers passait le
+filet, et le dépassement ne se voyait qu'au pipeline : c'est ce que #1678 a rencontré.
+
+Une suite **lit** un fichier de deux façons, et la règle les cumule :
+
+- elle écrit son chemin **depuis la racine du dépôt**, ou celui d'un dossier qui le contient :
+  `RACINE / "CLAUDE.md"`, `RACINE / "docs" / "10-workflow-git.md"`, ou `RACINE / "docs"` pour le
+  dossier entier. La racine se reconnaît à sa définition, `Path(__file__).resolve().parents[1]`, et
+  au nom que `tests/` lui donne là (`RACINE`, `RACINE_DEPOT`, `ROOT`…), même importé d'un harnais ;
+- elle nomme le **module de `maestro/` qui le déclare**, par son chemin ou par un motif `glob` qui
+  le désigne. `maestro/controltower/documentation.py` lit `docs/*.md` et `apps/web/README.md`, et
+  ce sont ses suites, `test_documentation` en tête, qui voient un document changer. Seul compte un
+  littéral qui porte son dossier : un nom nu (`"CLAUDE.md"`) désigne le fichier du projet sur
+  lequel un module travaille, jamais celui du dépôt.
+
+Citer le nom ne suffit pas, et c'est la différence avec la règle du nom. Mesuré le 2026-11-17 sur
+`CLAUDE.md` : 28 suites le citent, et 10 l'écrivent depuis la racine. Ce sont elles qui le gardent ;
+les autres le nomment en passant, ou écrivent le `CLAUDE.md` d'un projet jetable. La règle du nom
+aurait joué les 28 à chaque retouche. Ce que la règle de la lecture sélectionne le même jour :
+
+| Ce qui change | Suites jouées | dont d'outillage |
+|---|---|---|
+| `CLAUDE.md` | 10 | 10 |
+| `docs/10-workflow-git.md` | 16 | 13 |
+| un document neuf de `docs/` | 7 (sa numérotation, sa déclaration, les balayages de `docs/`) | 4 |
+| `apps/web/README.md` | 6 | 4 |
+| une page de `apps/web/app/` | 3 (les balayages du front : ENF-12, le vocabulaire des parcours, les routes) | 3 |
+| `README.md`, `CONTRIBUTING.md` | 1, 0 | 0 |
+
+Personne ne lit le fichier : il reste **sans effet**, et le motif le dit (« docs/ qu'aucune suite
+ne lit »). Ce n'est pas l'élargissement de la règle d'or : elle vaut pour un fichier qu'on ne sait
+pas classer, et celui-ci est classé.
+
+Deux limites sont assumées. Une suite qui joint la racine à un nom pris dans une liste
+(`RACINE / nom`) n'est pas vue : `test_migration` lit ainsi `CLAUDE.md`, `CONTRIBUTING.md` et
+`README.md`, et le pipeline la rattrape. Un décor de test qui écrit `RACINE / "CLAUDE.md"` d'un
+tenant dans une chaîne passe pour une lecture : `tests/test_ci_local.py` compose donc ses jointures
+(`jointure`), pour ne pas se jouer à chaque retouche de prose.
+
 **La coque de bureau est le seul chemin qui échappe aux deux voisins, et il le faut (#948).** La
-ranger avec `apps/web/**` la rendrait **silencieusement sautée** le jour où des suites la lisent
-(sûreté, cycle de vie des processus — #929) ; la laisser dans « tout le reste » en fait un **chemin
+ranger avec `apps/web/**`, quand le front ne jouait aucune suite, la rendait **silencieusement
+sautée** le jour où des suites la lisent (sûreté, cycle de vie des processus — #929) ; la laisser dans « tout le reste » en fait un **chemin
 non classé**, donc la suite entière à chaque diff — mesuré le 2026-09-14 : aucune suite ne nommait
 `apps/desktop/` ni `main.js`, donc **1 min 51 dans le conteneur** (quinze minutes en natif) pour deux
 fichiers que rien ne lit. La règle du nom répond juste aux deux, à condition de lui retirer son

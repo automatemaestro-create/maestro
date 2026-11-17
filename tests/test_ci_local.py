@@ -1153,7 +1153,8 @@ def test_une_suite_qui_nomme_la_coque_est_bien_jouee(clone: Clone) -> None:
 
 
 def test_la_prose_ne_declenche_aucune_suite(clone: Clone) -> None:
-    """Aucun test ne lit docs/ : jouer 1100 tests pour une phrase de doc serait absurde."""
+    """Aucune suite du dépôt jetable ne lit docs/ : jouer la suite pour une phrase de doc serait
+    absurde. Ce qui la lit se joue, voir le bloc suivant (#1689)."""
     clone.equipe_tout()
     clone.modifie("docs/10-workflow-git.md", "une phrase de plus\n")
     acheve = clone.lance("--only", "pytest")
@@ -1162,6 +1163,177 @@ def test_la_prose_ne_declenche_aucune_suite(clone: Clone) -> None:
     ligne = ligne_du_job(acheve.stdout, "pytest")
     assert "HORS PÉRIM." in ligne
     assert "aucune suite concernée" in ligne
+
+
+# --- La prose et le front qu'une suite lit (#1689) ------------------------------------------------
+# `docs/**`, `apps/web/**` et la prose de la racine ne jouaient aucune suite, « sans effet sur
+# pytest ». C'est faux dès qu'une suite les lit : `test_audit_commandes` garde le budget de
+# `CLAUDE.md` en cliquet (#1523), et `test_documentation` la déclaration de public de chaque
+# document (#1321). Un diff qui ne touchait que ces fichiers passait le filet, puis le pipeline
+# rougissait.
+#
+# Une suite LIT un fichier quand elle écrit son chemin depuis la racine du dépôt, ou celui d'un
+# dossier qui le contient. Elle le lit aussi quand elle nomme le module de `maestro/` qui le déclare
+# par son chemin. Citer le nom ne suffit pas : dans le vrai dépôt, 28 suites citent `CLAUDE.md`,
+# et 10 le lisent.
+
+def jointure(racine: str, *segments: str) -> str:
+    """`racine / "a" / "b"`, composé ici au lieu d'être écrit.
+
+    Écrite d'un tenant dans le décor, la jointure serait LUE par la règle qu'elle éprouve, dans le
+    vrai dépôt : cette suite se jouerait à chaque retouche de `CLAUDE.md` ou de `docs/`.
+    """
+    return " / ".join([racine, *(f'"{segment}"' for segment in segments)])
+
+
+#: Le décor du bloc. Chaque suite pose l'un des cas que la règle doit départager.
+LECTEURS = {
+    # Lit le CLAUDE.md du dépôt, son chemin écrit depuis la racine : la forme de
+    # test_audit_commandes.
+    "tests/test_budget.py": (
+        "from pathlib import Path\n\n"
+        "RACINE = Path(__file__).resolve().parents[1]\n"
+        f"CLAUDE_MD = {jointure('RACINE', 'CLAUDE.md')}\n"
+    ),
+    # Les deux pièges : CLAUDE.md cité en passant, et le CLAUDE.md d'un projet jetable.
+    "tests/test_en_passant.py": '"""La règle vit dans CLAUDE.md, et le reste dans README.md."""\n',
+    "tests/test_projet_jetable.py": (
+        "def test_pont(tmp_path) -> None:\n"
+        '    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\\n", encoding="utf-8")\n'
+    ),
+    # Lit tout docs/, son dossier écrit depuis la racine, sans nom : la forme de
+    # test_outillage_pieces.
+    "tests/test_numeros.py": (
+        "from pathlib import Path\n\n"
+        f"DOCS = {jointure('Path(__file__).resolve().parent.parent', 'docs')}\n"
+    ),
+    # Lit docs/retex/ seulement. `RETEX / "README.md"` n'est pas le README de la racine :
+    # RETEX n'est pas la racine du dépôt.
+    "tests/test_retex.py": (
+        "from pathlib import Path\n\n"
+        "RACINE = Path(__file__).resolve().parents[1]\n"
+        f"RETEX = {jointure('RACINE', 'docs', 'retex')}\n"
+        'GUIDE = RETEX / "README.md"\n'
+    ),
+    # Lit un fichier du front par une racine qu'un harnais définit et qu'elle importe : la forme
+    # des suites qui importent RACINE de tests/harnais_forge.py.
+    "tests/harnais.py": "from pathlib import Path\n\nDEPOT = Path(__file__).resolve().parents[1]\n",
+    "tests/test_types.py": (
+        "from tests.harnais import DEPOT\n\n"
+        f"TYPES = {jointure('DEPOT', 'apps', 'web', 'lib', 'types.ts')}\n"
+    ),
+    # Le module qui DÉCLARE les documents qu'il lit, et la suite qui le nomme : la forme du module
+    # de la documentation et de test_documentation.
+    "maestro/corpus.py": 'MOTIFS = ("docs/*.md", "apps/web/README.md")\n',
+    "tests/test_corpus.py": "from maestro.corpus import MOTIFS\n",
+    "CLAUDE.md": "# Instructions\n",
+    "README.md": "# Le dépôt\n",
+    "apps/web/README.md": "# L'interface\n",
+    "apps/web/lib/types.ts": "export type Etat = string;\n",
+    "apps/web/app/page.tsx": "export default function Page() { return null; }\n",
+}
+
+
+def pose_les_lecteurs(clone: Clone) -> None:
+    """Le décor, commité et poussé : hors du diff, il ne joue que par la règle éprouvée."""
+    clone.equipe_tout()
+    clone.pose_et_pousse(LECTEURS, message="test: les lecteurs de la prose")
+
+
+def test_claude_md_joue_les_suites_qui_le_lisent(clone: Clone) -> None:
+    """Le défaut de #1689 : un diff qui ne touche que CLAUDE.md ne jouait aucune suite, et le
+    dépassement de son budget ne se voyait qu'au pipeline.
+
+    La suite qui le cite en passant et celle qui écrit le CLAUDE.md d'un projet jetable ne le
+    lisent pas : elles ne se jouent pas.
+    """
+    pose_les_lecteurs(clone)
+    for piege in ("test_en_passant.py", "test_projet_jetable.py"):
+        texte = (clone.racine / "tests" / piege).read_text(encoding="utf-8")
+        assert "CLAUDE.md" in texte, f"{piege} ne cite plus CLAUDE.md : le piège est désamorcé"
+
+    clone.modifie("CLAUDE.md", "Une règle de plus.\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_budget.py"]
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "CLAUDE.md" in ligne and "aucune suite concernée" not in ligne, ligne
+
+
+def test_une_suite_qui_lit_la_prose_rougit_le_filet(clone: Clone) -> None:
+    """Le pendant du test précédent : la suite qui garde le budget rougit, et le filet avec elle,
+    comme le pipeline."""
+    pose_les_lecteurs(clone)
+    clone.modifie("CLAUDE.md", "Une règle de trop.\n")
+    acheve = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_FAUX_PYTEST_CODE="1",
+        MAESTRO_FAUX_PYTEST_SORTIE="FAILED tests/test_budget.py::test_budget\\n",
+    )
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_budget.py"]
+    assert "Verdict : ÉCHEC" in acheve.stdout
+
+
+def test_un_document_joue_les_lecteurs_de_son_dossier_et_le_module_qui_le_declare(
+    clone: Clone,
+) -> None:
+    """Un document neuf, que personne ne nomme encore : sa déclaration de public se juge par la
+    suite du module qui le lit (test_documentation dans le vrai dépôt), et sa numérotation par la
+    suite qui relit tout docs/."""
+    pose_les_lecteurs(clone)
+    clone.modifie("docs/99-neuf.md", "# Un document neuf\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_corpus.py", "tests/test_numeros.py"]
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "docs/*.md lu par maestro.corpus" in ligne, ligne
+
+
+def test_le_motif_d_un_module_ne_descend_pas_dans_les_sous_dossiers(clone: Clone) -> None:
+    """`docs/*.md` ne désigne pas `docs/retex/notes.md`, comme le `glob` du module qui le lit :
+    seules les suites qui lisent un dossier qui le contient se jouent."""
+    pose_les_lecteurs(clone)
+    clone.modifie("docs/retex/notes.md", "# Des notes\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_numeros.py", "tests/test_retex.py"]
+
+
+def test_le_readme_de_l_interface_joue_le_module_qui_le_declare(clone: Clone) -> None:
+    pose_les_lecteurs(clone)
+    clone.modifie("apps/web/README.md", "Une section de plus.\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_corpus.py"]
+
+
+def test_un_fichier_du_front_joue_la_suite_qui_le_lit(clone: Clone) -> None:
+    """La racine est un nom qu'un harnais définit et que la suite importe : elle se reconnaît à sa
+    définition, où qu'elle vive sous tests/."""
+    pose_les_lecteurs(clone)
+    clone.modifie("apps/web/lib/types.ts", "export type Autre = number;\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_types.py"]
+
+
+@pytest.mark.parametrize("fichier", ["README.md", "apps/web/app/page.tsx"])
+def test_ce_qu_aucune_suite_ne_lit_reste_sans_effet(clone: Clone, fichier: str) -> None:
+    """Le sens inverse : citer un fichier n'est pas le lire. README.md est cité en passant par une
+    suite, et joint à une constante qui n'est pas la racine par une autre ; la page du front n'est
+    lue par personne. Aucune suite ne se joue."""
+    pose_les_lecteurs(clone)
+    retex = (clone.racine / "tests" / "test_retex.py").read_text(encoding="utf-8")
+    assert 'RETEX / "README.md"' in retex, "le piège du README imbriqué est désamorcé"
+
+    clone.modifie(fichier, "// une ligne de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_pytest(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "aucune suite concernée" in ligne and "aucune suite ne lit" in ligne, ligne
 
 
 def test_le_mode_rapide_n_impose_pas_le_seuil_de_couverture(clone: Clone) -> None:
