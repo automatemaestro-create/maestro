@@ -410,7 +410,7 @@ def test_le_hook_laisse_lire_un_agent_dont_les_commandes_attendent_un_humain(
     commande: str,
 ) -> None:
     """Le cœur du ticket : `Bash` classé `ask`/`humain` — le cran qu'un projet sans
-    commande déclarée fait proposer (`maestro.equipe.proposition`) —, et chacun des
+    commande déclarée fait proposer (`maestro.team.proposal`) —, et chacun des
     gestes qui ont bloqué un run réel passe, sans qu'aucune demande ne parte."""
     arbitrages: list[tuple[str, object]] = []
     hook = _hook(PolitiqueOutils(ask=("Bash",)), arbitrages=arbitrages)

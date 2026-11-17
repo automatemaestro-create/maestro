@@ -43,7 +43,7 @@ Elle déclare le tout prioritaire. L'analyse complète, avec le journal du run, 
 
 Le code les applique à la lettre :
 - la décomposition ne planifie qu'avec les compétences présentes (`maestro/orchestrator/playbook.md` l. 207-231 : *« tu n'emploies que les compétences de l'équipe… tu ne recrutes personne »*) ;
-- un rôle manquant n'est que journalisé (`maestro/equipe/manque.py` : *« le recrutement se fait hors du run »*).
+- un rôle manquant n'est que journalisé (`maestro/team/gap.py` : *« le recrutement se fait hors du run »*).
 
 Un plan taillé à l'équipe ne manque donc **jamais** de rôle : le cas n'arrive pas.
 
@@ -75,7 +75,7 @@ Pendant le run `96d0c3482649`, la personne a tranché **14 validations Bash**, e
 - `pytest` ;
 - le ménage des `__pycache__` que ses exécutions avaient produits.
 
-Aucune ne sortait du projet. La frontière d'écriture, elle, a refusé deux écritures hors racine. La cause est `_cran_execution` (`maestro/equipe/proposition.py`) : il propose `Bash: ask, humain` à un rôle dès qu'aucune commande de ce rôle n'a été lue dans le projet, donc **toujours** sur un projet neuf.
+Aucune ne sortait du projet. La frontière d'écriture, elle, a refusé deux écritures hors racine. La cause est `_execution_tier` (`maestro/team/proposal.py`) : il propose `Bash: ask, humain` à un rôle dès qu'aucune commande de ce rôle n'a été lue dans le projet, donc **toujours** sur un projet neuf.
 
 [docs/32 §8](./32-decision-cran-orchestrateur.md), porte 1, attendait cette mesure et en donnait d'avance le sens : *« un taux d'approbation proche de 1 ne dit pas “il faut une machine pour trancher” — il dit que ces actes-là méritaient `auto`, ce qui coûte une ligne de politique »*.
 
@@ -111,4 +111,4 @@ Un renvoi ⚠ vers cette note est posé à l'endroit de chaque décision renvers
 - [docs/32 §8](./32-decision-cran-orchestrateur.md), porte 1 : la mesure existe désormais ;
 - [docs/06](./06-roadmap.md), la section du jalon.
 
-Le code qui écrit encore la règle d'avant se réécrit avec **#1227** : `maestro/equipe/manque.py`, `maestro/orchestrator/playbook.md` et le prompt de décomposition. Ce n'est pas le rôle de cette note.
+Le code qui écrit encore la règle d'avant se réécrit avec **#1227** : `maestro/team/gap.py`, `maestro/orchestrator/playbook.md` et le prompt de décomposition. Ce n'est pas le rôle de cette note.

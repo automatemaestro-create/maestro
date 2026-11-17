@@ -1,34 +1,34 @@
-"""Après la décomposition, l'orchestrateur confronte l'équipe au plan (#1227).
+"""After decomposition, the orchestrator confronts the team with the plan (#1227).
 
-Le défaut, mesuré le 2026-09-22 sur le projet `p1` : l'équipe proposée au projet
-vide était un seul développeur — ✅ pour la demande d'alors. Puis la personne
-demande « une petite animation du logo Maestro ». Le run se décompose en quatre
-tâches (logo stylisé, script d'animation, test de lancement, documentation) et
-les quatre vont au `dev`. *« Aucune modification de l'équipe n'a été suggérée,
-du coup un seul agent développeur a tout fait. »*
+The defect, measured on 2026-09-22 on project `p1`: the team proposed to the empty
+project was a single developer — ✅ for the request of the time. Then the person
+asks for « une petite animation du logo Maestro ». The run decomposes into four
+tasks (stylised logo, animation script, launch test, documentation) and all four
+go to `dev`. *« Aucune modification de l'équipe n'a été suggérée, du coup un seul
+agent développeur a tout fait. »*
 
-Deux moitiés, et il fallait les deux — c'est ce qu'on garde ici :
+Two halves, and both were needed — that is what is kept here:
 
-① **la décomposition planifie pour le besoin.** Le playbook du Chef de projet
-   interdisait tout tag qu'un rôle en place ne portait pas (« tu n'emploies que
-   les compétences de l'équipe ci-dessous ») : le plan se taillait donc à
-   l'équipe, jamais au besoin, et le rôle qui manquait n'était même pas nommé ;
-② **l'orchestrateur confronte, puis propose.** Entre le plan et la première
-   tâche, le manque est calculé, consigné, et proposé à une personne. Accepter
-   complète l'équipe et le run repart avec elle ; décliner ou ne pas répondre
-   laisse le run continuer, **en le disant**.
+① **decomposition plans for the need.** The Project lead's playbook forbade any
+   tag that no role in place carried (« tu n'emploies que les compétences de
+   l'équipe ci-dessous »): the plan was therefore cut to the team, never to the
+   need, and the missing role was not even named;
+② **the orchestrator confronts, then proposes.** Between the plan and the first
+   task, the gap is computed, recorded, and proposed to a person. Accepting
+   completes the team and the run goes on with it; declining or not answering
+   lets the run continue, **saying so**.
 
-Ce que #1227 renverse, et ce qu'il ne touche pas : les deux dernières puces de
+What #1227 overturns, and what it does not touch: the last two bullets of
 [docs/37 §3](../docs/37-decision-equipe-sur-mesure.md) — « recruter reste un
-geste validé hors du run », « l'équipe ne se forme pas dans un run » — tombent.
-Rien n'est recruté sans accord (#1040), un **agent** ne recrute jamais
-([docs/31 §3.5](../docs/31-decision-surface-ecriture-agents.md) : ici c'est
-l'orchestrateur qui propose et une personne qui décide), et le brief est validé
-avant la décomposition (D5).
+geste validé hors du run », « l'équipe ne se forme pas dans un run » — no longer
+hold. Nothing is recruited without consent (#1040), an **agent** never recruits
+([docs/31 §3.5](../docs/31-decision-surface-ecriture-agents.md): here the
+orchestrator proposes and a person decides), and the brief is validated before
+decomposition (D5).
 
-Ni réseau ni appel modèle réel : **faux fournisseur de modèle**, dépôts jetables,
-bus mémoire. Le plan de l'essai est rejoué tel quel — un objectif d'animation, un
-projet qui n'a qu'un développeur.
+No network and no real model call: a **fake model provider**, throwaway
+repositories, in-memory bus. The trial's plan is replayed as is — an animation
+goal, a project that has only one developer.
 """
 
 from __future__ import annotations
@@ -52,23 +52,23 @@ from maestro.engine.renfort import (
     DecisionRenfort,
     DemandeRenfort,
 )
-from maestro.equipe import manque_au_plan, proposer_renfort, role_manquant
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.prompt import orchestrator_prompt
 from maestro.orchestrator.schema import Task
 from maestro.outillage.modele import Constats, Langage
 from maestro.outillage.recommandation import recommander
 from maestro.providers.base import ModelProvider
+from maestro.team import missing_role, plan_gap, propose_reinforcement
 from maestro.telemetry import STEP_TEAM, RunJournal
 
-PROJET = "prj-p1"
+PROJECT = "prj-p1"
 
-#: L'objectif de l'essai, mot pour mot.
-OBJECTIF = "une petite animation du logo Maestro"
+#: The trial's goal, word for word.
+GOAL = "une petite animation du logo Maestro"
 
-#: Le plan que l'essai a produit — quatre tâches —, mais **écrit pour le besoin**
-#: comme le playbook le demande désormais : l'animation et le logo demandent `ui`,
-#: que l'équipe d'un seul développeur ne couvre pas.
+#: The plan the trial produced — four tasks —, but **written for the need** as the
+#: playbook now asks: the animation and the logo require `ui`, which the
+#: single-developer team does not cover.
 PLAN = [
     {
         "id": "logo-stylise",
@@ -97,51 +97,51 @@ PLAN = [
 ]
 
 
-def _agent(nom: str, *competences: str, role: str = "Rôle") -> Agent:
+def _agent(name: str, *competencies: str, role: str = "Rôle") -> Agent:
     return Agent(
-        nom=nom,
+        nom=name,
         role=role,
-        competences=frozenset(competences),
+        competences=frozenset(competencies),
         modele="m",
         prompt_systeme="…",
     )
 
 
-def _tache(titre: str, *competences: str) -> Task:
+def _task(title: str, *competencies: str) -> Task:
     return Task(
-        id=titre.lower().replace(" ", "-"),
-        title=titre,
-        description=f"Faire {titre}.",
-        required_competencies=competences,
+        id=title.lower().replace(" ", "-"),
+        title=title,
+        description=f"Faire {title}.",
+        required_competencies=competencies,
         output_format="markdown",
     )
 
 
-def _fiche(nom: str, *competences: str) -> AgentDefinition:
+def _definition(name: str, *competencies: str) -> AgentDefinition:
     return AgentDefinition(
-        nom=nom,
+        nom=name,
         role="Développeur",
-        competences=competences,
+        competences=competencies,
         playbook="Tu écris le code de p1.",
     )
 
 
-def _constats() -> Constats:
-    """Le projet de l'essai : du Python, et rien qui désigne un designer."""
+def _findings() -> Constats:
+    """The trial's project: Python, and nothing that designates a designer."""
     return Constats(
         langages=(Langage(nom="Python", fichiers=12, part=1.0, exemple="src/app.py"),)
     )
 
 
-# --- ① La décomposition nomme le besoin, même hors de l'équipe ---------------
+# --- ① Decomposition names the need, even outside the team -------------------
 
 
-def test_le_playbook_offre_les_metiers_que_maestro_sait_recruter() -> None:
-    """Le plan se taillait à l'équipe : un seul développeur, donc jamais de `ui`.
+def test_playbook_offers_the_trades_maestro_can_recruit() -> None:
+    """The plan was cut to the team: a single developer, hence never any `ui`.
 
-    L'échantillon fautif est la garde d'avant ce lot — « tu n'emploies que les
-    compétences de l'équipe ci-dessous » —, qui ne doit plus se lire telle quelle,
-    et la liste des métiers recrutables qui doit s'y être substituée.
+    The faulty sample is the guard from before this lot — « tu n'emploies que les
+    compétences de l'équipe ci-dessous » —, which must no longer read as is, and
+    the list of recruitable trades that must have replaced it.
     """
     dev = next(a for a in GABARITS_DU_CODE if a.nom == "developpeur")
 
@@ -149,30 +149,30 @@ def test_le_playbook_offre_les_metiers_que_maestro_sait_recruter() -> None:
 
     assert "Découpe pour le besoin, pas pour l'équipe" in prompt
     assert "nomme-le quand même" in prompt
-    # Les métiers que l'équipe n'a pas y sont, avec leur gabarit.
+    # The trades the team does not have are there, with their role template.
     assert "ui" in prompt
     assert "gabarit `interface`" in prompt
-    # …et la garde d'avant ne s'y lit plus.
+    # …and the former guard no longer reads there.
     assert "eux seuls, pour `competences_requises`" not in prompt
 
 
-def test_le_playbook_ne_propose_aucun_renfort_a_une_equipe_complete() -> None:
-    """Le témoin : une équipe qui couvre tout le catalogue n'a rien à recruter.
+def test_playbook_proposes_no_reinforcement_to_a_complete_team() -> None:
+    """The control: a team covering the whole catalogue has nothing to recruit.
 
-    Et le document le **dit** plutôt que de laisser un blanc — un trou dans un
-    prompt système se lit comme un marqueur oublié.
+    And the document **says so** rather than leaving a blank — a hole in a system
+    prompt reads like a forgotten placeholder.
     """
     prompt = orchestrator_prompt(GABARITS_DU_CODE)
 
     assert "l'équipe couvre déjà tous les métiers" in prompt
 
 
-def test_le_playbook_dit_ce_qu_il_advient_d_un_metier_nomme() -> None:
-    """Nommer un métier absent n'est pas gratuit : c'est une question posée.
+def test_playbook_says_what_becomes_of_a_named_trade() -> None:
+    """Naming an absent trade is not free: it is a question asked.
 
-    Le playbook doit dire les deux : que le manque est **proposé** (sinon le
-    modèle n'a aucune raison de nommer un tag que personne ne prend), et qu'un
-    tag ajouté par précaution coûte une attente humaine.
+    The playbook must say both: that the gap is **proposed** (otherwise the model
+    has no reason to name a tag nobody takes), and that a tag added as a
+    precaution costs a human wait.
     """
     prompt = orchestrator_prompt([_agent("dev", "backend")])
 
@@ -180,209 +180,208 @@ def test_le_playbook_dit_ce_qu_il_advient_d_un_metier_nomme() -> None:
     assert "par précaution" in prompt
 
 
-def test_un_plan_qui_nomme_un_metier_absent_est_valide_et_conserve_ses_tags() -> None:
-    """Le contrat de sortie ne borne pas les tags, et il ne doit pas commencer.
+def test_a_plan_naming_an_absent_trade_is_valid_and_keeps_its_tags() -> None:
+    """The output contract does not bound the tags, and it must not start to.
 
-    Faux fournisseur de modèle : il rend le plan de l'essai, écrit pour le besoin.
-    Ce qu'on vérifie est que `ui` traverse la validation de schéma — un tag hors
-    équipe est une **information**, pas une erreur de forme.
+    Fake model provider: it returns the trial's plan, written for the need. What is
+    checked is that `ui` passes schema validation — a tag outside the team is
+    **information**, not a form error.
     """
     plan = asyncio.run(
-        Orchestrator(_PlanScripte(), model="m").plan(OBJECTIF, team=[_agent("dev", "backend")])
+        Orchestrator(_ScriptedPlan(), model="m").plan(GOAL, team=[_agent("dev", "backend")])
     )
 
     assert [t.id for t in plan] == ["logo-stylise", "script-animation", "test-lancement"]
     assert "ui" in plan[0].required_competencies
 
 
-# --- ① bis Le manque du plan : calculé, nommé, et un seul ---------------------
+# --- ① bis The plan's gap: computed, named, and only one ----------------------
 
 
-def test_le_manque_du_plan_nomme_le_poste_et_les_taches_qui_l_attendent() -> None:
-    """Le fait brut de #1227 : l'union de ce que le plan demande, moins l'équipe.
+def test_plan_gap_names_the_position_and_the_tasks_awaiting_it() -> None:
+    """The raw fact of #1227: the union of what the plan requires, minus the team.
 
-    Les tâches nommées sont celles que **ce rôle-là** prendrait, jamais toutes
-    celles qui demandent quelque chose d'absent : le gabarit retenu ne couvre pas
-    forcément tout le manque, et une liste trop large vendrait le recrutement pour
-    plus qu'il n'est.
+    The named tasks are those **this role** would take, never all those requiring
+    something absent: the retained role template does not necessarily cover the
+    whole gap, and too broad a list would sell the recruitment for more than it
+    is.
     """
-    taches = [
-        _tache("Dessiner le logo", "ui", "design-system"),
-        _tache("Animer le logo", "ui"),
-        _tache("Vérifier le lancement", "backend"),
+    tasks = [
+        _task("Dessiner le logo", "ui", "design-system"),
+        _task("Animer le logo", "ui"),
+        _task("Vérifier le lancement", "backend"),
     ]
 
-    manque = manque_au_plan(taches, [_agent("dev", "backend")])
+    gap = plan_gap(tasks, [_agent("dev", "backend")])
 
-    assert manque is not None
-    assert manque.manque.gabarit == "interface"
-    assert manque.manque.role == "Designer"
-    assert manque.recrutable
-    assert manque.taches == ("Dessiner le logo", "Animer le logo")
+    assert gap is not None
+    assert gap.gap.role_template == "interface"
+    assert gap.gap.role == "Designer"
+    assert gap.recruitable
+    assert gap.tasks == ("Dessiner le logo", "Animer le logo")
 
 
-def test_le_manque_ne_garde_que_les_taches_du_role_propose() -> None:
-    """Deux métiers manquent, un seul poste est proposé — et ses tâches avec lui.
+def test_gap_keeps_only_the_tasks_of_the_proposed_role() -> None:
+    """Two trades are missing, a single position is proposed — and its tasks with it.
 
-    `sql` n'est pas couvert non plus, mais le designer ne le prendra pas : sa
-    tâche n'entre donc pas dans ce que la carte annonce.
+    `sql` is not covered either, but the designer will not take it: its task
+    therefore does not enter what the card announces.
     """
-    taches = [
-        _tache("Dessiner le logo", "ui"),
-        _tache("Écrire la migration", "sql", "migration"),
+    tasks = [
+        _task("Dessiner le logo", "ui"),
+        _task("Écrire la migration", "sql", "migration"),
     ]
 
-    manque = manque_au_plan(taches, [_agent("dev", "backend")])
+    gap = plan_gap(tasks, [_agent("dev", "backend")])
 
-    assert manque is not None
-    assert manque.taches in (("Dessiner le logo",), ("Écrire la migration",))
-    # Un seul poste, et ses tâches sont les siennes : jamais les deux listes.
-    assert len(manque.taches) == 1
+    assert gap is not None
+    assert gap.tasks in (("Dessiner le logo",), ("Écrire la migration",))
+    # A single position, and its tasks are its own: never both lists.
+    assert len(gap.tasks) == 1
 
 
 @pytest.mark.parametrize(
-    ("taches", "equipe"),
+    ("tasks", "team"),
     [
         pytest.param(
-            [_tache("Ajouter la pagination", "backend")],
+            [_task("Ajouter la pagination", "backend")],
             [_agent("dev", "backend")],
             id="tout-est-couvert",
         ),
         pytest.param(
-            [_tache("Dessiner le logo", "ui")],
+            [_task("Dessiner le logo", "ui")],
             [],
             id="equipe-vide",
         ),
         pytest.param([], [_agent("dev", "backend")], id="plan-vide"),
     ],
 )
-def test_rien_ne_manque_quand_rien_ne_manque(
-    taches: list[Task], equipe: list[Agent]
+def test_nothing_is_missing_when_nothing_is_missing(
+    tasks: list[Task], team: list[Agent]
 ) -> None:
-    """Trois abstentions, et la deuxième est la plus importante.
+    """Three abstentions, and the second is the most important.
 
-    Une **équipe vide** n'est pas une équipe incomplète : ce projet-là se voit
-    proposer son équipe entière avant même d'ouvrir un run (#1146), et en déduire
-    ici « il manque un rôle » ferait proposer un poste unique là où il faut une
-    équipe.
+    An **empty team** is not an incomplete team: that project is offered its whole
+    team before even opening a run (#1146), and deducing « a role is missing »
+    here would propose a single position where a team is needed.
     """
-    assert manque_au_plan(taches, equipe) is None
+    assert plan_gap(tasks, team) is None
 
 
-def test_un_manque_sans_gabarit_se_nomme_mais_ne_se_propose_pas() -> None:
-    """Maestro ne sait pas recruter pour `comptabilite` : il le dit, sans inventer.
+def test_a_gap_without_role_template_is_named_but_not_proposed() -> None:
+    """Maestro does not know how to recruit for `comptabilite`: it says so, without inventing.
 
-    Un rôle fabriqué se lirait comme un rôle du catalogue, et ce qu'on proposerait
-    de créer n'aurait ni playbook ni compétences.
+    A made-up role would read as a catalogue role, and what we would propose to
+    create would have neither playbook nor competencies.
     """
-    manque = manque_au_plan(
-        [_tache("Tenir les comptes", "comptabilite")], [_agent("dev", "backend")]
+    gap = plan_gap(
+        [_task("Tenir les comptes", "comptabilite")], [_agent("dev", "backend")]
     )
 
-    assert manque is not None
-    assert not manque.recrutable
-    assert "comptabilite" in manque.phrase()
+    assert gap is not None
+    assert not gap.recruitable
+    assert "comptabilite" in gap.sentence()
 
 
-def test_la_phrase_du_journal_nomme_les_taches_et_la_raison_ne_les_redit_pas() -> None:
-    """Deux textes, deux lecteurs : le journal raconte, la carte affiche à part.
+def test_journal_sentence_names_the_tasks_and_the_reason_does_not_repeat_them() -> None:
+    """Two texts, two readers: the journal tells, the card displays separately.
 
-    La raison part dans la carte du fil, qui liste les tâches dans son propre
-    bloc ; les redire dans la phrase ferait lire la même chose comme deux faits.
+    The reason goes into the chat card, which lists the tasks in its own block;
+    repeating them in the sentence would read the same thing as two facts.
     """
-    manque = manque_au_plan([_tache("Dessiner le logo", "ui")], [_agent("dev", "backend")])
+    gap = plan_gap([_task("Dessiner le logo", "ui")], [_agent("dev", "backend")])
 
-    assert manque is not None
-    assert "Dessiner le logo" in manque.phrase()
-    assert "Dessiner le logo" not in manque.raison()
-
-
-# --- ① ter Le rôle proposé est un rôle de plein droit ------------------------
+    assert gap is not None
+    assert "Dessiner le logo" in gap.sentence()
+    assert "Dessiner le logo" not in gap.reason()
 
 
-def test_le_renfort_propose_un_seul_role_justifie_par_le_plan() -> None:
-    """Un designer n'est justifié par aucun constat d'un projet en Python.
+# --- ① ter The proposed role is a full-fledged role --------------------------
 
-    C'est pour cela qu'il ne peut pas sortir de la dérivation ordinaire : celle-ci
-    l'écarterait, et avec raison. Sa justification est le **plan**, que l'appelant
-    est seul à connaître.
+
+def test_reinforcement_proposes_a_single_role_justified_by_the_plan() -> None:
+    """A designer is justified by no finding of a Python project.
+
+    That is why it cannot come out of the ordinary derivation: that one would
+    exclude it, and rightly so. Its justification is the **plan**, which only the
+    caller knows.
     """
-    constats = _constats()
-    manque = role_manquant(("ui", "ux"))
-    assert manque is not None
+    findings = _findings()
+    gap = missing_role(("ui", "ux"))
+    assert gap is not None
 
-    proposition = proposer_renfort(
-        constats,
-        recommander(constats),
-        manque,
+    proposal = propose_reinforcement(
+        findings,
+        recommander(findings),
+        gap,
         "le plan de ce travail demande ui, ux",
-        projet_id=PROJET,
-        noms_pris=("dev",),
+        project_id=PROJECT,
+        taken_names=("dev",),
     )
 
-    assert [r.gabarit for r in proposition.roles] == ["designer"]
-    assert proposition.roles[0].raison == "le plan de ce travail demande ui, ux"
-    # Aucune pièce : aucun fichier du projet ne désigne ce rôle, et en inventer
-    # une serait pire que de n'en pas avoir.
-    assert proposition.roles[0].justification is None
-    # Rien n'est créé, et la proposition le dit comme les autres.
-    assert proposition.to_dict()["cree"] is False
+    assert [r.role_template for r in proposal.roles] == ["designer"]
+    assert proposal.roles[0].reason == "le plan de ce travail demande ui, ux"
+    # No evidence: no file of the project designates this role, and inventing one
+    # would be worse than having none.
+    assert proposal.roles[0].justification is None
+    # Nothing is created, and the proposal says so like the others.
+    assert proposal.to_dict()["cree"] is False
 
 
-def test_le_role_de_renfort_porte_playbook_autorisations_et_intention() -> None:
-    """Pas une fiche au rabais : tout ce qu'un rôle proposé porte, il le porte."""
-    constats = _constats()
-    manque = role_manquant(("ui",))
-    assert manque is not None
+def test_reinforcement_role_carries_playbook_permissions_and_intent() -> None:
+    """Not a cut-rate definition: everything a proposed role carries, it carries."""
+    findings = _findings()
+    gap = missing_role(("ui",))
+    assert gap is not None
 
-    role = proposer_renfort(
-        constats, recommander(constats), manque, "le plan le demande", projet_id=PROJET
+    role = propose_reinforcement(
+        findings, recommander(findings), gap, "le plan le demande", project_id=PROJECT
     ).roles[0]
 
     assert role.playbook.strip()
-    assert role.playbook_origine
-    assert role.intention.strip()
-    assert role.competences
+    assert role.playbook_origin
+    assert role.intent.strip()
+    assert role.competencies
 
 
-def test_un_renfort_sans_gabarit_est_refuse_plutot_qu_invente() -> None:
-    constats = _constats()
-    manque = role_manquant(("comptabilite",))
-    assert manque is not None and manque.gabarit is None
+def test_a_reinforcement_without_role_template_is_refused_rather_than_invented() -> None:
+    findings = _findings()
+    gap = missing_role(("comptabilite",))
+    assert gap is not None and gap.role_template is None
 
     with pytest.raises(ValueError, match="aucun gabarit ne couvre"):
-        proposer_renfort(constats, recommander(constats), manque, "raison")
+        propose_reinforcement(findings, recommander(findings), gap, "raison")
 
 
-def test_un_renfort_ecarte_l_orchestrateur_et_personne_d_autre() -> None:
-    """Les rôles déjà en place n'ont pas été examinés : les nommer écartés serait
-    faux. L'orchestrateur, lui, l'est quel que soit le moment (docs/37 §4.2)."""
-    constats = _constats()
-    manque = role_manquant(("ui",))
-    assert manque is not None
+def test_a_reinforcement_excludes_the_orchestrator_and_nobody_else() -> None:
+    """The roles already in place have not been examined: naming them excluded would
+    be false. The orchestrator, for its part, is, whatever the moment (docs/37 §4.2)."""
+    findings = _findings()
+    gap = missing_role(("ui",))
+    assert gap is not None
 
-    proposition = proposer_renfort(
-        constats, recommander(constats), manque, "raison", projet_id=PROJET
+    proposal = propose_reinforcement(
+        findings, recommander(findings), gap, "raison", project_id=PROJECT
     )
 
-    assert [e.nom for e in proposition.ecartes] == ["orchestrateur"]
+    assert [e.name for e in proposal.excluded] == ["orchestrateur"]
 
 
-# --- ② La boucle confronte, consigne, et repart quoi qu'il arrive ------------
+# --- ② The loop confronts, records, and goes on whatever happens -------------
 
 
-class _PlanScripte(ModelProvider):
-    """Faux fournisseur : il rend **le plan de l'essai**, écrit pour le besoin.
+class _ScriptedPlan(ModelProvider):
+    """Fake provider: it returns **the trial's plan**, written for the need.
 
-    Un seul double pour tout le lot, et il tient les trois rôles que la boucle lui
-    demande : décomposer (le plan ci-dessus), **classer** un routage ambigu — le
-    repli du routeur sur un agent actif, celui que l'essai a subi — et produire un
-    livrable quelconque. C'est ce qui permet de jouer la boucle entière sans
-    réseau et sans appel modèle réel.
+    A single double for the whole lot, and it holds the three roles the loop asks
+    of it: decompose (the plan above), **classify** an ambiguous routing — the
+    router's fallback onto an active agent, the one the trial suffered — and
+    produce some deliverable. That is what allows playing the whole loop without
+    network and without a real model call.
 
-    Le classifieur est rendu **concluant** à dessein : sans lui, une tâche que
-    personne ne couvre partirait « à assigner », et le test ne montrerait plus ce
-    qui a motivé le ticket — une animation confiée à un développeur.
+    The classifier is made **conclusive** on purpose: without it, a task nobody
+    covers would leave as « to assign », and the test would no longer show what
+    motivated the ticket — an animation handed to a developer.
     """
 
     name = "plan-scripte"
@@ -396,21 +395,21 @@ class _PlanScripte(ModelProvider):
 
         if system_prompt is not None and "Chef de projet" in system_prompt:
             return json.dumps(PLAN)
-        candidats = re.findall(r"^- (\S+) \(", prompt, flags=re.MULTILINE)
-        if "Agents candidats" in prompt and candidats:
-            # Le premier candidat, c'est-à-dire l'ordre de l'équipe reçue : le
-            # départage déterministe que le vrai classifieur rendrait en langage.
-            return json.dumps({"agent": candidats[0], "confiance": 0.6})
+        candidates = re.findall(r"^- (\S+) \(", prompt, flags=re.MULTILINE)
+        if "Agents candidats" in prompt and candidates:
+            # The first candidate, that is the order of the team received: the
+            # deterministic tiebreak the real classifier would return in language.
+            return json.dumps({"agent": candidates[0], "confiance": 0.6})
         return "LIVRABLE"
 
 
-class _ArbitreEspion:
-    """Un `ArbitreRenfort` qui note la demande reçue et rend la décision voulue.
+class _SpyArbiter:
+    """An `ArbitreRenfort` that notes the request received and returns the wanted decision.
 
-    Il **recrute pour de vrai** quand `agents` lui est passé : il écrit la fiche
-    dans le dépôt du projet, exactement comme la création réelle (#1040) le fait.
-    C'est ce qui permet de vérifier le second critère de bout en bout — les tâches
-    vont au nouveau rôle — sans monter l'API.
+    It **really recruits** when `agents` is passed to it: it writes the definition
+    into the project's repository, exactly as the real creation (#1040) does.
+    That is what allows checking the second criterion end to end — the tasks go to
+    the new role — without mounting the API.
     """
 
     def __init__(
@@ -418,37 +417,38 @@ class _ArbitreEspion:
         decision: DecisionRenfort,
         *,
         agents: AgentStore | None = None,
-        fiche: AgentDefinition | None = None,
+        definition: AgentDefinition | None = None,
     ) -> None:
-        self.demandes: list[DemandeRenfort] = []
+        self.requests: list[DemandeRenfort] = []
         self._decision = decision
         self._agents = agents
-        self._fiche = fiche
+        self._definition = definition
 
-    async def __call__(self, demande: DemandeRenfort) -> DecisionRenfort:
-        self.demandes.append(demande)
-        if self._agents is not None and self._fiche is not None:
-            self._agents.pour_projet(demande.projet_id).ecrire(self._fiche)
+    async def __call__(self, request: DemandeRenfort) -> DecisionRenfort:
+        self.requests.append(request)
+        if self._agents is not None and self._definition is not None:
+            self._agents.pour_projet(request.projet_id).ecrire(self._definition)
         return self._decision
 
 
-class _PlanScripteHesitant(_PlanScripte):
-    """Le classifieur **de la vraie stack** (#1260) : il s'abstient quand personne n'a le métier.
+class _HesitantScriptedPlan(_ScriptedPlan):
+    """The classifier **of the real stack** (#1260): it abstains when nobody has the trade.
 
-    Rejoué du bouclage du 2026-09-24, essai 2 : « le classifieur n'a pas départagé
-    dev avec assez de confiance (0.10 < seuil 0.60) ». C'est la réponse honnête à
-    la question qu'on lui pose d'ordinaire — *qui est compétent ?* — quand aucun
-    candidat n'a le métier, et c'est elle qui faisait partir « à assigner » les
-    tâches d'un run que la personne avait pourtant laissé continuer.
+    Replayed from the 2026-09-24 close-out, trial 2: « le classifieur n'a pas
+    départagé dev avec assez de confiance (0.10 < seuil 0.60) ». It is the honest
+    answer to the question it is usually asked — *who is competent?* — when no
+    candidate has the trade, and it is what sent « to assign » the tasks of a run
+    the person had nonetheless let continue.
 
-    À la question du **plus proche**, en revanche, il désigne : `prefere` s'il est
-    candidat, sinon le premier. C'est ce qui permet de voir, sur une équipe de
-    plusieurs rôles, que le choix vient bien du modèle et non de l'ordre.
+    To the **closest** question, on the other hand, it designates: `preferred` if
+    it is a candidate, otherwise the first. That is what allows seeing, on a team
+    of several roles, that the choice does come from the model and not from the
+    order.
     """
 
-    def __init__(self, prefere: str = "") -> None:
-        self._prefere = prefere
-        self.questions_plus_proche = 0
+    def __init__(self, preferred: str = "") -> None:
+        self._preferred = preferred
+        self.closest_questions = 0
 
     async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
         import json
@@ -458,212 +458,223 @@ class _PlanScripteHesitant(_PlanScripte):
 
         if system_prompt is not None and "Chef de projet" in system_prompt:
             return json.dumps(PLAN)
-        candidats = re.findall(r"^- (\S+) \(", prompt, flags=re.MULTILINE)
-        if "Agents candidats" in prompt and candidats:
+        candidates = re.findall(r"^- (\S+) \(", prompt, flags=re.MULTILINE)
+        if "Agents candidats" in prompt and candidates:
             if system_prompt == CLASSIFIER_CLOSEST_SYSTEM_PROMPT:
-                self.questions_plus_proche += 1
-                choisi = self._prefere if self._prefere in candidats else candidats[0]
-                return json.dumps({"agent": choisi, "confiance": 0.3})
+                self.closest_questions += 1
+                chosen = self._preferred if self._preferred in candidates else candidates[0]
+                return json.dumps({"agent": chosen, "confiance": 0.3})
             return json.dumps({"agent": None, "confiance": 0.1})
         return "LIVRABLE"
 
 
-def _moteur(
+def _engine(
     tmp_path: Path,
     *,
-    equipe: AgentDefinition | None = None,
-    arbitre: Any = None,
-    fournisseur: ModelProvider | None = None,
-    renforts: tuple[AgentDefinition, ...] = (),
+    team: AgentDefinition | None = None,
+    arbiter: Any = None,
+    provider: ModelProvider | None = None,
+    reinforcements: tuple[AgentDefinition, ...] = (),
 ) -> tuple[OrchestrationEngine, AgentStore]:
-    """Le moteur de l'essai : un projet qui n'a qu'un développeur."""
+    """The trial's engine: a project that has only one developer."""
     agents = AgentStore(tmp_path / "agents")
-    if equipe is not None:
-        agents.pour_projet(PROJET).ecrire(equipe)
-    for fiche in renforts:
-        agents.pour_projet(PROJET).ecrire(fiche)
-    fournisseur = fournisseur if fournisseur is not None else _PlanScripte()
-    moteur = OrchestrationEngine(
-        fournisseur,
-        Orchestrator(fournisseur, model="m"),
+    if team is not None:
+        agents.pour_projet(PROJECT).ecrire(team)
+    for definition in reinforcements:
+        agents.pour_projet(PROJECT).ecrire(definition)
+    provider = provider if provider is not None else _ScriptedPlan()
+    engine = OrchestrationEngine(
+        provider,
+        Orchestrator(provider, model="m"),
         agents=[_agent("cablage", "backend")],
         runtimes={},
         agents_store=agents,
-        arbitre_renfort=arbitre,
+        arbitre_renfort=arbiter,
     )
-    return moteur, agents
+    return engine, agents
 
 
-def _lignes_equipe(journal: RunJournal) -> list[Any]:
-    """Les lignes `equipe` du journal — le manque, puis l'issue de la demande."""
+def _team_lines(journal: RunJournal) -> list[Any]:
+    """The journal's `equipe` lines — the gap, then the outcome of the request."""
     return [r for r in journal.records if r.etape == STEP_TEAM]
 
 
-def test_la_demande_porte_le_role_sa_raison_et_les_taches_qu_il_prendrait(
+def test_request_carries_the_role_its_reason_and_the_tasks_it_would_take(
     tmp_path: Path,
 ) -> None:
-    """Le premier critère, de bout en bout : plan → manque → proposition.
+    """The first criterion, end to end: plan → gap → proposal.
 
-    Faux fournisseur de modèle, projet à un seul `dev`, objectif d'animation. Ce
-    que l'arbitre reçoit est ce que la carte du fil affichera.
+    Fake model provider, project with a single `dev`, animation goal. What the
+    arbiter receives is what the chat card will display.
     """
-    arbitre = _ArbitreEspion(DecisionRenfort(approuve=False, detail="non merci"))
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    arbiter = _SpyArbiter(DecisionRenfort(approuve=False, detail="non merci"))
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert len(arbitre.demandes) == 1
-    demande = arbitre.demandes[0]
-    assert demande.projet_id == PROJET
-    assert demande.objectif == OBJECTIF
-    assert demande.run_id == journal.run_id
-    assert demande.manque.manque.role == "Designer"
-    assert demande.manque.taches == (
+    assert len(arbiter.requests) == 1
+    request = arbiter.requests[0]
+    assert request.projet_id == PROJECT
+    assert request.objectif == GOAL
+    assert request.run_id == journal.run_id
+    assert request.manque.gap.role == "Designer"
+    assert request.manque.tasks == (
         "Dessiner le logo stylisé",
         "Écrire le script d'animation",
     )
-    assert "ui" in demande.manque.raison()
-    # La borne voyage sur la demande, et c'est l'arbitre qui la tient.
-    assert demande.attente_s > 0
+    assert "ui" in request.manque.reason()
+    # The bound travels on the request, and the arbiter is the one holding it.
+    assert request.attente_s > 0
 
 
-def test_la_confrontation_a_lieu_avant_la_premiere_tache(tmp_path: Path) -> None:
-    """Un recrutement décidé après le routage n'aurait servi à rien.
+def test_confrontation_happens_before_the_first_task(tmp_path: Path) -> None:
+    """A recruitment decided after routing would have been useless.
 
-    La preuve est prise dans le journal : la ligne du manque précède toute ligne
-    de tâche, et l'arbitre a été appelé avant qu'aucune tâche ne soit exécutée.
+    The proof is taken from the journal: the gap line precedes every task line,
+    and the arbiter was called before any task was executed.
     """
-    vu: list[str] = []
+    seen: list[str] = []
 
-    async def arbitre(demande: DemandeRenfort) -> DecisionRenfort:
-        vu.append("demande")
+    async def arbiter(request: DemandeRenfort) -> DecisionRenfort:
+        seen.append("demande")
         return DecisionRenfort(approuve=False, detail="non")
 
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    etapes = [r.etape for r in journal.records]
-    premiere_tache = next(i for i, e in enumerate(etapes) if e.startswith("logo-stylise"))
-    assert etapes.index(STEP_TEAM) < premiere_tache
-    assert vu == ["demande"]
+    steps = [r.etape for r in journal.records]
+    first_task = next(i for i, e in enumerate(steps) if e.startswith("logo-stylise"))
+    assert steps.index(STEP_TEAM) < first_task
+    assert seen == ["demande"]
 
 
-def test_le_manque_est_consigne_meme_sans_personne_a_qui_le_proposer(
+def test_gap_is_recorded_even_with_nobody_to_propose_it_to(
     tmp_path: Path,
 ) -> None:
-    """« Aucune modification de l'équipe n'a été suggérée » était vrai jusque dans
-    le journal : sans arbitre, le manque se **dit** quand même, et une seule fois.
+    """« Aucune modification de l'équipe n'a été suggérée » was true all the way into
+    the journal: without an arbiter, the gap is **said** anyway, and only once.
 
-    Usage nul : confronter des tags à des fiches ne sollicite aucun modèle.
+    Zero usage: confronting tags with definitions solicits no model.
     """
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"))
+    engine, _ = _engine(tmp_path, team=_definition("dev", "backend", "frontend"))
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    lignes = _lignes_equipe(journal)
-    assert len(lignes) == 1
-    assert lignes[0].statut == STATUT_ROLE_MANQUANT
-    assert lignes[0].agent == "orchestrateur"
-    assert lignes[0].projet_id == PROJET
-    assert "Dessiner le logo stylisé" in lignes[0].sortie
-    assert lignes[0].usage.calls == 0
+    lines = _team_lines(journal)
+    assert len(lines) == 1
+    assert lines[0].statut == STATUT_ROLE_MANQUANT
+    assert lines[0].agent == "orchestrateur"
+    assert lines[0].projet_id == PROJECT
+    assert "Dessiner le logo stylisé" in lines[0].sortie
+    assert lines[0].usage.calls == 0
 
 
-def test_accepter_recrute_et_les_taches_vont_au_nouveau_role(tmp_path: Path) -> None:
-    """Le second critère : l'équipe complétée prend les tâches qui l'appelaient.
+def test_accepting_recruits_and_the_tasks_go_to_the_new_role(tmp_path: Path) -> None:
+    """The second criterion: the completed team takes the tasks that called for it.
 
-    Rien n'est réécrit dans le plan — c'est le routage qui relit le dépôt
-    d'agents à chaque tâche, si bien qu'un rôle né pendant l'attente prend son
-    travail sans qu'une ligne du plan change.
+    Nothing is rewritten in the plan — routing rereads the agent repository at
+    each task, so that a role born during the wait takes its work without a line
+    of the plan changing.
     """
-    arbitre = _ArbitreEspion(
+    arbiter = _SpyArbiter(
         DecisionRenfort(approuve=True, detail="Équipe créée : Designer"),
         agents=AgentStore(tmp_path / "agents"),
-        fiche=AgentDefinition(
+        definition=AgentDefinition(
             nom="interface",
             role="Designer",
             competences=("ui", "ux", "design-system"),
             playbook="Tu dessines les écrans de p1.",
         ),
     )
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    par_tache = {r.task_id: r.agent for r in rapport.resultats}
-    assert par_tache["logo-stylise"] == "interface"
-    assert par_tache["script-animation"] == "interface"
-    # La tâche que l'équipe couvrait déjà n'a pas changé de main.
-    assert par_tache["test-lancement"] == "dev"
-    issue = _lignes_equipe(journal)[-1]
-    assert issue.statut == STATUT_RENFORT_RECRUTE
-    assert "l'équipe complétée" in issue.sortie
+    by_task = {r.task_id: r.agent for r in report.resultats}
+    assert by_task["logo-stylise"] == "interface"
+    assert by_task["script-animation"] == "interface"
+    # The task the team already covered has not changed hands.
+    assert by_task["test-lancement"] == "dev"
+    outcome = _team_lines(journal)[-1]
+    assert outcome.statut == STATUT_RENFORT_RECRUTE
+    assert "l'équipe complétée" in outcome.sortie
 
 
-def test_decliner_laisse_le_run_continuer_et_le_dit(tmp_path: Path) -> None:
-    """Décliner n'annule rien : le run finit, avec l'équipe qu'on a."""
-    arbitre = _ArbitreEspion(
+def test_declining_lets_the_run_continue_and_says_so(tmp_path: Path) -> None:
+    """Declining cancels nothing: the run finishes, with the team we have."""
+    arbiter = _SpyArbiter(
         DecisionRenfort(approuve=False, detail="Entendu : je ne recrute personne")
     )
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert len(rapport.resultats) == 3
-    issue = _lignes_equipe(journal)[-1]
-    assert issue.statut == STATUT_RENFORT_DECLINE
-    assert "l'équipe actuelle" in issue.sortie
-    # Les tâches sont allées au seul rôle en place, sans son métier.
-    assert {r.agent for r in rapport.resultats} == {"dev"}
+    assert len(report.resultats) == 3
+    outcome = _team_lines(journal)[-1]
+    assert outcome.statut == STATUT_RENFORT_DECLINE
+    assert "l'équipe actuelle" in outcome.sortie
+    # The tasks went to the only role in place, without its trade.
+    assert {r.agent for r in report.resultats} == {"dev"}
 
 
-def test_ne_pas_repondre_n_est_pas_un_refus(tmp_path: Path) -> None:
-    """Trois mots et pas un seul « refusé » : ce qu'on relit d'un run est *qui a
-    décidé*, et personne n'a regardé passer celle-ci."""
-    arbitre = _ArbitreEspion(
+def test_not_answering_is_not_a_refusal(tmp_path: Path) -> None:
+    """Three words and not a single « refused »: what one rereads of a run is *who
+    decided*, and nobody watched this one go by."""
+    arbiter = _SpyArbiter(
         DecisionRenfort(approuve=False, detail="personne n'a répondu", sans_reponse=True)
     )
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert len(rapport.resultats) == 3
-    assert _lignes_equipe(journal)[-1].statut == STATUT_RENFORT_SANS_REPONSE
+    assert len(report.resultats) == 3
+    assert _team_lines(journal)[-1].statut == STATUT_RENFORT_SANS_REPONSE
 
 
-def test_un_arbitre_qui_tombe_ne_condamne_pas_le_plan(tmp_path: Path) -> None:
-    """Fail-safe dans le sens utile : ce qui est en jeu est une **amélioration**
-    de l'équipe, pas un acte sensible. Un bus refermé ne coûte pas un run."""
+def test_a_failing_arbiter_does_not_doom_the_plan(tmp_path: Path) -> None:
+    """Fail-safe in the useful direction: what is at stake is an **improvement** of
+    the team, not a sensitive act. A closed bus does not cost a run."""
 
-    async def arbitre(demande: DemandeRenfort) -> DecisionRenfort:
+    async def arbiter(request: DemandeRenfort) -> DecisionRenfort:
         raise RuntimeError("bus refermé")
 
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert len(rapport.resultats) == 3
-    issue = _lignes_equipe(journal)[-1]
-    assert issue.statut == STATUT_RENFORT_SANS_REPONSE
-    assert "bus refermé" in issue.sortie
+    assert len(report.resultats) == 3
+    outcome = _team_lines(journal)[-1]
+    assert outcome.statut == STATUT_RENFORT_SANS_REPONSE
+    assert "bus refermé" in outcome.sortie
 
 
-# --- ② ter Sans renfort, le travail va au rôle le plus proche (#1260) --------
+# --- ② ter Without reinforcement, the work goes to the closest role (#1260) --
 #
-# Le bouclage du 2026-09-24 a rejoué l'essai sur la vraie stack : la tâche de
-# conception est partie « à assigner » — le classifieur, interrogé sur *qui est
-# compétent*, s'abstenait honnêtement —, les deux suivantes sont restées
-# bloquées, et le run a fini en échec 0/3. Les tests de #1227 ne le voyaient pas :
-# leur classifieur désignait toujours quelqu'un. Ceux-ci rejouent le classifieur
-# réel, qui s'abstient.
+# The 2026-09-24 close-out replayed the trial on the real stack: the design task
+# left « to assign » — the classifier, asked *who is competent*, honestly
+# abstained —, the next two stayed blocked, and the run ended in failure 0/3.
+# The tests of #1227 did not see it: their classifier always designated someone.
+# These replay the real classifier, which abstains.
 
 
 @pytest.mark.parametrize(
@@ -676,60 +687,59 @@ def test_un_arbitre_qui_tombe_ne_condamne_pas_le_plan(tmp_path: Path) -> None:
         ),
     ],
 )
-def test_sans_renfort_les_taches_vont_au_role_le_plus_proche_au_lieu_d_echouer(
+def test_without_reinforcement_tasks_go_to_the_closest_role_instead_of_failing(
     tmp_path: Path, decision: DecisionRenfort
 ) -> None:
-    """Le critère de #1260 : la voie « décliner / pas de réponse » ne fait échouer
-    aucune tâche. Le run de l'essai 2 finissait 0/3 ; il doit finir 3/3, tout au
-    seul rôle en place — et le journal le dit."""
-    moteur, _ = _moteur(
+    """The criterion of #1260: the « decline / no answer » path makes no task
+    fail. The trial 2 run ended 0/3; it must end 3/3, all to the only role in
+    place — and the journal says so."""
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("dev", "backend", "frontend"),
-        arbitre=_ArbitreEspion(decision),
-        fournisseur=_PlanScripteHesitant(),
+        team=_definition("dev", "backend", "frontend"),
+        arbiter=_SpyArbiter(decision),
+        provider=_HesitantScriptedPlan(),
     )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert [r.erreur for r in rapport.resultats if not r.ok] == []
-    assert {r.task_id: r.agent for r in rapport.resultats} == {
+    assert [r.erreur for r in report.resultats if not r.ok] == []
+    assert {r.task_id: r.agent for r in report.resultats} == {
         "logo-stylise": "dev",
         "script-animation": "dev",
         "test-lancement": "dev",
     }
-    assert "rôle le plus proche" in _lignes_equipe(journal)[-1].sortie
+    assert "rôle le plus proche" in _team_lines(journal)[-1].sortie
 
 
-def test_sans_personne_a_qui_proposer_le_travail_va_aussi_au_plus_proche(
+def test_with_nobody_to_propose_to_the_work_also_goes_to_the_closest(
     tmp_path: Path,
 ) -> None:
-    """Sans arbitre (un run en ligne de commande), le manque se dit et le run
-    continue avec l'équipe actuelle : c'est la même décision, prise par défaut."""
-    moteur, _ = _moteur(
+    """Without an arbiter (a command-line run), the gap is said and the run
+    continues with the current team: it is the same decision, taken by default."""
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("dev", "backend", "frontend"),
-        fournisseur=_PlanScripteHesitant(),
+        team=_definition("dev", "backend", "frontend"),
+        provider=_HesitantScriptedPlan(),
     )
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=RunJournal(), projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=RunJournal(), projet_id=PROJECT))
 
-    assert all(r.ok for r in rapport.resultats)
-    assert {r.agent for r in rapport.resultats} == {"dev"}
+    assert all(r.ok for r in report.resultats)
+    assert {r.agent for r in report.resultats} == {"dev"}
 
 
-def test_le_plus_proche_est_designe_par_le_modele_et_non_par_l_ordre(
+def test_closest_is_designated_by_the_model_not_by_the_order(
     tmp_path: Path,
 ) -> None:
-    """Deux rôles en place, aucun n'a le métier : c'est le classifieur qui dit
-    lequel s'en approche le plus, à une question qui n'admet pas l'abstention.
-    Le rédacteur est **second** dans le dépôt : le prendre n'est pas un défaut
-    d'ordre."""
-    fournisseur = _PlanScripteHesitant(prefere="redaction")
-    moteur, _ = _moteur(
+    """Two roles in place, neither has the trade: the classifier says which one
+    comes closest, to a question that does not admit abstention. The writer is
+    **second** in the repository: taking it is not an order default."""
+    provider = _HesitantScriptedPlan(preferred="redaction")
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("dev", "backend", "frontend"),
-        renforts=(
+        team=_definition("dev", "backend", "frontend"),
+        reinforcements=(
             AgentDefinition(
                 nom="redaction",
                 role="Rédacteur",
@@ -737,28 +747,28 @@ def test_le_plus_proche_est_designe_par_le_modele_et_non_par_l_ordre(
                 playbook="Tu écris la documentation de p1.",
             ),
         ),
-        arbitre=_ArbitreEspion(DecisionRenfort(approuve=False, detail="non")),
-        fournisseur=fournisseur,
+        arbiter=_SpyArbiter(DecisionRenfort(approuve=False, detail="non")),
+        provider=provider,
     )
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=RunJournal(), projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=RunJournal(), projet_id=PROJECT))
 
-    par_tache = {r.task_id: r.agent for r in rapport.resultats}
-    assert par_tache["logo-stylise"] == "redaction"
-    assert par_tache["script-animation"] == "redaction"
-    # La tâche que l'équipe couvre ne passe pas par cette question.
-    assert par_tache["test-lancement"] == "dev"
-    assert fournisseur.questions_plus_proche == 2
+    by_task = {r.task_id: r.agent for r in report.resultats}
+    assert by_task["logo-stylise"] == "redaction"
+    assert by_task["script-animation"] == "redaction"
+    # The task the team covers does not go through this question.
+    assert by_task["test-lancement"] == "dev"
+    assert provider.closest_questions == 2
 
 
-class _PlanMixte(_PlanScripte):
-    """Le plan du bouclage, run `2f7aae8437f4` : **une** tâche, qui demande le métier
-    absent (`ui`) et un métier que le développeur a (`frontend`).
+class _MixedPlan(_ScriptedPlan):
+    """The close-out's plan, run `2f7aae8437f4`: **one** task, requiring the absent
+    trade (`ui`) and a trade the developer has (`frontend`).
 
-    Le Designer recruté couvre l'un, le développeur l'autre : un ex æquo, que le
-    classifieur a tranché pour le développeur — le premier candidat, comme ce double.
-    Le fil venait de promettre « les tâches qui demandaient ces compétences iront au
-    nouveau rôle ».
+    The recruited Designer covers one, the developer the other: a tie, which the
+    classifier settled for the developer — the first candidate, like this double.
+    The chat had just promised « les tâches qui demandaient ces compétences iront
+    au nouveau rôle ».
     """
 
     async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
@@ -780,41 +790,41 @@ class _PlanMixte(_PlanScripte):
         return await super().generate(prompt, model=model, system_prompt=system_prompt)
 
 
-def test_accepter_donne_au_nouveau_role_les_taches_qui_demandaient_son_metier(
+def test_accepting_gives_the_new_role_the_tasks_that_required_its_trade(
     tmp_path: Path,
 ) -> None:
-    """La promesse du fil, tenue même quand le développeur couvre une partie de la
-    tâche : le rôle recruté **pour ce plan** prend les tâches qui demandaient son
-    métier. Vu une fois sur deux sur la vraie stack (S6, 2026-09-24)."""
-    arbitre = _ArbitreEspion(
+    """The chat's promise, kept even when the developer covers part of the task:
+    the role recruited **for this plan** takes the tasks that required its trade.
+    Seen one time out of two on the real stack (S6, 2026-09-24)."""
+    arbiter = _SpyArbiter(
         DecisionRenfort(approuve=True, detail="Équipe créée : Designer"),
         agents=AgentStore(tmp_path / "agents"),
-        fiche=AgentDefinition(
+        definition=AgentDefinition(
             nom="interface",
             role="Designer",
             competences=("ui", "ux", "design-system"),
             playbook="Tu dessines les écrans de p1.",
         ),
     )
-    moteur, _ = _moteur(
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("dev", "backend", "frontend"),
-        arbitre=arbitre,
-        fournisseur=_PlanMixte(),
+        team=_definition("dev", "backend", "frontend"),
+        arbiter=arbiter,
+        provider=_MixedPlan(),
     )
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=RunJournal(), projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=RunJournal(), projet_id=PROJECT))
 
-    assert {r.task_id: r.agent for r in rapport.resultats} == {"logo-anime": "interface"}
+    assert {r.task_id: r.agent for r in report.resultats} == {"logo-anime": "interface"}
 
 
-class _PlanDeuxMetiers(_PlanScripteHesitant):
-    """Le plan du run `2e7f7278a991` (S6, 2026-09-24) : **deux** métiers absents.
+class _TwoTradesPlan(_HesitantScriptedPlan):
+    """The plan of run `2e7f7278a991` (S6, 2026-09-24): **two** absent trades.
 
-    La direction visuelle demande le design, la validation demande la QA. #1227 ne
-    propose qu'un poste par run — le plus couvrant, ici le Designer —, et la
-    personne ne se voit jamais demander la QA. Le classifieur est celui de la vraie
-    stack : il s'abstient à la question ordinaire.
+    The visual direction requires design, the validation requires QA. #1227
+    proposes only one position per run — the one covering the most, here the
+    Designer —, and the person is never asked for QA. The classifier is the real
+    stack's one: it abstains on the ordinary question.
     """
 
     async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
@@ -852,246 +862,250 @@ class _PlanDeuxMetiers(_PlanScripteHesitant):
         return await super().generate(prompt, model=model, system_prompt=system_prompt)
 
 
-def test_ce_que_le_renfort_accepte_ne_couvre_pas_va_au_plus_proche_et_se_dit(
+def test_what_the_accepted_reinforcement_does_not_cover_goes_to_the_closest_and_is_said(
     tmp_path: Path,
 ) -> None:
-    """Accepter le Designer ne doit pas faire échouer la QA qu'on n'a jamais proposée.
+    """Accepting the Designer must not make the never-proposed QA fail.
 
-    Le run `2e7f7278a991` a fini 2/3 : Designer recruté et au travail, mais la
-    validation partie « à assigner ». Personne n'a été interrogé sur ce second
-    métier — c'est la décision par défaut de « personne à qui proposer », et elle
-    a la même conséquence : le rôle le plus proche. Le journal le dit, à côté du
-    recrutement.
+    Run `2e7f7278a991` ended 2/3: Designer recruited and at work, but the
+    validation left « to assign ». Nobody was asked about that second trade —
+    it is the default decision of « nobody to propose to », and it has the same
+    consequence: the closest role. The journal says so, next to the recruitment.
     """
-    arbitre = _ArbitreEspion(
+    arbiter = _SpyArbiter(
         DecisionRenfort(approuve=True, detail="Équipe créée : Designer"),
         agents=AgentStore(tmp_path / "agents"),
-        fiche=AgentDefinition(
+        definition=AgentDefinition(
             nom="interface",
             role="Designer",
             competences=("ui", "ux", "design-system"),
             playbook="Tu dessines les écrans de p1.",
         ),
     )
-    moteur, _ = _moteur(
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("dev", "backend", "frontend"),
-        arbitre=arbitre,
-        fournisseur=_PlanDeuxMetiers(),
+        team=_definition("dev", "backend", "frontend"),
+        arbiter=arbiter,
+        provider=_TwoTradesPlan(),
     )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert [r.erreur for r in rapport.resultats if not r.ok] == []
-    par_tache = {r.task_id: r.agent for r in rapport.resultats}
-    assert par_tache["direction-visuelle"] == "interface"
-    assert par_tache["svg-anime"] == "dev"
-    assert par_tache["validation"] in {"dev", "interface"}
-    issue = _lignes_equipe(journal)[-1]
-    assert issue.statut == STATUT_RENFORT_RECRUTE
-    assert "qa, tests" in issue.sortie
-    assert "rôle le plus proche" in issue.sortie
+    assert [r.erreur for r in report.resultats if not r.ok] == []
+    by_task = {r.task_id: r.agent for r in report.resultats}
+    assert by_task["direction-visuelle"] == "interface"
+    assert by_task["svg-anime"] == "dev"
+    assert by_task["validation"] in {"dev", "interface"}
+    outcome = _team_lines(journal)[-1]
+    assert outcome.statut == STATUT_RENFORT_RECRUTE
+    assert "qa, tests" in outcome.sortie
+    assert "rôle le plus proche" in outcome.sortie
 
 
 @pytest.mark.parametrize(
-    ("equipe", "projet"),
+    ("team", "project"),
     [
-        pytest.param(None, PROJET, id="projet-sans-agent"),
-        pytest.param(_fiche("dev", "backend", "frontend"), None, id="hors-projet"),
+        pytest.param(None, PROJECT, id="projet-sans-agent"),
+        pytest.param(_definition("dev", "backend", "frontend"), None, id="hors-projet"),
     ],
 )
-def test_aucune_confrontation_sans_equipe_de_projet(
-    tmp_path: Path, equipe: AgentDefinition | None, projet: str | None
+def test_no_confrontation_without_a_project_team(
+    tmp_path: Path, team: AgentDefinition | None, project: str | None
 ) -> None:
-    """Deux abstentions, et elles ne se confondent pas avec un manque.
+    """Two abstentions, and they are not confused with a gap.
 
-    Un projet **sans agent** se voit proposer son équipe entière avant d'ouvrir un
-    run (#1146) ; un run **hors projet** est routé sur le catalogue du câblage,
-    dont l'équipe ne se recrute pas. Ni l'un ni l'autre n'a de renfort à proposer,
-    et ni l'un ni l'autre ne consigne de manque.
+    A project **without an agent** is offered its whole team before opening a run
+    (#1146); a run **outside a project** is routed on the wiring catalogue, whose
+    team is not recruited. Neither has a reinforcement to propose, and neither
+    records a gap.
     """
-    arbitre = _ArbitreEspion(DecisionRenfort(approuve=False))
-    moteur, _ = _moteur(tmp_path, equipe=equipe, arbitre=arbitre)
+    arbiter = _SpyArbiter(DecisionRenfort(approuve=False))
+    engine, _ = _engine(tmp_path, team=team, arbiter=arbiter)
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=projet))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=project))
 
-    assert arbitre.demandes == []
-    assert _lignes_equipe(journal) == []
+    assert arbiter.requests == []
+    assert _team_lines(journal) == []
 
 
-def test_une_equipe_complete_ne_fait_poser_aucune_question(tmp_path: Path) -> None:
-    """Le témoin : quand le plan tient dans l'équipe, rien n'est proposé ni écrit."""
-    arbitre = _ArbitreEspion(DecisionRenfort(approuve=False))
-    moteur, _ = _moteur(
+def test_a_complete_team_raises_no_question(tmp_path: Path) -> None:
+    """The control: when the plan fits in the team, nothing is proposed or written."""
+    arbiter = _SpyArbiter(DecisionRenfort(approuve=False))
+    engine, _ = _engine(
         tmp_path,
-        equipe=_fiche("polyvalent", "backend", "frontend", "ui", "design-system"),
-        arbitre=arbitre,
+        team=_definition("polyvalent", "backend", "frontend", "ui", "design-system"),
+        arbiter=arbiter,
     )
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert arbitre.demandes == []
-    assert _lignes_equipe(journal) == []
-
-
-# --- ② bis Les lignes du run ne fabriquent aucune carte de tâche -------------
+    assert arbiter.requests == []
+    assert _team_lines(journal) == []
 
 
-def test_les_lignes_de_l_etape_equipe_sont_des_activites_de_run(tmp_path: Path) -> None:
-    """Étape du **run**, comme la planification et le brief : elle ne porte sur
-    aucune tâche. Sans cette déclaration, la règle par défaut du pont ferait une
-    carte de Kanban fantôme nommée « equipe » (#924)."""
-    arbitre = _ArbitreEspion(DecisionRenfort(approuve=False, detail="non"))
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+# --- ② bis The run's lines make no task card ---------------------------------
+
+
+def test_team_step_lines_are_run_activities(tmp_path: Path) -> None:
+    """A **run** step, like planning and the brief: it concerns no task. Without
+    this declaration, the bridge's default rule would make a ghost Kanban card
+    named « equipe » (#924)."""
+    arbiter = _SpyArbiter(DecisionRenfort(approuve=False, detail="non"))
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    for ligne in _lignes_equipe(journal):
-        evenements = evenements_depuis_step(ligne.to_dict())
-        assert [e.type for e in evenements] == [EVENEMENT_AGENT_ACTIVITE]
-        assert evenements[0].tache_id == ""
-        assert evenements[0].etape_run == STEP_TEAM
+    for line in _team_lines(journal):
+        events = evenements_depuis_step(line.to_dict())
+        assert [e.type for e in events] == [EVENEMENT_AGENT_ACTIVITE]
+        assert events[0].tache_id == ""
+        assert events[0].etape_run == STEP_TEAM
 
 
-def test_l_attente_de_renfort_ne_cree_aucune_entree_au_grand_livre(
+def test_waiting_for_reinforcement_creates_no_ledger_entry(
     tmp_path: Path,
 ) -> None:
-    """Usage nul, et surtout **aucune tâche fantôme** : le grand livre d'un run
-    suspendu sur un recrutement compte exactement ses tâches."""
-    arbitre = _ArbitreEspion(DecisionRenfort(approuve=False, detail="non"))
-    moteur, _ = _moteur(tmp_path, equipe=_fiche("dev", "backend", "frontend"), arbitre=arbitre)
+    """Zero usage, and above all **no ghost task**: the ledger of a run suspended
+    on a recruitment counts exactly its tasks."""
+    arbiter = _SpyArbiter(DecisionRenfort(approuve=False, detail="non"))
+    engine, _ = _engine(
+        tmp_path, team=_definition("dev", "backend", "frontend"), arbiter=arbiter
+    )
     journal = RunJournal()
 
-    rapport = asyncio.run(moteur.run(OBJECTIF, journal=journal, projet_id=PROJET))
+    report = asyncio.run(engine.run(GOAL, journal=journal, projet_id=PROJECT))
 
-    assert {t.task_id for t in rapport.grand_livre.tasks} == {
+    assert {t.task_id for t in report.grand_livre.tasks} == {
         "logo-stylise",
         "script-animation",
         "test-lancement",
     }
 
 
-# --- ③ Le fil : la demande y est relayée, la décision revient au run --------
+# --- ③ The chat: the request is relayed there, the decision returns to the run -
 #
-# Depuis #1260, deux moitiés de part et d'autre du bus : l'**arbitre** vit avec le
-# moteur (dans l'un ou l'autre hôte) et ne connaît que le bus ; le **relais** vit
-# dans l'API, seul écrivain du fil. Ce qu'on garde ici est ce qui les distingue de
-# leurs trois aînés : la demande finit **dans le fil** — là où #1146 a déjà posé la
-# carte d'équipe et le geste qui la valide —, et la borne est tenue des deux côtés,
-# sur la même date.
+# Since #1260, two halves on either side of the bus: the **arbiter** lives with
+# the engine (in one host or the other) and knows only the bus; the **relay**
+# lives in the API, the chat's only writer. What is kept here is what sets them
+# apart from their three elders: the request ends up **in the chat** — where
+# #1146 already put the team card and the action that validates it —, and the
+# bound is held on both sides, on the same date.
 
 
-def _demande_de_renfort(run_id: str = "run-1", *, attente_s: float = 30.0) -> DemandeRenfort:
-    """La demande du moteur : le manque de l'essai, sur le projet de l'essai."""
-    manque = manque_au_plan(
+def _reinforcement_request(run_id: str = "run-1", *, wait_s: float = 30.0) -> DemandeRenfort:
+    """The engine's request: the trial's gap, on the trial's project."""
+    gap = plan_gap(
         [
-            _tache("Dessiner le logo stylisé", "ui", "design-system"),
-            _tache("Vérifier le lancement", "frontend"),
+            _task("Dessiner le logo stylisé", "ui", "design-system"),
+            _task("Vérifier le lancement", "frontend"),
         ],
         [_agent("dev", "backend", "frontend")],
     )
-    assert manque is not None
+    assert gap is not None
     return DemandeRenfort(
         run_id=run_id,
-        projet_id=PROJET,
-        objectif=OBJECTIF,
-        manque=manque,
-        attente_s=attente_s,
+        projet_id=PROJECT,
+        objectif=GOAL,
+        manque=gap,
+        attente_s=wait_s,
     )
 
 
-class _RepondeurQuiRedige:
-    """La parole du fil, réduite à ce que le relais en attend (#1262).
+class _DraftingResponder:
+    """The chat's voice, reduced to what the relay expects of it (#1262).
 
-    Le relais ne compose plus de phrase : il transmet des **faits**, et c'est le
-    répondeur du fil qui rédige (`RepondeurChat.rediger`). Ce double note les
-    faits reçus et rend une phrase qu'aucun gabarit ne contient — si bien que
-    `contenu == "Message rédigé n°1."` prouve qu'aucun texte du code ne s'y est
-    glissé.
+    The relay no longer composes a sentence: it passes on **facts**, and the
+    chat's responder is the one who drafts (`RepondeurChat.rediger`). This double
+    notes the facts received and returns a sentence no template contains — so that
+    `contenu == "Message rédigé n°1."` proves that no text from the code slipped
+    in.
     """
 
     def __init__(self) -> None:
-        self.faits: list[str] = []
+        self.facts: list[str] = []
 
     async def rediger(self, agent: Any, fil: Any, *, faits: str) -> str:
-        self.faits.append(faits)
-        return f"Message rédigé n°{len(self.faits)}."
+        self.facts.append(faits)
+        return f"Message rédigé n°{len(self.facts)}."
 
 
-def _fil_dorchestration(tmp_path: Path, bus: Any, repondeur: Any = None) -> Any:
-    """Un `ServiceChat` du fil global, sur un dépôt jetable et le bus donné."""
+def _orchestration_chat(tmp_path: Path, bus: Any, responder: Any = None) -> Any:
+    """A `ServiceChat` of the global chat, on a throwaway repository and the given bus."""
     from maestro.controltower.chat import ChatStore, RepondeurScripte, ServiceChat
     from maestro.messaging import InMemoryMailbox
 
     return ServiceChat(
         store=ChatStore(tmp_path / "chat"),
-        repondeur=repondeur if repondeur is not None else RepondeurScripte(),
+        repondeur=responder if responder is not None else RepondeurScripte(),
         mailbox=InMemoryMailbox(),
         bus=bus,
     )
 
 
-def test_l_arbitre_publie_la_demande_avec_ce_que_le_fil_montrera(tmp_path: Path) -> None:
-    """La demande traverse le bus **déjà composée** : le relais n'a rien à juger.
+def test_arbiter_publishes_the_request_with_what_the_chat_will_show(tmp_path: Path) -> None:
+    """The request crosses the bus **already composed**: the relay has nothing to judge.
 
-    Ce qu'il faut pour décider voyage sur la demande que la carte lira — le rôle,
-    pourquoi, les tâches, et ce qui a été demandé — et la borne en date, la même
-    que l'arbitre tient de son côté. `detail` ne porte plus de phrase du fil
-    (#1262) : c'est le manque en une ligne, pour le journal.
+    What is needed to decide travels on the request the card will read — the
+    role, why, the tasks, and what was asked — and the bound as a date, the same
+    one the arbiter holds on its side. `detail` no longer carries a chat sentence
+    (#1262): it is the gap in one line, for the journal.
     """
     from maestro.controltower.events import EVENEMENT_RENFORT_DEMANDE, InMemoryEventBus
     from maestro.controltower.renfort import ArbitreRenfortControlTower
 
     bus = InMemoryEventBus()
-    arbitre = ArbitreRenfortControlTower(bus)
+    arbiter = ArbitreRenfortControlTower(bus)
 
     async def scenario() -> tuple[list[Any], DecisionRenfort]:
-        vus: list[Any] = []
-        flux = bus.subscribe()
+        seen: list[Any] = []
+        stream = bus.subscribe()
 
-        async def ecouter() -> None:
-            async for event in flux:
-                vus.append(event)
+        async def listen() -> None:
+            async for event in stream:
+                seen.append(event)
 
-        ecoute = asyncio.create_task(ecouter())
+        listening = asyncio.create_task(listen())
         await asyncio.sleep(0)
-        decision = await arbitre(_demande_de_renfort(attente_s=0.05))
-        ecoute.cancel()
-        return vus, decision
+        decision = await arbiter(_reinforcement_request(wait_s=0.05))
+        listening.cancel()
+        return seen, decision
 
-    vus, decision = asyncio.run(scenario())
+    seen, decision = asyncio.run(scenario())
 
-    demandes = [e for e in vus if e.type == EVENEMENT_RENFORT_DEMANDE]
-    assert len(demandes) == 1
-    publiee = demandes[0]
-    assert publiee.run_id == "run-1"
-    assert publiee.projet_id == PROJET
-    assert publiee.titre == "Designer"
-    assert publiee.recrutement is not None
-    assert publiee.recrutement["run_id"] == "run-1"
-    assert publiee.recrutement["gabarit"] == "interface"
-    assert publiee.recrutement["taches"] == ["Dessiner le logo stylisé"]
-    assert publiee.recrutement["objectif"] == OBJECTIF
-    assert publiee.detail == _demande_de_renfort().manque.phrase()
-    assert publiee.echeance
-    # Personne n'a répondu : le run reprend, et ce n'est pas un refus.
+    requests = [e for e in seen if e.type == EVENEMENT_RENFORT_DEMANDE]
+    assert len(requests) == 1
+    published = requests[0]
+    assert published.run_id == "run-1"
+    assert published.projet_id == PROJECT
+    assert published.titre == "Designer"
+    assert published.recrutement is not None
+    assert published.recrutement["run_id"] == "run-1"
+    assert published.recrutement["gabarit"] == "interface"
+    assert published.recrutement["taches"] == ["Dessiner le logo stylisé"]
+    assert published.recrutement["objectif"] == GOAL
+    assert published.detail == _reinforcement_request().manque.sentence()
+    assert published.echeance
+    # Nobody answered: the run resumes, and it is not a refusal.
     assert decision.sans_reponse and not decision.approuve
 
 
-def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Path) -> None:
-    """Le message porte la demande — la carte de #1146 la voit — et la parole du fil.
+def test_relay_posts_the_request_in_the_chat_then_says_the_deadline(tmp_path: Path) -> None:
+    """The message carries the request — the card of #1146 sees it — and the chat's voice.
 
-    Personne ne répond : à l'échéance, le fil le **dit**, et la demande ne s'y
-    repose pas — un bouton « Créer l'équipe » promettrait de faire reprendre un
-    run déjà parti.
+    Nobody answers: at the deadline, the chat **says so**, and the request is not
+    posted there again — a « Créer l'équipe » button would promise to resume a run
+    that has already left.
 
-    Depuis #1262, les deux messages sont **rédigés par le répondeur du fil** sur
-    les faits que le relais lui passe : ce que le fil dit est ce qu'il a rédigé, à
-    la lettre, et c'est lui qui a reçu le rôle, la raison, les tâches, l'échéance.
+    Since #1262, both messages are **drafted by the chat's responder** from the
+    facts the relay passes it: what the chat says is what it drafted, to the
+    letter, and it is the one that received the role, the reason, the tasks, the
+    deadline.
     """
     from maestro.controltower.chat import FAIT_DE_LA_DEMANDE, recrutement_en_attente
     from maestro.controltower.events import InMemoryEventBus
@@ -1099,52 +1113,52 @@ def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Pat
     from maestro.controltower.renfort import RelaisRenfort, evenement_demande
 
     bus = InMemoryEventBus()
-    repondeur = _RepondeurQuiRedige()
-    fil = _fil_dorchestration(tmp_path, bus, repondeur)
-    relais = RelaisRenfort(bus, fil, AGENT_ORCHESTRATION)
+    responder = _DraftingResponder()
+    chat = _orchestration_chat(tmp_path, bus, responder)
+    relay = RelaisRenfort(bus, chat, AGENT_ORCHESTRATION)
 
-    asyncio.run(relais.relayer(evenement_demande(_demande_de_renfort(attente_s=0.05))))
+    asyncio.run(relay.relayer(evenement_demande(_reinforcement_request(wait_s=0.05))))
 
-    messages = fil.fil(NOM_ORCHESTRATION)
-    pose = messages[0]
-    assert pose.recrutement is not None
-    assert pose.recrutement.run_id == "run-1"
-    assert pose.recrutement.projet_id == PROJET
-    assert pose.recrutement.role == "Designer"
-    assert pose.recrutement.gabarit == "interface"
-    assert pose.recrutement.taches == ("Dessiner le logo stylisé",)
-    assert pose.contenu == "Message rédigé n°1."
-    proposee, echue = repondeur.faits
-    assert OBJECTIF in proposee
-    assert "Designer" in proposee
-    assert "Dessiner le logo stylisé" in proposee
+    messages = chat.fil(NOM_ORCHESTRATION)
+    posted = messages[0]
+    assert posted.recrutement is not None
+    assert posted.recrutement.run_id == "run-1"
+    assert posted.recrutement.projet_id == PROJECT
+    assert posted.recrutement.role == "Designer"
+    assert posted.recrutement.gabarit == "interface"
+    assert posted.recrutement.taches == ("Dessiner le logo stylisé",)
+    assert posted.contenu == "Message rédigé n°1."
+    proposed, expired = responder.facts
+    assert GOAL in proposed
+    assert "Designer" in proposed
+    assert "Dessiner le logo stylisé" in proposed
     assert len(messages) == 2
     assert messages[1].contenu == "Message rédigé n°2."
-    assert "Designer" in echue
-    assert "avant l'échéance" in echue
+    assert "Designer" in expired
+    assert "avant l'échéance" in expired
     assert messages[1].recrutement is None
     assert recrutement_en_attente(messages) is None
-    # La demande attend sous le premier message, avec ses gestes : le répondeur le sait,
-    # et ne les redit pas (#1339). Sous le second, plus rien n'attend.
-    assert FAIT_DE_LA_DEMANDE in proposee
-    assert FAIT_DE_LA_DEMANDE not in echue
+    # The request waits under the first message, with its actions: the responder knows
+    # it, and does not repeat them (#1339). Under the second, nothing waits any more.
+    assert FAIT_DE_LA_DEMANDE in proposed
+    assert FAIT_DE_LA_DEMANDE not in expired
 
 
-def test_le_relais_pose_la_demande_dans_la_conversation_qui_a_lance_le_run(
+def test_relay_posts_the_request_in_the_conversation_that_started_the_run(
     tmp_path: Path,
 ) -> None:
-    """« Dans le fil qui a lancé le run » — et pas dans la conversation la plus
-    récente. La personne qui en a ouvert une autre entre-temps doit trouver la
-    question là où elle a demandé le travail (#268, `conversation_du_run`)."""
+    """« In the chat that started the run » — and not in the most recent
+    conversation. The person who opened another one in the meantime must find the
+    question where they asked for the work (#268, `conversation_du_run`)."""
     from maestro.controltower.chat import ChatStore, MessageChat
     from maestro.controltower.events import InMemoryEventBus
     from maestro.controltower.orchestration import AGENT_ORCHESTRATION, NOM_ORCHESTRATION
     from maestro.controltower.renfort import RelaisRenfort, evenement_demande
 
     bus = InMemoryEventBus()
-    fil = _fil_dorchestration(tmp_path, bus)
-    depot = ChatStore(tmp_path / "chat")
-    depot.ajouter(
+    chat = _orchestration_chat(tmp_path, bus)
+    store = ChatStore(tmp_path / "chat")
+    store.ajouter(
         MessageChat(
             agent=NOM_ORCHESTRATION,
             conversation="origine",
@@ -1153,7 +1167,7 @@ def test_le_relais_pose_la_demande_dans_la_conversation_qui_a_lance_le_run(
             run_id="run-1",
         )
     )
-    depot.ajouter(
+    store.ajouter(
         MessageChat(
             agent=NOM_ORCHESTRATION,
             conversation="plus-recente",
@@ -1161,54 +1175,56 @@ def test_le_relais_pose_la_demande_dans_la_conversation_qui_a_lance_le_run(
             contenu="Autre chose.",
         )
     )
-    relais = RelaisRenfort(bus, fil, AGENT_ORCHESTRATION)
+    relay = RelaisRenfort(bus, chat, AGENT_ORCHESTRATION)
 
-    asyncio.run(relais.relayer(evenement_demande(_demande_de_renfort(attente_s=0.02))))
+    asyncio.run(relay.relayer(evenement_demande(_reinforcement_request(wait_s=0.02))))
 
-    origine = fil.fil(NOM_ORCHESTRATION, "origine")
-    assert [m.recrutement is not None for m in origine] == [False, True, False]
-    assert len(fil.fil(NOM_ORCHESTRATION, "plus-recente")) == 1
+    origin = chat.fil(NOM_ORCHESTRATION, "origine")
+    assert [m.recrutement is not None for m in origin] == [False, True, False]
+    assert len(chat.fil(NOM_ORCHESTRATION, "plus-recente")) == 1
 
 
-def test_une_decision_avant_l_echeance_ne_fait_rien_redire_au_fil(tmp_path: Path) -> None:
-    """Le geste a déjà écrit sa trace (`POST …/recrutement`) : le relais se tait."""
+def test_a_decision_before_the_deadline_makes_the_chat_say_nothing_more(
+    tmp_path: Path,
+) -> None:
+    """The action has already written its trace (`POST …/recrutement`): the relay stays silent."""
     from maestro.controltower.events import EVENEMENT_RENFORT_DECISION, Event, InMemoryEventBus
     from maestro.controltower.orchestration import AGENT_ORCHESTRATION, NOM_ORCHESTRATION
     from maestro.controltower.renfort import RelaisRenfort, evenement_demande
     from maestro.controltower.state import RENFORT_DECLINE
 
     bus = InMemoryEventBus()
-    fil = _fil_dorchestration(tmp_path, bus)
-    relais = RelaisRenfort(bus, fil, AGENT_ORCHESTRATION)
+    chat = _orchestration_chat(tmp_path, bus)
+    relay = RelaisRenfort(bus, chat, AGENT_ORCHESTRATION)
 
     async def scenario() -> None:
-        relai = asyncio.create_task(
-            relais.relayer(evenement_demande(_demande_de_renfort(attente_s=5.0)))
+        relaying = asyncio.create_task(
+            relay.relayer(evenement_demande(_reinforcement_request(wait_s=5.0)))
         )
         await asyncio.sleep(0.05)
         await bus.publish(
             Event(type=EVENEMENT_RENFORT_DECISION, run_id="run-1", statut=RENFORT_DECLINE)
         )
-        await asyncio.wait_for(relai, timeout=2.0)
+        await asyncio.wait_for(relaying, timeout=2.0)
 
     asyncio.run(scenario())
 
-    assert len(fil.fil(NOM_ORCHESTRATION)) == 1
+    assert len(chat.fil(NOM_ORCHESTRATION)) == 1
 
 
-def test_la_decision_publiee_sur_le_bus_fait_repartir_le_run(tmp_path: Path) -> None:
-    """Ce qui revient par le bus est la décision, et la clé est le `run_id` — un run
-    n'a qu'une demande en vol."""
+def test_decision_published_on_the_bus_restarts_the_run(tmp_path: Path) -> None:
+    """What comes back over the bus is the decision, and the key is the `run_id` — a
+    run has only one request in flight."""
     from maestro.controltower.events import EVENEMENT_RENFORT_DECISION, Event, InMemoryEventBus
     from maestro.controltower.renfort import ArbitreRenfortControlTower
     from maestro.controltower.state import RENFORT_ACCORDE
 
     bus = InMemoryEventBus()
-    arbitre = ArbitreRenfortControlTower(bus)
+    arbiter = ArbitreRenfortControlTower(bus)
 
     async def scenario() -> DecisionRenfort:
-        attente = asyncio.create_task(arbitre(_demande_de_renfort()))
-        # Laisse la demande partir, puis tranche — comme un geste humain.
+        waiting = asyncio.create_task(arbiter(_reinforcement_request()))
+        # Let the request leave, then decide — like a human action.
         await asyncio.sleep(0.05)
         await bus.publish(
             Event(
@@ -1218,7 +1234,7 @@ def test_la_decision_publiee_sur_le_bus_fait_repartir_le_run(tmp_path: Path) -> 
                 detail="Équipe créée : Designer.",
             )
         )
-        return await attente
+        return await waiting
 
     decision = asyncio.run(scenario())
 
@@ -1226,17 +1242,17 @@ def test_la_decision_publiee_sur_le_bus_fait_repartir_le_run(tmp_path: Path) -> 
     assert decision.detail == "Équipe créée : Designer."
 
 
-def test_une_decision_qui_vise_un_autre_run_n_est_pas_lue(tmp_path: Path) -> None:
-    """Le filtre est le run : deux runs suspendus ne se volent pas leur décision."""
+def test_a_decision_for_another_run_is_not_read(tmp_path: Path) -> None:
+    """The filter is the run: two suspended runs do not steal each other's decision."""
     from maestro.controltower.events import EVENEMENT_RENFORT_DECISION, Event, InMemoryEventBus
     from maestro.controltower.renfort import ArbitreRenfortControlTower
     from maestro.controltower.state import RENFORT_ACCORDE
 
     bus = InMemoryEventBus()
-    arbitre = ArbitreRenfortControlTower(bus)
+    arbiter = ArbitreRenfortControlTower(bus)
 
     async def scenario() -> DecisionRenfort:
-        attente = asyncio.create_task(arbitre(_demande_de_renfort("run-1", attente_s=0.2)))
+        waiting = asyncio.create_task(arbiter(_reinforcement_request("run-1", wait_s=0.2)))
         await asyncio.sleep(0.05)
         await bus.publish(
             Event(
@@ -1246,77 +1262,78 @@ def test_une_decision_qui_vise_un_autre_run_n_est_pas_lue(tmp_path: Path) -> Non
                 detail="pas pour vous",
             )
         )
-        return await attente
+        return await waiting
 
     decision = asyncio.run(scenario())
 
     assert decision.sans_reponse and not decision.approuve
 
 
-def test_la_demande_voyage_intacte_sur_un_bus_qui_serialise() -> None:
-    """Le bus réel est Redis : la demande y passe en JSON, et doit en revenir telle
-    quelle — sans quoi la carte du fil lirait une demande vide."""
+def test_request_travels_intact_on_a_serialising_bus() -> None:
+    """The real bus is Redis: the request goes through it as JSON, and must come back
+    as is — otherwise the chat card would read an empty request."""
     from maestro.controltower.chat import DemandeRecrutement
     from maestro.controltower.events import Event
     from maestro.controltower.renfort import evenement_demande
 
-    publiee = evenement_demande(_demande_de_renfort())
-    relue = Event.from_json(publiee.to_json())
+    published = evenement_demande(_reinforcement_request())
+    reread = Event.from_json(published.to_json())
 
-    assert relue.recrutement == publiee.recrutement
-    assert DemandeRecrutement.from_dict(relue.recrutement or {}).pendant_un_run
-    assert relue.echeance == publiee.echeance
+    assert reread.recrutement == published.recrutement
+    assert DemandeRecrutement.from_dict(reread.recrutement or {}).pendant_un_run
+    assert reread.echeance == published.echeance
 
 
-# --- ④ L'API : le geste du fil, et le rôle proposé ---------------------------
+# --- ④ The API: the chat's action, and the proposed role ---------------------
 #
-# Les deux routes que ce lot touche, sur l'app réelle. Rien de nouveau côté
-# contrat : `POST …/recrutement` est celui de #1146 — ce qui s'y ajoute est la
-# **publication de la décision** quand un run attend ; `POST …/equipe/proposition`
-# est celui de #1039 — ce qui s'y ajoute est `renfort`.
+# The two routes this lot touches, on the real app. Nothing new on the contract
+# side: `POST …/recrutement` is the one of #1146 — what is added there is the
+# **publication of the decision** when a run is waiting; `POST …/equipe/proposition`
+# is the one of #1039 — what is added there is `renfort`.
 
 
 @pytest.fixture()
-def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Le dossier où naissent les projets, sous un dossier utilisateur factice.
+def workshop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The folder where projects are born, under a fake user folder.
 
-    Même raison qu'en #221 : sous Windows le `tmp_path` de pytest vit dans
-    `AppData/Local/Temp`, que `valider_racine` refuse à raison.
+    Same reason as in #221: under Windows pytest's `tmp_path` lives in
+    `AppData/Local/Temp`, which `valider_racine` rightly refuses.
     """
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    atelier = tmp_path / "atelier"
-    atelier.mkdir()
-    return atelier
+    home_dir = tmp_path / "maison"
+    home_dir.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home_dir))
+    workshop = tmp_path / "atelier"
+    workshop.mkdir()
+    return workshop
 
 
-class _GenerateurHorsLigne:
-    """Un générateur de playbooks qui ne répond jamais — zéro appel modèle.
+class _OfflineGenerator:
+    """A playbook generator that never answers — zero model calls.
 
-    La route rattrape toute panne et fait retomber le rôle sur le playbook de son
-    gabarit : c'est donc aussi le chemin nominal d'un poste sans quota, et c'est
-    ce qui garde ces tests hors du fournisseur du poste (#782).
+    The route catches any failure and has the role fall back on its role
+    template's playbook: it is therefore also the nominal path of a machine
+    without quota, and it is what keeps these tests away from the machine's
+    provider (#782).
     """
 
     async def proposer(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("hors ligne (test)")
 
 
-class _CompositeurHorsLigne:
-    """Un compositeur d'équipe qui ne répond jamais (#1159) — zéro appel modèle.
+class _OfflineComposer:
+    """A team composer that never answers (#1159) — zero model calls.
 
-    La proposition ordinaire retombe alors sur les règles des gabarits, dites comme
-    telles : c'est l'équipe que ces tests confrontent au renfort, et le fournisseur
-    du poste reste hors de portée (#782).
+    The ordinary proposal then falls back on the role templates' rules, stated as
+    such: it is the team these tests confront with the reinforcement, and the
+    machine's provider stays out of reach (#782).
     """
 
     async def ecrire(self, prompt: str) -> str:
         raise RuntimeError("hors ligne (test)")
 
 
-def _client_de_projet(tmp_path: Path, atelier: Path) -> Any:
-    """L'app réelle, projets bornés à l'atelier, générateur hors ligne."""
+def _project_client(tmp_path: Path, workshop: Path) -> Any:
+    """The real app, projects bounded to the workshop, offline generator."""
     from fastapi.testclient import TestClient
 
     from maestro.controltower.app import create_app
@@ -1328,44 +1345,44 @@ def _client_de_projet(tmp_path: Path, atelier: Path) -> Any:
         create_app(
             bus=InMemoryEventBus(),
             projets=ServiceProjets(
-                ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)
+                ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)
             ),
             agents_store=AgentStore(tmp_path / "agents"),
-            generateur_agent=_GenerateurHorsLigne(),
-            compositeur_equipe=_CompositeurHorsLigne(),
+            generateur_agent=_OfflineGenerator(),
+            compositeur_equipe=_OfflineComposer(),
         )
     )
 
 
-def _projet_python(atelier: Path) -> Path:
-    """Le projet de l'essai : du Python, et rien qui désigne un designer."""
-    racine = atelier / "p1"
-    (racine / "src").mkdir(parents=True)
-    (racine / "src" / "app.py").write_text("print('salut')\n", encoding="utf-8")
-    (racine / "pyproject.toml").write_text(
+def _python_project(workshop: Path) -> Path:
+    """The trial's project: Python, and nothing that designates a designer."""
+    root = workshop / "p1"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("print('salut')\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
         '[project]\nname = "p1"\nversion = "0.1.0"\n', encoding="utf-8"
     )
-    return racine
+    return root
 
 
-def test_la_route_propose_le_seul_role_du_renfort_et_le_justifie_par_le_plan(
-    tmp_path: Path, atelier: Path
+def test_route_proposes_the_single_reinforcement_role_and_justifies_it_by_the_plan(
+    tmp_path: Path, workshop: Path
 ) -> None:
-    """Sans `renfort`, ce projet n'appelle aucun designer — et c'est bien le cas.
+    """Without `renfort`, this project calls for no designer — and that is indeed so.
 
-    L'échantillon fautif est la proposition ordinaire : le designer y est
-    **écarté**, avec sa raison. C'est le plan qui le demande, et lui seul.
+    The faulty sample is the ordinary proposal: the designer is **excluded** there,
+    with its reason. It is the plan that requires it, and the plan alone.
     """
-    racine = _projet_python(atelier)
-    with _client_de_projet(tmp_path, atelier) as client:
-        projet = client.post(
+    root = _python_project(workshop)
+    with _project_client(tmp_path, workshop) as client:
+        project = client.post(
             "/api/projets",
-            json={"nom": "p1", "racine": str(racine), "origine": "existant"},
+            json={"nom": "p1", "racine": str(root), "origine": "existant"},
         ).json()["id"]
 
-        ordinaire = client.post(f"/api/projets/{projet}/equipe/proposition").json()
-        renfort = client.post(
-            f"/api/projets/{projet}/equipe/proposition",
+        ordinary = client.post(f"/api/projets/{project}/equipe/proposition").json()
+        reinforcement = client.post(
+            f"/api/projets/{project}/equipe/proposition",
             json={
                 "renfort": {
                     "gabarit": "interface",
@@ -1374,75 +1391,77 @@ def test_la_route_propose_le_seul_role_du_renfort_et_le_justifie_par_le_plan(
             },
         )
 
-    assert "designer" not in {r["gabarit"] for r in ordinaire["roles"]}
-    assert "designer" in {e["nom"] for e in ordinaire["ecartes"]} or "interface" in {
-        e["nom"] for e in ordinaire["ecartes"]
+    assert "designer" not in {r["gabarit"] for r in ordinary["roles"]}
+    assert "designer" in {e["nom"] for e in ordinary["ecartes"]} or "interface" in {
+        e["nom"] for e in ordinary["ecartes"]
     }
-    assert renfort.status_code == 200, renfort.text
-    corps = renfort.json()
-    assert [r["gabarit"] for r in corps["roles"]] == ["designer"]
-    assert corps["roles"][0]["raison"] == "le plan de ce travail demande ui, ux"
-    assert corps["cree"] is False
-    assert [e["nom"] for e in corps["ecartes"]] == ["orchestrateur"]
+    assert reinforcement.status_code == 200, reinforcement.text
+    body = reinforcement.json()
+    assert [r["gabarit"] for r in body["roles"]] == ["designer"]
+    assert body["roles"][0]["raison"] == "le plan de ce travail demande ui, ux"
+    assert body["cree"] is False
+    assert [e["nom"] for e in body["ecartes"]] == ["orchestrateur"]
 
 
-def test_un_gabarit_de_renfort_inconnu_est_refuse(tmp_path: Path, atelier: Path) -> None:
-    """422 motivé, jamais un rôle inventé : ce qui naîtrait n'aurait ni playbook
-    ni compétences, et se lirait comme un rôle du catalogue."""
-    racine = _projet_python(atelier)
-    with _client_de_projet(tmp_path, atelier) as client:
-        projet = client.post(
+def test_an_unknown_reinforcement_role_template_is_refused(
+    tmp_path: Path, workshop: Path
+) -> None:
+    """A reasoned 422, never an invented role: what would be born would have neither
+    playbook nor competencies, and would read as a catalogue role."""
+    root = _python_project(workshop)
+    with _project_client(tmp_path, workshop) as client:
+        project = client.post(
             "/api/projets",
-            json={"nom": "p1", "racine": str(racine), "origine": "existant"},
+            json={"nom": "p1", "racine": str(root), "origine": "existant"},
         ).json()["id"]
 
-        reponse = client.post(
-            f"/api/projets/{projet}/equipe/proposition",
+        response = client.post(
+            f"/api/projets/{project}/equipe/proposition",
             json={"renfort": {"gabarit": "comptable", "raison": "au hasard"}},
         )
 
-    assert reponse.status_code == 422, reponse.text
-    assert "comptable" in reponse.text
+    assert response.status_code == 422, response.text
+    assert "comptable" in response.text
 
 
-class _BusEspion:
-    """Le bus mémoire de l'app, qui **note** ce qui y est publié.
+class _SpyBus:
+    """The app's in-memory bus, which **notes** what is published on it.
 
-    Sous-classe et non abonné : un abonnement réclamerait une boucle asyncio en
-    parallèle du `TestClient`, qui est synchrone. Ce qu'on vérifie est qu'un
-    événement a été publié — pas qu'il traverse un transport, ce dont le bus a ses
-    propres tests.
+    A wrapper and not a subscriber: a subscription would require an asyncio loop
+    alongside the `TestClient`, which is synchronous. What is checked is that an
+    event was published — not that it crosses a transport, for which the bus has
+    its own tests.
     """
 
     def __init__(self) -> None:
         from maestro.controltower.events import InMemoryEventBus
 
-        self._vrai = InMemoryEventBus()
-        self.publies: list[Any] = []
+        self._real = InMemoryEventBus()
+        self.published: list[Any] = []
 
     async def publish(self, event: Any) -> None:
-        self.publies.append(event)
-        await self._vrai.publish(event)
+        self.published.append(event)
+        await self._real.publish(event)
 
     def subscribe(self) -> Any:
-        return self._vrai.subscribe()
+        return self._real.subscribe()
 
     async def close(self) -> None:
-        await self._vrai.close()
+        await self._real.close()
 
     def decisions(self) -> list[Any]:
-        """Les seules `renfort.decision` publiées, dans l'ordre."""
+        """Only the published `renfort.decision` events, in order."""
         from maestro.controltower.events import EVENEMENT_RENFORT_DECISION
 
-        return [e for e in self.publies if e.type == EVENEMENT_RENFORT_DECISION]
+        return [e for e in self.published if e.type == EVENEMENT_RENFORT_DECISION]
 
 
-class _ModeleQuiRedige(ModelProvider):
-    """Le fournisseur du fil pour ces routes : il ne sert qu'à rédiger la réponse au geste.
+class _DraftingModel(ModelProvider):
+    """The chat's provider for these routes: it only serves to draft the reply to the action.
 
-    Depuis #1262, le geste de recrutement fait parler le modèle ; sans fournisseur
-    injecté, le répondeur résoudrait celui du poste (#782). Ce qui se garde ici
-    est la décision publiée au run, jamais les mots.
+    Since #1262, the recruitment action makes the model speak; without an injected
+    provider, the responder would resolve the machine's one (#782). What is kept
+    here is the decision published to the run, never the words.
     """
 
     name = "modele-qui-redige"
@@ -1454,24 +1473,24 @@ class _ModeleQuiRedige(ModelProvider):
         return "Rédigé par le modèle."
 
 
-def _poser_la_demande(depot: Any, *, run_id: str) -> None:
-    """Écrit dans le fil la demande qu'un run suspendu y aurait posée.
+def _post_request(store: Any, *, run_id: str) -> None:
+    """Writes into the chat the request a suspended run would have posted there.
 
-    Écriture directe dans le dépôt : ce qu'on éprouve ici est la **route**, pas
-    l'arbitre (il a sa propre section). Monter un run pour arranger l'état d'un
-    fil coûterait un moteur pour vérifier un `publish`.
+    Direct write into the repository: what is tested here is the **route**, not
+    the arbiter (it has its own section). Mounting a run to arrange the state of a
+    chat would cost an engine to check a `publish`.
     """
     from maestro.controltower.chat import DemandeRecrutement, MessageChat
     from maestro.controltower.orchestration import NOM_ORCHESTRATION
 
-    depot.ajouter(
+    store.ajouter(
         MessageChat(
             agent=NOM_ORCHESTRATION,
             auteur=NOM_ORCHESTRATION,
             contenu="Le plan appelle un Designer. Je le recrute ?",
             recrutement=DemandeRecrutement(
-                objectif=OBJECTIF,
-                projet_id=PROJET,
+                objectif=GOAL,
+                projet_id=PROJECT,
                 run_id=run_id,
                 role="Designer",
                 gabarit="interface",
@@ -1483,24 +1502,24 @@ def _poser_la_demande(depot: Any, *, run_id: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("approuve", "statut_attendu", "detail_attendu"),
+    ("approved", "expected_status", "expected_detail"),
     [
         pytest.param(True, "recrute", "recruté : Designer — 1 agent", id="accepter"),
         pytest.param(False, "decline", "", id="decliner"),
     ],
 )
-def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
-    tmp_path: Path, approuve: bool, statut_attendu: str, detail_attendu: str
+def test_chat_action_publishes_the_decision_to_the_waiting_run(
+    tmp_path: Path, approved: bool, expected_status: str, expected_detail: str
 ) -> None:
-    """Le second critère, côté API : le run apprend ce qui a été décidé de lui.
+    """The second criterion, API side: the run learns what was decided about it.
 
-    L'ordre compte et c'est celui de tout le module : le fil d'abord (les deux
-    messages du geste), la diffusion ensuite — un run qui repartirait avant que sa
-    trace soit écrite laisserait le fil en retard sur ce qui se passe.
+    The order matters and it is that of the whole module: the chat first (the two
+    messages of the action), the broadcast next — a run that would restart before
+    its trace is written would leave the chat behind what is happening.
 
-    Le `detail` est le **fait** — ce qui a été recruté —, et non les mots de la
-    réponse (#1262) : il finit au journal du run, où l'on relit ce qui a été
-    recruté, pas ce que l'orchestrateur en a dit.
+    The `detail` is the **fact** — what was recruited —, and not the words of the
+    reply (#1262): it ends up in the run's journal, where one rereads what was
+    recruited, not what the orchestrator said about it.
     """
     from fastapi.testclient import TestClient
 
@@ -1508,29 +1527,29 @@ def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
     from maestro.controltower.chat import ChatStore
     from maestro.controltower.orchestration import NOM_ORCHESTRATION, RepondeurOrchestration
 
-    async def recruter(projet_id: str, roles: Any, proposition_id: str = "") -> dict[str, Any]:
+    async def recruit(project_id: str, roles: Any, proposal_id: str = "") -> dict[str, Any]:
         return {
-            "projet_id": projet_id,
-            "agents": [{"nom": r.nom, "role": r.role, "instances": r.instances} for r in roles],
+            "projet_id": project_id,
+            "agents": [{"nom": r.name, "role": r.role, "instances": r.instances} for r in roles],
             "instances_total": sum(r.instances for r in roles),
         }
 
-    bus = _BusEspion()
-    depot = ChatStore(tmp_path / "chat")
-    _poser_la_demande(depot, run_id="run-42")
+    bus = _SpyBus()
+    store = ChatStore(tmp_path / "chat")
+    _post_request(store, run_id="run-42")
 
     app = create_app(
         bus=bus,
-        chat_store=depot,
+        chat_store=store,
         orchestration_repondeur=RepondeurOrchestration(
-            recruteur=recruter, provider=_ModeleQuiRedige()
+            recruteur=recruit, provider=_DraftingModel()
         ),
     )
     with TestClient(app) as client:
-        reponse = client.post(
+        response = client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/recrutement",
             json={
-                "approuve": approuve,
+                "approuve": approved,
                 "roles": (
                     [
                         {
@@ -1541,27 +1560,27 @@ def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
                             "instances": 1,
                         }
                     ]
-                    if approuve
+                    if approved
                     else []
                 ),
             },
         )
 
-    assert reponse.status_code == 201, reponse.text
+    assert response.status_code == 201, response.text
     decisions = bus.decisions()
     assert len(decisions) == 1
     assert decisions[0].run_id == "run-42"
-    assert decisions[0].statut == statut_attendu
-    assert decisions[0].projet_id == PROJET
-    assert decisions[0].detail == detail_attendu
-    assert reponse.json()["messages"][1]["contenu"] == "Rédigé par le modèle."
+    assert decisions[0].statut == expected_status
+    assert decisions[0].projet_id == PROJECT
+    assert decisions[0].detail == expected_detail
+    assert response.json()["messages"][1]["contenu"] == "Rédigé par le modèle."
 
 
-def test_un_recrutement_sans_run_ne_publie_aucune_decision(tmp_path: Path) -> None:
-    """Le témoin : la demande de #1146 ne suspend aucun run, donc n'en prévient aucun.
+def test_a_recruitment_without_a_run_publishes_no_decision(tmp_path: Path) -> None:
+    """The control: the request of #1146 suspends no run, so it notifies none.
 
-    Publier là ferait apparaître, sur le canal qu'un run écoute, une décision qui
-    ne concerne personne — et sur un bus durable, elle serait rejouée.
+    Publishing there would make a decision concerning nobody appear on the channel
+    a run listens to — and on a durable bus, it would be replayed.
     """
     from fastapi.testclient import TestClient
 
@@ -1569,26 +1588,26 @@ def test_un_recrutement_sans_run_ne_publie_aucune_decision(tmp_path: Path) -> No
     from maestro.controltower.chat import ChatStore, DemandeRecrutement, MessageChat
     from maestro.controltower.orchestration import NOM_ORCHESTRATION, RepondeurOrchestration
 
-    bus = _BusEspion()
-    depot = ChatStore(tmp_path / "chat")
-    depot.ajouter(
+    bus = _SpyBus()
+    store = ChatStore(tmp_path / "chat")
+    store.ajouter(
         MessageChat(
             agent=NOM_ORCHESTRATION,
             auteur=NOM_ORCHESTRATION,
             contenu="Ce projet n'a aucun agent. Je vous propose son équipe.",
-            recrutement=DemandeRecrutement(objectif=OBJECTIF, projet_id=PROJET),
+            recrutement=DemandeRecrutement(objectif=GOAL, projet_id=PROJECT),
         )
     )
 
     app = create_app(
         bus=bus,
-        chat_store=depot,
-        orchestration_repondeur=RepondeurOrchestration(provider=_ModeleQuiRedige()),
+        chat_store=store,
+        orchestration_repondeur=RepondeurOrchestration(provider=_DraftingModel()),
     )
     with TestClient(app) as client:
-        reponse = client.post(
+        response = client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/recrutement", json={"approuve": False}
         )
 
-    assert reponse.status_code == 201, reponse.text
+    assert response.status_code == 201, response.text
     assert bus.decisions() == []

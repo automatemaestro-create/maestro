@@ -274,7 +274,6 @@ from maestro.controltower.reglements import (
 )
 from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.equipe import RoleValide
 from maestro.messaging import (
     MESSAGE_REQUEST,
     MESSAGE_RESPONSE,
@@ -303,6 +302,7 @@ from maestro.sources import (
     sources_as_list,
     sources_from,
 )
+from maestro.team import ValidatedRole
 
 if TYPE_CHECKING:  # le conducteur importe ce module : cycle à l'exécution seulement
     from maestro.controltower.outillage import ConducteurOutillage
@@ -843,7 +843,7 @@ def _geste_de_cadrage(
     return f"Oui, lance — avec cet objectif : {retenu} — bornes : {bornes.en_phrase()}"
 
 
-def _geste_de_recrutement(approuve: bool, roles: Sequence[RoleValide]) -> str:
+def _geste_de_recrutement(approuve: bool, roles: Sequence[ValidatedRole]) -> str:
     """Ce que le geste écrit dans le fil — le message que le clic vaut (#1146).
 
     Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal,
@@ -1228,7 +1228,7 @@ class EquipeRecrutee:
     bulle comme il y rend le run ouvert (`run_id`, #268). Les mots, eux, sont
     ceux du modèle, qui reçoit la composition pour en parler s'il y a lieu.
 
-    `roles` est lu dans le **rapport de création** (`EquipeCreee.to_dict`) et non
+    `roles` est lu dans le **rapport de création** (`CreatedTeam.to_dict`) et non
     dans ce qui a été demandé : on dit ce qui existe, comme l'étape d'équipe du
     parcours de création (« la liste, jamais un ok »). Chaque rôle y est une paire
     `(libellé, instances)` — tout ce que la bulle affiche, et rien de ce que la
@@ -3038,7 +3038,7 @@ class RepondeurChat(ABC):
         *,
         demande: DemandeRecrutement,
         approuve: bool,
-        roles: Sequence[RoleValide],
+        roles: Sequence[ValidatedRole],
         proposition_id: str = "",
     ) -> ReponseChat:
         """La réponse au **geste** qui valide — ou décline — l'équipe proposée (#1146).
@@ -3721,7 +3721,7 @@ class ServiceChat:
         agent: Agent,
         *,
         approuve: bool,
-        roles: Sequence[RoleValide] = (),
+        roles: Sequence[ValidatedRole] = (),
         proposition_id: str = "",
         conversation: str | None = None,
     ) -> tuple[MessageChat, MessageChat]:

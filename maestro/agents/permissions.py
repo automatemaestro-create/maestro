@@ -737,7 +737,7 @@ def _portees_validees(
 def execution_cadree_au_projet(politique: PolitiqueOutils) -> PolitiqueOutils:
     """La politique d'une équipe proposée **avant #1226**, corrigée — la même sinon.
 
-    Le fait : `maestro.equipe.proposition` posait `Bash: ask, humain` à tout rôle
+    Le fait : `maestro.team.proposal` posait `Bash: ask, humain` à tout rôle
     dont le projet ne déclarait aucune commande, c'est-à-dire **toujours** sur un
     projet neuf. Un agent recruté pour écrire du code devait donc faire approuver
     le fait de le lancer — 14 demandes, 14 approbations sur le run mesuré le

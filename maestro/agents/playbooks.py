@@ -118,7 +118,7 @@ class PlaybookDefaut:
 #: Markdown livré avec le paquet pour chaque rôle (#295,
 #: `maestro.agents.playbook_du_code`). C'est la matière que l'analyse d'équipe
 #: reprend quand la rédaction d'un playbook de projet n'aboutit pas (#1039,
-#: `Gabarit.playbook_de_repli`), et la liste des playbooks que l'API accepte
+#: `RoleTemplate.fallback_playbook`), et la liste des playbooks que l'API accepte
 #: d'éditer au niveau gabarit.
 #:
 #: Construit sur les **gabarits** et non sur les profils outillés : c'est ce qui

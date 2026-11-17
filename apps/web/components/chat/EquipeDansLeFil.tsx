@@ -576,7 +576,7 @@ export function EquipeDansLeFil({
  * Trois faits, et ils viennent tous de la demande que le moteur a écrite dans le
  * fil : le rôle, la raison (le **plan**, pas le projet) et les tâches qui
  * l'attendent. Rien n'est recomposé ici — la raison affichée est *la* raison
- * calculée (`ManqueAuPlan.raison`), et une seconde formulation côté navigateur
+ * calculée (`PlanGap.reason`), et une seconde formulation côté navigateur
  * serait une phrase à tenir d'accord avec elle.
  *
  * Les tâches sont **nommées** et non comptées : « 3 tâches » ne dit pas si l'on

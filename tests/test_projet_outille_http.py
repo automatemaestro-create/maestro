@@ -64,10 +64,10 @@ from maestro.controltower.generation_agent import GenerateurDefinitionAgent
 from maestro.controltower.outillage import ComprehensionModele
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import RunReport
-from maestro.equipe.modele import ORIGINE_PLAYBOOK_GABARIT
 from maestro.outillage import CHEMIN_MANIFESTE
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
+from maestro.team.model import PLAYBOOK_ORIGIN_TEMPLATE
 
 #: Les réponses du bouclage du 2026-09-21 (#1100), telles que l'écran les donne depuis
 #: #1147 : le projet décrit avec ses mots, puis les options cliquées.
@@ -760,7 +760,7 @@ def test_la_proposition_d_un_projet_neuf_branche_les_skills_de_ses_reponses(
     recommandes = {e["chemin"] for e in reco["entrees"] if e["type"] == "skill"}
     assert branches and branches <= recommandes
     # Générateur hors ligne : chaque rôle retombe sur son gabarit, et le dit.
-    assert {r["playbook_origine"] for r in corps["roles"]} == {ORIGINE_PLAYBOOK_GABARIT}
+    assert {r["playbook_origine"] for r in corps["roles"]} == {PLAYBOOK_ORIGIN_TEMPLATE}
     assert all(r["playbook"] for r in corps["roles"])
     # Rien n'est créé : ni agent dans le projet, ni fichier dans sa racine.
     assert gabarits.pour_projet(projet).agents.noms() == ()

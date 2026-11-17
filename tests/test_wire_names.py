@@ -12,12 +12,14 @@ would prove nothing.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 from temporalio import activity, workflow
 
+from maestro.decideur import Decideur
 from maestro.durable import DURABLE_QUEUE, WORKFLOW_ID_PREFIX, MaestroRunWorkflow, workflow_id
 from maestro.durable.activities import execute_task, plan, record_blocker
 from maestro.messaging import (
@@ -54,6 +56,7 @@ from maestro.orchestrator.recovery import (
     TaskFailure,
     validate_recovery,
 )
+from maestro.outillage.modele import Constats, Langage, Recommandation
 from maestro.queue import EXECUTE_TASK_NAME, TASKS_QUEUE, create_app
 from maestro.queue.worker import execute_task as celery_execute_task
 from maestro.references import ReferenceTicket
@@ -80,6 +83,40 @@ from maestro.sources import (
     resolve_sources,
 )
 from maestro.sources.upload import Upload
+from maestro.team import (
+    ROLE_TEMPLATES,
+    AttachedSkill,
+    CreatedAgent,
+    CreatedTeam,
+    ExcludedRole,
+    ProposedPermission,
+    ProposedRole,
+    RejectedRole,
+    TeamProposal,
+)
+from maestro.team.composition import (
+    CorrectedPlaybook,
+    TeamCorrection,
+    propose_composed_team,
+    read_response,
+)
+from maestro.team.creation import (
+    BROWSER_HEADING,
+    EARLIER_SKILLS_HEADINGS,
+    SKILLS_HEADING,
+    split_skills_section,
+)
+from maestro.team.model import (
+    COMPOSITION_ORIGIN_MODEL,
+    COMPOSITION_ORIGIN_RULES,
+    ID_PREFIX,
+    PLAYBOOK_ORIGIN_GENERATED,
+    PLAYBOOK_ORIGIN_SKETCH,
+    PLAYBOOK_ORIGIN_TEMPLATE,
+    PROPOSAL_VERSION,
+    TIERS,
+)
+from maestro.team.proposal import DECLARED_ORIGIN
 from maestro.telemetry.costs import (
     STEP_ACCEPTANCE,
     STEP_ASSESSMENT,
@@ -568,3 +605,293 @@ def test_the_playbooks_keep_their_files_and_markers() -> None:
         text = path.read_text(encoding="utf-8")
         markers |= set(re.findall(r"\{\{\s*([a-z_]+)\s*\}\}", text))
     assert markers == {"roles", "equipe", "competences", "competences_recrutables"}
+
+
+# --- The team (#1670) ---------------------------------------------------------------------
+#
+# A team proposal, a correction and a created team are served by the API and read by the
+# screen (`apps/web/lib/types.ts`). The composition reads back the keys its prompt asks the
+# model to write. The origins and the template names are compared and stored, and the
+# headings are written into the playbooks of created agents, then found again on disk.
+
+
+def _proposed_role() -> ProposedRole:
+    # Every field holds a distinct value, so that two swapped keys fail too.
+    return ProposedRole(
+        name="dev",
+        role="Développeur",
+        role_template="developpeur",
+        competencies=("python",),
+        reason="du Python",
+        instances=2,
+        instances_reason="deux surfaces",
+        playbook="# Dev",
+        playbook_origin=PLAYBOOK_ORIGIN_GENERATED,
+        playbook_reason="écrit pour le projet",
+        intent="écrire le code",
+        tools=("Read",),
+        skills=(
+            AttachedSkill(
+                name="tester",
+                path=".claude/skills/tester/SKILL.md",
+                state="a-generer",
+                reason="il teste",
+                commands=("pytest",),
+            ),
+        ),
+        permissions=(
+            ProposedPermission(
+                tool="Bash",
+                tier="ask",
+                reason="exécuter",
+                decider=Decideur.AUTO,
+                scope="projet",
+            ),
+        ),
+        browser=True,
+    )
+
+
+def test_a_team_proposal_keeps_its_json_keys() -> None:
+    proposal = TeamProposal(
+        id="equ-0001",
+        project_id="crm",
+        made_at="2026-11-17T10:00:00Z",
+        summary="Développeur ×2",
+        roles=(_proposed_role(),),
+        excluded=(ExcludedRole(name="donnees", role="Base de données", reason="aucun SQL"),),
+        source={"analyse": "ana-1"},
+        composition_origin=COMPOSITION_ORIGIN_MODEL,
+        composition_reason="",
+    )
+    data = proposal.to_dict()
+    assert list(data) == [
+        "proposition",
+        "id",
+        "projet_id",
+        "faite_le",
+        "resume",
+        "source",
+        "composition",
+        "navigateur_de_maestro",
+        "roles",
+        "ecartes",
+        "instances_total",
+        "cree",
+        "validation",
+    ]
+    assert (data["proposition"], data["projet_id"], data["faite_le"], data["resume"]) == (
+        1,
+        "crm",
+        "2026-11-17T10:00:00Z",
+        "Développeur ×2",
+    )
+    assert data["composition"] == {"origine": "modele", "raison": ""}
+    assert set(data["navigateur_de_maestro"]) == {"libelle", "usage"}
+    assert (data["instances_total"], data["cree"], data["validation"]) == (2, False, "requise")
+    assert data["ecartes"] == [{"nom": "donnees", "role": "Base de données", "raison": "aucun SQL"}]
+    role = data["roles"][0]
+    assert list(role) == [
+        "nom",
+        "role",
+        "gabarit",
+        "competences",
+        "raison",
+        "justification",
+        "instances",
+        "raison_instances",
+        "outils",
+        "navigateur",
+        "playbook",
+        "playbook_origine",
+        "playbook_raison",
+        "intention",
+        "skills",
+        "autorisations",
+        "politique",
+    ]
+    assert (role["nom"], role["gabarit"], role["raison_instances"], role["intention"]) == (
+        "dev",
+        "developpeur",
+        "deux surfaces",
+        "écrire le code",
+    )
+    assert role["skills"] == [
+        {
+            "nom": "tester",
+            "chemin": ".claude/skills/tester/SKILL.md",
+            "etat": "a-generer",
+            "raison": "il teste",
+            "commandes": ["pytest"],
+        }
+    ]
+    assert role["autorisations"] == [
+        {
+            "outil": "Bash",
+            "cran": "ask",
+            "decideur": "auto",
+            "portee": "projet",
+            "raison": "exécuter",
+        }
+    ]
+
+
+def test_a_team_correction_keeps_its_json_keys() -> None:
+    correction = TeamCorrection(
+        reply="C'est fait.",
+        additions=(_proposed_role(),),
+        removals=("tests",),
+        restored=("infra",),
+        instances={"dev": 3},
+        browser={"dev": False},
+        playbooks={"dev": CorrectedPlaybook(playbook="# Dev v2", reason="suivre la convention")},
+    )
+    data = correction.to_dict()
+    assert list(data) == [
+        "reponse",
+        "ajouts",
+        "retraits",
+        "remis",
+        "instances",
+        "navigateur",
+        "playbooks",
+        "cree",
+    ]
+    assert (data["reponse"], data["retraits"], data["remis"], data["cree"]) == (
+        "C'est fait.",
+        ["tests"],
+        ["infra"],
+        False,
+    )
+    assert (data["instances"], data["navigateur"]) == ({"dev": 3}, {"dev": False})
+    assert data["ajouts"][0]["nom"] == "dev"
+    assert data["playbooks"] == {
+        "dev": {
+            "playbook": "# Dev v2",
+            "playbook_origine": "genere",
+            "playbook_raison": "suivre la convention",
+        }
+    }
+
+
+def test_a_created_team_and_a_rejected_role_keep_their_json_keys() -> None:
+    created = CreatedTeam(
+        project_id="crm",
+        proposal_id="equ-0001",
+        agents=(
+            CreatedAgent(
+                name="dev",
+                role="Développeur",
+                instances=2,
+                role_template="developpeur",
+                skills=("tester",),
+                browser=True,
+            ),
+        ),
+    )
+    assert created.to_dict() == {
+        "projet_id": "crm",
+        "proposition_id": "equ-0001",
+        "cree": True,
+        "agents": [
+            {
+                "nom": "dev",
+                "role": "Développeur",
+                "instances": 2,
+                "gabarit": "developpeur",
+                "skills": ["tester"],
+                "politique": None,
+                "navigateur": True,
+            }
+        ],
+        "instances_total": 2,
+    }
+    assert RejectedRole(name="dev", reason="nom déjà pris").to_dict() == {
+        "nom": "dev",
+        "raison": "nom déjà pris",
+    }
+
+
+def test_the_composition_reads_the_keys_the_model_writes() -> None:
+    text = json.dumps(
+        {
+            "roles": [
+                {
+                    "nom": "mobile",
+                    "role": "Développeur mobile",
+                    "raison": "une application Flutter",
+                    "gabarit": "",
+                    "competences": ["flutter", "dart"],
+                    "skills": [],
+                    "instances": 2,
+                    "raison_instances": "iOS et Android",
+                    "preuve": "lib/main.dart",
+                    "navigateur": True,
+                }
+            ],
+            "ecartes": [{"nom": "donnees", "raison": "aucune base"}],
+            "retraits": ["tests"],
+            "remis": ["infra"],
+            "instances": {"dev": 2},
+            "navigateur": {"dev": True},
+            "playbooks": {"dev": "# Dev"},
+            "reponse": "Voilà.",
+        },
+        ensure_ascii=False,
+    )
+    response = read_response(text)
+    assert (response.removals, response.restored, response.reply) == (
+        ("tests",),
+        ("infra",),
+        "Voilà.",
+    )
+    assert (dict(response.instances), dict(response.browser), dict(response.playbooks)) == (
+        {"dev": 2},
+        {"dev": True},
+        {"dev": "# Dev"},
+    )
+    findings = Constats(
+        langages=(Langage(nom="Dart", fichiers=3, part=1.0, exemple="lib/main.dart"),)
+    )
+    proposal = propose_composed_team(findings, Recommandation(), response, project_id="crm")
+    (role,) = proposal.roles
+    assert (role.name, role.role, role.reason, role.competencies) == (
+        "mobile",
+        "Développeur mobile",
+        "une application Flutter",
+        ("flutter", "dart"),
+    )
+    assert (role.instances, role.instances_reason, role.browser) == (2, "iOS et Android", True)
+    assert role.justification is not None and role.justification.chemin == "lib/main.dart"
+    excluded = {e.name: e.reason for e in proposal.excluded}
+    assert excluded["donnees"] == "aucune base"
+
+
+def test_team_origins_tiers_and_templates_keep_their_values() -> None:
+    assert (PLAYBOOK_ORIGIN_GENERATED, PLAYBOOK_ORIGIN_TEMPLATE, PLAYBOOK_ORIGIN_SKETCH) == (
+        "genere",
+        "gabarit",
+        "esquisse",
+    )
+    assert (COMPOSITION_ORIGIN_MODEL, COMPOSITION_ORIGIN_RULES) == ("modele", "regles")
+    assert DECLARED_ORIGIN == "declaree"
+    assert (ID_PREFIX, PROPOSAL_VERSION, TIERS) == ("equ-", 1, ("allow", "ask", "deny"))
+    assert [(t.name, t.agent_name) for t in ROLE_TEMPLATES] == [
+        ("dev", "developpeur"),
+        ("donnees", "bdd"),
+        ("infra", "devops"),
+        ("interface", "designer"),
+        ("tests", "qa"),
+    ]
+
+
+def test_the_playbook_sections_keep_their_headings() -> None:
+    # A created agent's playbook carries these headings on disk; they are how its
+    # sections are found again, replaced or removed.
+    assert SKILLS_HEADING == "## Les skills du projet qui sont les tiens"
+    assert EARLIER_SKILLS_HEADINGS == ("## Les skills du projet qui sont les vôtres",)
+    assert BROWSER_HEADING == "## Le navigateur de Maestro"
+    for heading in (SKILLS_HEADING, *EARLIER_SKILLS_HEADINGS):
+        body, section = split_skills_section(f"# Dev\n\nCorps.\n\n{heading}\n\n- tester\n")
+        assert body.rstrip() == "# Dev\n\nCorps."
+        assert section.startswith(heading)

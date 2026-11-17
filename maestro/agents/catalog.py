@@ -10,7 +10,7 @@ agent qui en descend exécute ses tâches via la couche fournisseur (`ModelProvi
 poste, tout projet, toute exécution les recevait d'office, et c'est ce que la demande
 du 2026-09-19 renverse — *« à la création ou import d'un projet, aucun agent défini
 encore »*. Ce sont désormais des **gabarits de rôle** : une matière que l'analyse
-d'équipe consulte (`maestro.equipe.gabarits`) pour proposer les rôles d'un projet, et
+d'équipe consulte (`maestro.team.role_templates`) pour proposer les rôles d'un projet, et
 que personne n'instancie. Un projet naît **sans agent** ; ses agents sont ceux que sa
 validation d'équipe a écrits (`maestro.agents.store.catalogue`).
 
@@ -107,7 +107,7 @@ brèves et sans remplissage."""
 
 #: Les cinq **gabarits de rôle** du code (docs/04 §2, docs/37 §2.1) — ce que Maestro
 #: sait proposer, jamais ce qu'un projet reçoit (#1042). L'ordre fait foi : il est
-#: celui des gabarits proposés (`maestro.equipe.gabarits.GABARITS`) et celui qui
+#: celui des gabarits proposés (`maestro.team.role_templates.ROLE_TEMPLATES`) et celui qui
 #: départage les ex æquo de routage d'un catalogue qui les reprendrait
 #: (cf. `maestro.router.assign`) — les compétences étant deux à deux disjointes ici,
 #: ce départage ne joue qu'en cas de tâche multi-domaine.

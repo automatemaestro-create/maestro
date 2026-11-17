@@ -11,10 +11,10 @@ from maestro.controltower.bornes import BornesRun
 from maestro.controltower.fournisseur_defaut import DemandeFournisseur
 from maestro.decision_humaine import ETENDUE_APPEL
 from maestro.engine.brief import MODE_BRIEF_HUMAIN
-from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
-from maestro.equipe.composition import MembreActuel
 from maestro.outillage.questionnaire import Choix
 from maestro.references import ReferenceTicket
+from maestro.team import ROLE_TEMPLATES, MissingRole, RetainedSkill, ValidatedRole
+from maestro.team.composition import CurrentMember
 
 
 class ReferenceTicketRequete(BaseModel):
@@ -623,25 +623,25 @@ class RenfortRequete(BaseModel):
     gabarit: str
     raison: str = ""
 
-    def role_manquant(self) -> RoleManquant:
+    def role_manquant(self) -> MissingRole:
         """Le manque en objet du domaine — compétences dérivées du gabarit.
 
         Les compétences ne voyagent pas : elles sont celles du gabarit, que le
-        catalogue porte déjà (`Gabarit.competences`). Les laisser venir du
+        catalogue porte déjà (`RoleTemplate.competencies`). Les laisser venir du
         navigateur ferait deux sources pour ce que sait faire un rôle, et la
         proposition pourrait annoncer un métier que la fiche créée n'aurait pas.
         """
-        gabarit = next((g for g in GABARITS if g.nom == self.gabarit), None)
+        gabarit = next((g for g in ROLE_TEMPLATES if g.name == self.gabarit), None)
         if gabarit is None:
             raise ValueError(
                 f"gabarit de renfort inconnu : {self.gabarit!r} (attendus : "
-                f"{', '.join(g.nom for g in GABARITS)})."
+                f"{', '.join(g.name for g in ROLE_TEMPLATES)})."
             )
-        return RoleManquant(
-            competences=gabarit.competences,
+        return MissingRole(
+            competencies=gabarit.competencies,
             role=gabarit.role,
-            gabarit=gabarit.nom,
-            couvre=gabarit.competences,
+            role_template=gabarit.name,
+            covers=gabarit.competencies,
         )
 
 
@@ -692,15 +692,15 @@ class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
     demande: str = ""
     equipe: list[MembreEquipeRequete] = []
 
-    def membres(self) -> list[MembreActuel]:
+    def membres(self) -> list[CurrentMember]:
         """L'équipe montrée en objets du domaine."""
         return [
-            MembreActuel(
-                nom=m.nom,
+            CurrentMember(
+                name=m.nom,
                 role=m.role,
-                retenu=m.retenu,
+                retained=m.retenu,
                 instances=m.instances,
-                navigateur=m.navigateur,
+                browser=m.navigateur,
                 playbook=m.playbook,
             )
             for m in self.equipe
@@ -743,7 +743,7 @@ class SkillEquipeRequete(BaseModel):
 
     Repris de la proposition, jamais ressaisi : `chemin` et `commandes` sont ceux
     de l'entrée d'outillage qui l'a recommandé. Le playbook du rôle porte le chemin
-    (`maestro.equipe.creation.playbook_branche`) ; la commande, le skill la porte, et
+    (`maestro.team.creation.playbook_with_sections`) ; la commande, le skill la porte, et
     lui seul (#1520).
     """
 
@@ -763,14 +763,14 @@ class RoleEquipeRequete(BaseModel):
     - `playbook` est le texte qu'on a lu à l'écran. Le regénérer à la validation
       rendrait un **autre** playbook (c'est un appel modèle), donc créerait un
       agent que personne n'a validé ;
-    - `politique` est la `PolitiqueOutils` que `RolePropose.politique()` a
+    - `politique` est la `PolitiqueOutils` que `ProposedRole.policy()` a
       rendue à la proposition — la traduction « autorisations → politique » a
       donc lieu **une seule fois**, côté serveur, et ce qui est écrit est le cran
       qu'on a lu avec sa raison (#716). `None` : ce rôle ne pose aucune
       politique, ce qui n'est pas la même chose qu'une politique vide.
 
     `instances` est le seul champ que l'écran ajuste librement ; les bornes sont
-    celles de `maestro.equipe.creation` et se vérifient là-bas, avec les autres
+    celles de `maestro.team.creation` et se vérifient là-bas, avec les autres
     refus, pour qu'un refus de forme et un refus de fond se lisent au même
     endroit.
 
@@ -805,7 +805,7 @@ class EquipeValideeRequete(BaseModel):
     proposition_id: str = ""
     roles: list[RoleEquipeRequete] = []
 
-    def roles_valides(self) -> list[RoleValide]:
+    def roles_valides(self) -> list[ValidatedRole]:
         """Les rôles en objets du domaine — la politique relue, jamais reconstruite.
 
         `PolitiqueOutils.from_dict` est le même lecteur que celui du dépôt : une
@@ -813,23 +813,23 @@ class EquipeValideeRequete(BaseModel):
         « entrée deny … »), avant qu'aucun agent ne soit écrit.
         """
         return [
-            RoleValide(
-                nom=r.nom,
+            ValidatedRole(
+                name=r.nom,
                 role=r.role,
-                competences=tuple(r.competences),
+                competencies=tuple(r.competences),
                 playbook=r.playbook,
                 instances=r.instances,
-                gabarit=r.gabarit,
+                role_template=r.gabarit,
                 skills=tuple(
-                    SkillRetenu(
-                        nom=s.nom, chemin=s.chemin, commandes=tuple(s.commandes)
+                    RetainedSkill(
+                        name=s.nom, path=s.chemin, commands=tuple(s.commandes)
                     )
                     for s in r.skills
                 ),
-                politique=(
+                policy=(
                     None if r.politique is None else PolitiqueOutils.from_dict(r.politique)
                 ),
-                navigateur=r.navigateur,
+                browser=r.navigateur,
             )
             for r in self.roles
         ]

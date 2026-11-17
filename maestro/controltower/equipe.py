@@ -6,7 +6,7 @@ La pièce que `POST /api/projets/{id}/equipe/proposition` (#1039) et
 JSON et les refus, ses routes (`routes/outillage.py`) ne font que les traduire en codes HTTP.
 
 **Une couche mince, et trois choses qu'elle seule peut faire.** Toute la
-dérivation vit dans `maestro.equipe`, qui ne connaît ni HTTP, ni projet déclaré,
+dérivation vit dans `maestro.team`, qui ne connaît ni HTTP, ni projet déclaré,
 ni fournisseur de modèle. Ce module n'ajoute que ce qui demande l'un des trois :
 
 1. il **résout le projet** avant de regarder le disque, comme
@@ -23,7 +23,7 @@ ni fournisseur de modèle. Ce module n'ajoute que ce qui demande l'un des trois 
 `proposer` n'écrit rien, `creer` n'analyse rien. Ce n'est pas une coquetterie :
 la proposition appelle un modèle pour rédiger les playbooks, si bien que la
 rejouer rendrait un **autre** texte. Ce que `creer` reçoit est donc l'équipe
-**telle que l'utilisateur l'a lue et ajustée** (`maestro.equipe.creation`), et ce
+**telle que l'utilisateur l'a lue et ajustée** (`maestro.team.creation`), et ce
 qui est écrit est exactement ce qui a été montré — la seule façon de tenir la
 promesse du ticket sur le cran `auto` : *c'est vous qui le décidez* (#716).
 
@@ -51,7 +51,7 @@ et la seule chose qu'il demande à `ConfigurationAgents` est la **liste des noms
 déjà pris** dans ce projet, pour ne pas proposer un nom qui se heurterait à la
 validation. L'écriture a un seul point d'entrée, `creer`, et elle vérifie
 **toute** l'équipe avant d'écrire le premier fichier
-(`maestro.equipe.creation.refus_de`) : sans transaction de système de fichiers,
+(`maestro.team.creation.rejected_roles`) : sans transaction de système de fichiers,
 c'est le seul moyen de ne pas laisser une demi-équipe derrière un refus.
 """
 
@@ -76,38 +76,6 @@ from maestro.controltower.generation_agent import (
 )
 from maestro.controltower.pieces import projet_a_ses_fichiers
 from maestro.controltower.projets import ServiceProjets
-from maestro.equipe import (
-    ORIGINE_PLAYBOOK_GABARIT,
-    ORIGINE_PLAYBOOK_GENERE,
-    AgentCree,
-    EquipeCreee,
-    PropositionEquipe,
-    Refus,
-    RoleManquant,
-    RolePropose,
-    RoleValide,
-    avec_playbook,
-    capacite,
-    definition,
-    proposer_equipe,
-    proposer_renfort,
-    refus_de,
-    skills_constates,
-)
-from maestro.equipe.composition import (
-    CADRE_COMPOSITION,
-    CorrectionEquipe,
-    MembreActuel,
-    PlaybookCorrige,
-    corriger_equipe,
-    demande_valide,
-    lire_reponse,
-    prompt_composition,
-    prompt_correction,
-    proposer_equipe_composee,
-)
-from maestro.equipe.modele import ORIGINE_PLAYBOOK_ESQUISSE
-from maestro.equipe.proposition import faits_du_projet
 from maestro.outillage import Analyse, Bornes, analyser
 from maestro.outillage.generation import choix_declares
 from maestro.outillage.modele import Constats, Recommandation
@@ -120,6 +88,38 @@ from maestro.outillage.questionnaire import (
 from maestro.projets import Projet
 from maestro.projets.racine import valider_racine
 from maestro.providers.base import ModelProvider
+from maestro.team import (
+    PLAYBOOK_ORIGIN_GENERATED,
+    PLAYBOOK_ORIGIN_TEMPLATE,
+    CreatedAgent,
+    CreatedTeam,
+    MissingRole,
+    ProposedRole,
+    RejectedRole,
+    TeamProposal,
+    ValidatedRole,
+    capacity,
+    definition,
+    observed_skills,
+    propose_reinforcement,
+    propose_team,
+    rejected_roles,
+    with_playbook,
+)
+from maestro.team.composition import (
+    COMPOSITION_INSTRUCTIONS,
+    CorrectedPlaybook,
+    CurrentMember,
+    TeamCorrection,
+    composition_prompt,
+    correct_team,
+    correction_prompt,
+    propose_composed_team,
+    read_response,
+    valid_request,
+)
+from maestro.team.model import PLAYBOOK_ORIGIN_SKETCH
+from maestro.team.proposal import project_facts
 
 #: Ce qu'on écrit sur un rôle dont le playbook a bien été rédigé pour ce projet.
 #: Une phrase, parce que la vraie explication est l'`intention` que le rôle
@@ -147,7 +147,7 @@ RAISON_PLAYBOOK_CORRIGE = (
 class EquipeRefusee(ValueError):
     """L'équipe validée ne peut pas être créée — et **rien** ne l'a été (#1040).
 
-    Une seule exception pour toutes les causes de `refus_de` (nom pris, doublon,
+    Une seule exception pour toutes les causes de `rejected_roles` (nom pris, doublon,
     instances hors bornes, fiche ou politique que les dépôts refuseraient) :
     ce que l'appelant doit distinguer n'est pas la famille du refus mais **quel
     rôle** l'a provoqué, et `refus` le porte rôle par rôle. La traduction en 422
@@ -159,9 +159,9 @@ class EquipeRefusee(ValueError):
     #: (`detail_refus`, docs/05 §2.7).
     motif = "equipe-refusee"
 
-    def __init__(self, refus: Sequence[Refus]) -> None:
+    def __init__(self, refus: Sequence[RejectedRole]) -> None:
         self.refus = tuple(refus)
-        detail = " ; ".join(f"{r.nom or '?'} : {r.raison}" for r in self.refus)
+        detail = " ; ".join(f"{r.name or '?'} : {r.reason}" for r in self.refus)
         super().__init__(
             f"équipe refusée, aucun agent créé — {detail}" if detail else "équipe refusée"
         )
@@ -171,7 +171,7 @@ class CompositeurEquipe:
     """L'appel au modèle qui **compose** l'équipe d'un projet, ou la **corrige** (#1159).
 
     Ce qu'on lui demande et ce qu'on fait de sa réponse sont dans
-    `maestro.equipe.composition`, pur ; ce verbe-ci ne fait qu'**écrire** — le seul
+    `maestro.team.composition`, pur ; ce verbe-ci ne fait qu'**écrire** — le seul
     endroit de l'équipe qui connaisse un fournisseur pour composer, comme
     `GenerateurDefinitionAgent` l'est pour les playbooks.
 
@@ -205,7 +205,9 @@ class CompositeurEquipe:
         # Résolu à chaque appel (#1609), le modèle suivant le fournisseur (#1173) :
         # un fournisseur changé dans les Paramètres sert la composition suivante.
         fournisseur, modele = fournisseur_de_l_appel(self._provider, self._modele)
-        texte = await fournisseur.generate(prompt, model=modele, system_prompt=CADRE_COMPOSITION)
+        texte = await fournisseur.generate(
+            prompt, model=modele, system_prompt=COMPOSITION_INSTRUCTIONS
+        )
         if not (texte or "").strip():
             raise RuntimeError("le fournisseur de modèle a rendu une réponse vide")
         return texte
@@ -263,7 +265,7 @@ class ServiceEquipe:
         id_projet: str,
         choix: Sequence[Choix] = (),
         *,
-        renfort: RoleManquant | None = None,
+        renfort: MissingRole | None = None,
         raison: str = "",
     ) -> dict[str, Any]:
         """L'équipe que ce projet appelle, playbooks compris — **rien n'est créé**.
@@ -279,16 +281,16 @@ class ServiceEquipe:
            autres écrans ;
         3. l'équipe est **composée par le modèle** pour le besoin réel du projet
            (#1159, docs/41) — ses constats, ce que la personne a répondu, les
-           gabarits comme matière —, puis **vérifiée** (`maestro.equipe.composition`).
+           gabarits comme matière —, puis **vérifiée** (`maestro.team.composition`).
            Une composition qui n'aboutit pas retombe sur les **règles** des gabarits
-           (`proposer_equipe`), et la proposition le dit avec sa cause
+           (`propose_team`), et la proposition le dit avec sa cause
            (`composition`) : une équipe perdue pour un quota épuisé serait pire ;
         4. les playbooks sont **écrits** par la mécanique de #257, un appel par
            rôle, tous en même temps.
 
         `renfort` (#1227) change la **seule** étape 3 : au lieu de l'équipe que le
         projet appelle, un unique rôle — celui que le plan d'un run demande et que
-        l'équipe n'a pas (`proposer_renfort`), justifié par `raison`. Les trois
+        l'équipe n'a pas (`propose_reinforcement`), justifié par `raison`. Les trois
         autres étapes sont identiques, playbook écrit pour ce projet compris :
         c'est ce qui fait qu'un rôle recruté en cours de run n'est pas une fiche au
         rabais. Un rôle de renfort **n'est justifié par aucun constat** — un
@@ -309,13 +311,13 @@ class ServiceEquipe:
             self._matiere, projet, acquis
         )
         proposition = (
-            proposer_renfort(
+            propose_reinforcement(
                 constats,
                 recommandation,
                 renfort,
                 raison,
-                projet_id=projet.id,
-                noms_pris=self._noms_pris(projet.id),
+                project_id=projet.id,
+                taken_names=self._noms_pris(projet.id),
                 source=source,
             )
             if renfort is not None
@@ -328,7 +330,7 @@ class ServiceEquipe:
         self,
         id_projet: str,
         demande: str,
-        equipe: Sequence[MembreActuel],
+        equipe: Sequence[CurrentMember],
         choix: Sequence[Choix] = (),
     ) -> dict[str, Any]:
         """Ce que la personne demande de changer à l'équipe, **compris** — rien de créé (#1159).
@@ -343,7 +345,7 @@ class ServiceEquipe:
         Une demande qui fixe une **convention** du projet (#1521) — « le testeur écrit
         ses tests avec pytest » — gagne chaque rôle montré dont le playbook la
         contredit, pas seulement celui qu'elle nomme : le modèle a lu ces playbooks
-        (`MembreActuel.playbook`) et nomme les rôles avec ce qu'ils doivent suivre, puis
+        (`CurrentMember.playbook`) et nomme les rôles avec ce qu'ils doivent suivre, puis
         #257 les réécrit (`GenerateurDefinitionAgent.appliquer`), tous en même temps.
         Un playbook non transmis ou une réécriture qui échoue reste tel qu'il était,
         et la réponse le dit : la personne ne lit jamais « c'est réglé » d'un rôle qui
@@ -355,7 +357,7 @@ class ServiceEquipe:
         règle ne comprend une phrase, et inventer une réponse serait pire que le
         dire. L'équipe montrée reste intacte à l'écran.
         """
-        phrase = demande_valide(demande)
+        phrase = valid_request(demande)
         projet = self._projets.entite(id_projet)
         # Comme pour `proposer` : les réponses arrivent avec ce qui en a été compris (#1147),
         # ou se relisent au manifeste d'un projet encore vide (#1350).
@@ -365,16 +367,16 @@ class ServiceEquipe:
         )
         try:
             texte = await self._compositeur_actif().ecrire(
-                prompt_correction(
-                    constats, recommandation, acquis, phrase, equipe, nom_projet=projet.nom
+                correction_prompt(
+                    constats, recommandation, acquis, phrase, equipe, project_name=projet.nom
                 )
             )
-            correction = corriger_equipe(
+            correction = correct_team(
                 constats,
                 recommandation,
-                lire_reponse(texte),
-                equipe=equipe,
-                noms_pris=self._noms_pris(projet.id),
+                read_response(texte),
+                team=equipe,
+                taken_names=self._noms_pris(projet.id),
             )
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
             raise GenerationIndisponible(
@@ -382,33 +384,33 @@ class ServiceEquipe:
             ) from exc
         ajouts, corrigee = await asyncio.gather(
             self._roles_avec_playbooks(
-                correction.ajouts, _faits_pour_les_playbooks(constats, acquis, phrase)
+                correction.additions, _faits_pour_les_playbooks(constats, acquis, phrase)
             ),
             self._playbooks_corriges(correction, phrase, equipe),
         )
-        return replace(corrigee, ajouts=ajouts).to_dict()
+        return replace(corrigee, additions=ajouts).to_dict()
 
     async def _playbooks_corriges(
-        self, correction: CorrectionEquipe, demande: str, equipe: Sequence[MembreActuel]
-    ) -> CorrectionEquipe:
+        self, correction: TeamCorrection, demande: str, equipe: Sequence[CurrentMember]
+    ) -> TeamCorrection:
         """La correction, chaque playbook qu'elle nomme réécrit — ou ce qui l'en a empêché, dit.
 
         Les réécritures partent **en même temps** : ce sont des appels indépendants, un
         par rôle. Aucune ne fait tomber les autres ni la correction : un échec laisse son
         playbook tel quel, et la réponse le nomme à la suite de ce que le modèle a dit.
         """
-        if not correction.consignes:
+        if not correction.instructions:
             return correction
-        playbooks = {m.nom: m.playbook for m in equipe}
-        noms = list(correction.consignes)
+        playbooks = {m.name: m.playbook for m in equipe}
+        noms = list(correction.instructions)
         issues = await asyncio.gather(
             *(
-                self._reecrire(playbooks.get(nom, ""), demande, correction.consignes[nom])
+                self._reecrire(playbooks.get(nom, ""), demande, correction.instructions[nom])
                 for nom in noms
             ),
             return_exceptions=True,
         )
-        reecrits: dict[str, PlaybookCorrige] = {}
+        reecrits: dict[str, CorrectedPlaybook] = {}
         empeches: list[str] = []
         for nom, issue in zip(noms, issues, strict=True):
             if isinstance(issue, BaseException):
@@ -417,13 +419,13 @@ class ServiceEquipe:
                     "tel qu'il était"
                 )
                 continue
-            reecrits[nom] = PlaybookCorrige(
-                playbook=issue, raison=RAISON_PLAYBOOK_CORRIGE.format(demande=demande)
+            reecrits[nom] = CorrectedPlaybook(
+                playbook=issue, reason=RAISON_PLAYBOOK_CORRIGE.format(demande=demande)
             )
-        reponse = correction.reponse
+        reponse = correction.reply
         if empeches:
             reponse = f"{reponse} ({' ; '.join(empeches)})".strip()
-        return replace(correction, reponse=reponse, playbooks=reecrits)
+        return replace(correction, reply=reponse, playbooks=reecrits)
 
     async def _reecrire(self, playbook: str, demande: str, consigne: str) -> str:
         """Un playbook montré réécrit par #257 — lève s'il n'a pas été transmis."""
@@ -440,10 +442,10 @@ class ServiceEquipe:
         recommandation: Recommandation,
         acquis: Sequence[Choix],
         source: dict[str, Any],
-    ) -> PropositionEquipe:
+    ) -> TeamProposal:
         """L'équipe composée par le modèle — ou par les règles des gabarits, dit comme tel.
 
-        Toute panne est rattrapée, `CompositionIllisible` comme le reste : du point de
+        Toute panne est rattrapée, `UnreadableComposition` comme le reste : du point de
         vue de qui attend une équipe, un quota épuisé et une réponse inexploitable
         produisent le même fait. La proposition des règles porte alors la **cause**
         (`composition_raison`), que l'étape d'équipe affiche : la personne sait que
@@ -453,28 +455,28 @@ class ServiceEquipe:
         noms_pris = self._noms_pris(projet.id)
         try:
             texte = await self._compositeur_actif().ecrire(
-                prompt_composition(constats, recommandation, acquis, nom_projet=projet.nom)
+                composition_prompt(constats, recommandation, acquis, project_name=projet.nom)
             )
-            return proposer_equipe_composee(
+            return propose_composed_team(
                 constats,
                 recommandation,
-                lire_reponse(texte),
-                projet_id=projet.id,
-                noms_pris=noms_pris,
+                read_response(texte),
+                project_id=projet.id,
+                taken_names=noms_pris,
                 source=source,
             )
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
-            regles = proposer_equipe(
+            regles = propose_team(
                 constats,
                 recommandation,
-                projet_id=projet.id,
-                choix=acquis,
-                noms_pris=noms_pris,
+                project_id=projet.id,
+                choices=acquis,
+                taken_names=noms_pris,
                 source=source,
             )
             return replace(
                 regles,
-                composition_raison=(
+                composition_reason=(
                     "composée par les règles des cinq gabarits : la composition pour le "
                     f"besoin de votre projet n'a pas abouti ({exc})"
                 ),
@@ -483,7 +485,7 @@ class ServiceEquipe:
     def creer(
         self,
         id_projet: str,
-        roles: Sequence[RoleValide],
+        roles: Sequence[ValidatedRole],
         *,
         proposition_id: str = "",
     ) -> dict[str, Any]:
@@ -493,9 +495,9 @@ class ServiceEquipe:
 
         1. le projet est **résolu** (404/422 motivés) — un agent ne naît jamais
            dans un projet qu'on ne sait pas lire — et ses rôles ne gardent que
-           les skills que **son disque porte** (`skills_constates`, #1212) : un
+           les skills que **son disque porte** (`observed_skills`, #1212) : un
            playbook ne nomme pas un chemin que l'outillage n'a pas écrit ;
-        2. l'équipe entière est **vérifiée** (`refus_de`). Un seul refus arrête
+        2. l'équipe entière est **vérifiée** (`rejected_roles`). Un seul refus arrête
            tout, et **rien n'est écrit** : trois dépôts × N rôles n'offrent
            aucune transaction, et une demi-équipe serait pire qu'un refus ;
         3. chaque rôle est écrit dans les trois dépôts **du projet** — fiche et
@@ -509,7 +511,7 @@ class ServiceEquipe:
         fiche** — un pool illisible refuse alors l'équipe sans rien avoir écrit —,
         puis s'active pour lui après sa capacité.
 
-        Rend le rapport de `EquipeCreee` : ce qui existe désormais dans le
+        Rend le rapport de `CreatedTeam` : ce qui existe désormais dans le
         projet, à charge pour les écrans d'agents de prendre la suite (#1038).
 
         Lève `EquipeRefusee` (422 motivé), et les refus de projet de ses couches.
@@ -519,23 +521,23 @@ class ServiceEquipe:
         """
         projet = self._projets.entite(id_projet)
         porte = _porte_dans(projet.racine_chemin)
-        roles = [skills_constates(role, porte) for role in roles]
+        roles = [observed_skills(role, porte) for role in roles]
         cfg = self._gabarits.pour_projet(projet.id)
-        blocages = refus_de(roles, noms_pris=cfg.agents.noms())
+        blocages = rejected_roles(roles, taken_names=cfg.agents.noms())
         if blocages:
             raise EquipeRefusee(blocages)
-        equipes = [role for role in roles if role.navigateur]
+        equipes = [role for role in roles if role.browser]
         if equipes:
             self._poser_le_navigateur(cfg, equipes)
         crees = [self._ecrire_role(cfg, role) for role in roles]
-        return EquipeCreee(
-            projet_id=projet.id,
-            proposition_id=proposition_id,
+        return CreatedTeam(
+            project_id=projet.id,
+            proposal_id=proposition_id,
             agents=tuple(crees),
         ).to_dict()
 
     def _poser_le_navigateur(
-        self, cfg: ConfigurationAgents, roles: Sequence[RoleValide]
+        self, cfg: ConfigurationAgents, roles: Sequence[ValidatedRole]
     ) -> None:
         """Le navigateur de Maestro au pool du projet — s'il n'y est pas déjà (#1532).
 
@@ -553,8 +555,8 @@ class ServiceEquipe:
         except ValueError as exc:
             raise EquipeRefusee(
                 [
-                    Refus(
-                        role.nom,
+                    RejectedRole(
+                        role.name,
                         f"le navigateur de Maestro n'a pas pu être posé au projet : {exc}",
                     )
                     for role in roles
@@ -568,7 +570,7 @@ class ServiceEquipe:
         return integration_navigateur()
 
     @staticmethod
-    def _ecrire_role(cfg: ConfigurationAgents, role: RoleValide) -> AgentCree:
+    def _ecrire_role(cfg: ConfigurationAgents, role: ValidatedRole) -> CreatedAgent:
         """Les écritures d'un rôle, dans l'ordre qui laisse le moins de dette.
 
         La **fiche d'abord** : c'est elle qui fait exister l'agent au catalogue,
@@ -582,21 +584,21 @@ class ServiceEquipe:
         que l'agent active déjà : c'est une union, jamais un remplacement.
         """
         fiche = cfg.agents.ecrire(definition(role))
-        if role.politique is not None:
-            cfg.permissions.ecrire(fiche.nom, role.politique)
-        cfg.capacites.ecrire(capacite(role))
-        if role.navigateur:
+        if role.policy is not None:
+            cfg.permissions.ecrire(fiche.nom, role.policy)
+        cfg.capacites.ecrire(capacity(role))
+        if role.browser:
             actives = list(cfg.mcp.activations(fiche.nom))
             if ID_NAVIGATEUR not in actives:
                 cfg.mcp.ecrire_activations(fiche.nom, [*actives, ID_NAVIGATEUR])
-        return AgentCree(
-            nom=fiche.nom,
+        return CreatedAgent(
+            name=fiche.nom,
             role=fiche.role,
             instances=role.instances,
-            gabarit=role.gabarit,
-            skills=tuple(skill.nom for skill in role.skills),
-            politique=role.politique,
-            navigateur=role.navigateur,
+            role_template=role.role_template,
+            skills=tuple(skill.name for skill in role.skills),
+            policy=role.policy,
+            browser=role.browser,
         )
 
     def _matiere(
@@ -676,8 +678,8 @@ class ServiceEquipe:
         return tuple(definis) + tuple(sorted(NOMS_RESERVES))
 
     async def _avec_playbooks(
-        self, proposition: PropositionEquipe, faits: tuple[str, str]
-    ) -> PropositionEquipe:
+        self, proposition: TeamProposal, faits: tuple[str, str]
+    ) -> TeamProposal:
         """La proposition, chaque playbook écrit pour ce projet quand c'est possible.
 
         Les rôles sont traités **en même temps** : ce sont trois à cinq appels
@@ -692,21 +694,21 @@ class ServiceEquipe:
         )
 
     async def _roles_avec_playbooks(
-        self, roles: Sequence[RolePropose], faits: tuple[str, str]
-    ) -> tuple[RolePropose, ...]:
+        self, roles: Sequence[ProposedRole], faits: tuple[str, str]
+    ) -> tuple[ProposedRole, ...]:
         """Chaque rôle, son playbook écrit pour ce projet — en même temps, jamais à la suite."""
         if not self._playbooks or not roles:
             return tuple(roles)
         return tuple(await asyncio.gather(*(self._playbook(role, faits) for role in roles)))
 
-    async def _playbook(self, role: RolePropose, faits: tuple[str, str]) -> RolePropose:
+    async def _playbook(self, role: ProposedRole, faits: tuple[str, str]) -> ProposedRole:
         """Le rôle, son playbook écrit par #257 — ou celui de son gabarit, dit comme tel.
 
         `faits` est le couple de `_faits_pour_les_playbooks` : ce que le projet dit de
         lui-même, que le playbook ne contredit pas (#1521), et la raison qui le dit.
 
         L'intention est **bornée ici**, où la borne vit (`INTENTION_MAX`, #257) :
-        la composer est le travail de `maestro.equipe`, la connaître est celui de
+        la composer est le travail de `maestro.team`, la connaître est celui de
         cette couche. Une intention trop longue serait refusée par le générateur,
         et retomber sur le gabarit pour une phrase de trop serait un échec qu'on
         peut éviter en la coupant.
@@ -719,32 +721,32 @@ class ServiceEquipe:
         texte, raison = faits
         try:
             propose = await self._generateur_actif().proposer(
-                role.intention[:INTENTION_MAX], faits=texte
+                role.intent[:INTENTION_MAX], faits=texte
             )
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
             # Le repli garde **son** origine (#1159) : un rôle composé hors des
             # gabarits porte une esquisse, et elle ne devient pas un « playbook du
             # gabarit » parce que la rédaction a échoué.
-            esquisse = role.playbook_origine == ORIGINE_PLAYBOOK_ESQUISSE
-            return avec_playbook(
+            esquisse = role.playbook_origin == PLAYBOOK_ORIGIN_SKETCH
+            return with_playbook(
                 role,
                 role.playbook,
-                origine=ORIGINE_PLAYBOOK_ESQUISSE if esquisse else ORIGINE_PLAYBOOK_GABARIT,
-                raison=(
+                origin=PLAYBOOK_ORIGIN_SKETCH if esquisse else PLAYBOOK_ORIGIN_TEMPLATE,
+                reason=(
                     (
                         "esquisse écrite à partir du rôle et de sa raison"
                         if esquisse
-                        else f"playbook du gabarit « {role.gabarit} »"
+                        else f"playbook du gabarit « {role.role_template} »"
                     )
                     + f" : sa rédaction pour ce projet n'a pas abouti ({exc}). Il reste "
                     "modifiable, et une nouvelle proposition la retentera"
                 ),
             )
-        return avec_playbook(
+        return with_playbook(
             role,
             propose.playbook,
-            origine=ORIGINE_PLAYBOOK_GENERE,
-            raison=raison,
+            origin=PLAYBOOK_ORIGIN_GENERATED,
+            reason=raison,
         )
 
     def _generateur_actif(self) -> GenerateurDefinitionAgent:
@@ -765,12 +767,12 @@ def _faits_pour_les_playbooks(
 ) -> tuple[str, str]:
     """Ce que le rédacteur de playbooks reçoit du projet, et la raison qui le dit (#1521).
 
-    Le texte vient de `faits_du_projet` ; la raison nomme ce qui l'a nourri — vos
+    Le texte vient de `project_facts` ; la raison nomme ce qui l'a nourri — vos
     réponses, ou les commandes lues dans un projet analysé, et la demande d'une
     correction — pour qu'un playbook se conteste sur ce qu'on lui a donné. Rien à
     donner : la raison d'avant.
     """
-    texte = faits_du_projet(constats, acquis, demande=demande)
+    texte = project_facts(constats, acquis, request=demande)
     if not texte:
         return "", RAISON_PLAYBOOK_GENERE
     sources = [
@@ -803,7 +805,7 @@ def choix_d_un_projet_decrit(projet: Projet) -> tuple[Choix, ...]:
 
 
 def _porte_dans(racine: Path) -> Callable[[str], bool]:
-    """Le constat que `skills_constates` demande : ce chemin est-il un fichier **du projet** ?
+    """Le constat que `observed_skills` demande : ce chemin est-il un fichier **du projet** ?
 
     Le chemin vient du corps de la requête (l'équipe validée telle que l'écran la
     rapporte) : il est résolu contre la racine, et tout ce qui en sort — `..`,

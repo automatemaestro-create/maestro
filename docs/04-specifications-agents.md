@@ -154,7 +154,7 @@ analyse lui propose une équipe, l'utilisateur la valide, et c'est cette validat
 fiches (#1021, chantier livré par #1037 à #1042).
 
 Les cinq lignes ci-dessous sont donc des **gabarits** (`GABARITS_DU_CODE`) : l'analyse d'équipe les
-consulte (`maestro.equipe.gabarits`), personne ne les instancie. Leurs playbooks « senior » ne sont pas jetés
+consulte (`maestro.team.role_templates`), personne ne les instancie. Leurs playbooks « senior » ne sont pas jetés
 — ils servent de **repli** au rôle proposé tant que la rédaction pour ce projet-là n'a pas abouti,
 et la proposition dit toujours laquelle des deux origines elle porte.
 

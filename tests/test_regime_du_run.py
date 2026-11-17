@@ -88,10 +88,10 @@ from maestro.controltower.state import EXECUTION_ECHEC, EXECUTION_EN_COURS
 from maestro.decideur import Decideur
 from maestro.engine import RunReport
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
-from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.portee import PORTEE_PROJET
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
+from maestro.team.proposal import EXECUTION_TOOL
 from maestro.telemetry import SpendingCapExceeded
 
 CHAT = "/api/chat/orchestrateur"
@@ -381,7 +381,7 @@ def test_s3_apres_l_equipe_validee_la_redaction_recoit_la_politique_que_l_equipe
     # La politique que l'équipe porte **sur le disque**, lue comme l'exécution la lira.
     cfg = gabarits.pour_projet(projet)
     decisions = [
-        cfg.permissions.lire(role["nom"]).decide(OUTIL_EXECUTION) for role in proposition["roles"]
+        cfg.permissions.lire(role["nom"]).decide(EXECUTION_TOOL) for role in proposition["roles"]
     ]
     assert {(d.decideur, d.portee) for d in decisions} == {(Decideur.AUTO, PORTEE_PROJET)}
     redaction = fournisseur.redactions[-1]
@@ -428,7 +428,7 @@ def test_s3_le_juge_lit_la_politique_a_chaque_message_et_suit_ce_qui_la_change(
     for role in proposition["roles"]:
         cfg.permissions.ecrire(
             role["nom"],
-            PolitiqueOutils(ask=(EntreeArbitrage(OUTIL_EXECUTION, Decideur.HUMAIN),)),
+            PolitiqueOutils(ask=(EntreeArbitrage(EXECUTION_TOOL, Decideur.HUMAIN),)),
         )
     client.post(f"{CHAT}/messages", json=demande)
     apres = fournisseur.juges[-1]
@@ -630,7 +630,7 @@ def _membre(politique: PolitiqueOutils | None, *, nom: str = "dev") -> MembreDeL
 #: La politique qu'une équipe proposée reçoit depuis #1226 : l'exécution d'office,
 #: dans le dossier du projet.
 POLITIQUE_DU_PROJET = PolitiqueOutils(
-    ask=(EntreeArbitrage(OUTIL_EXECUTION, Decideur.AUTO, PORTEE_PROJET),)
+    ask=(EntreeArbitrage(EXECUTION_TOOL, Decideur.AUTO, PORTEE_PROJET),)
 )
 
 
@@ -642,7 +642,7 @@ def test_le_regime_d_un_agent_suit_le_cran_de_sa_politique_sur_le_shell() -> Non
     (#1405) : le fil et l'agent décrivent le même régime depuis le même endroit.
     """
     auto = regime_des_actes([_membre(POLITIQUE_DU_PROJET)])
-    humain = regime_des_actes([_membre(PolitiqueOutils(ask=(OUTIL_EXECUTION,)))])
+    humain = regime_des_actes([_membre(PolitiqueOutils(ask=(EXECUTION_TOOL,)))])
 
     assert REGIME_EXECUTION[Decideur.AUTO] + REGIME_PORTEE[PORTEE_PROJET] in auto
     assert REGIME_EXECUTION[Decideur.HUMAIN] in humain
@@ -656,13 +656,13 @@ def test_un_shell_libre_refuse_ou_sans_politique_ne_se_dit_jamais_arbitre() -> N
     arbitrages = (REGIME_EXECUTION[Decideur.AUTO], REGIME_EXECUTION[Decideur.HUMAIN])
     textes = {
         "libre": regime_des_actes([_membre(PolitiqueOutils())]),
-        "refuse": regime_des_actes([_membre(PolitiqueOutils(deny=(OUTIL_EXECUTION,)))]),
+        "refuse": regime_des_actes([_membre(PolitiqueOutils(deny=(EXECUTION_TOOL,)))]),
         "sans": regime_des_actes([_membre(None)]),
     }
 
     for texte in textes.values():
         assert not any(_phrase(phrase) in texte for phrase in arbitrages)
-    assert f"Refusés d'office : {OUTIL_EXECUTION}." in textes["refuse"]
+    assert f"Refusés d'office : {EXECUTION_TOOL}." in textes["refuse"]
     assert len(set(textes.values())) == 3
 
 
@@ -670,7 +670,7 @@ def test_les_autres_outils_soumis_se_disent_a_part_du_shell() -> None:
     """L'acte accordé ne couvre que le shell : un autre outil soumis se nomme avec son décideur."""
     politique = PolitiqueOutils(
         ask=(
-            EntreeArbitrage(OUTIL_EXECUTION, Decideur.AUTO, PORTEE_PROJET),
+            EntreeArbitrage(EXECUTION_TOOL, Decideur.AUTO, PORTEE_PROJET),
             EntreeArbitrage("mcp__slack", Decideur.HUMAIN),
             EntreeArbitrage("WebFetch", Decideur.AUTO),
         )
@@ -680,7 +680,7 @@ def test_les_autres_outils_soumis_se_disent_a_part_du_shell() -> None:
 
     assert "Attendent l'accord d'une personne : mcp__slack." in texte
     assert "Passent d'office, en étant tracés : WebFetch." in texte
-    assert f"personne : {OUTIL_EXECUTION}" not in texte
+    assert f"personne : {EXECUTION_TOOL}" not in texte
 
 
 def test_deux_agents_d_une_meme_equipe_gardent_chacun_leur_regime() -> None:
@@ -689,7 +689,7 @@ def test_deux_agents_d_une_meme_equipe_gardent_chacun_leur_regime() -> None:
         [
             _membre(POLITIQUE_DU_PROJET, nom="dev"),
             MembreDeLEquipe(
-                role="QA", nom="qa", politique=PolitiqueOutils(ask=(OUTIL_EXECUTION,))
+                role="QA", nom="qa", politique=PolitiqueOutils(ask=(EXECUTION_TOOL,))
             ),
         ]
     )

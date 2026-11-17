@@ -3308,7 +3308,7 @@ export type VerificationOutillage = {
 // --- L'équipe d'un projet (#1039 la propose, #1040 la crée) ----------------
 //
 // Les formes servies par `POST …/equipe/proposition` et `POST …/equipe`, docs/37.
-// Elles descendent de `maestro.equipe.modele` et de `maestro.equipe.creation` :
+// Elles descendent de `maestro.team.model` et de `maestro.team.creation` :
 // une **proposition** ne crée rien et le dit (`cree: false`), un **rapport** de
 // création dit ce qui existe désormais dans le projet.
 
@@ -3318,7 +3318,7 @@ export type VerificationOutillage = {
  *
  * ⚠ C'est **exactement** l'objet que la proposition a rendu, et qui repart tel
  * quel à la validation : la traduction « autorisations proposées → politique »
- * a lieu une seule fois, côté serveur (`RolePropose.politique()`). Une seconde,
+ * a lieu une seule fois, côté serveur (`ProposedRole.policy()`). Une seconde,
  * écrite dans l'écran, finirait par ne plus dire la même chose que celle qu'on
  * a montrée.
  */
@@ -3331,7 +3331,7 @@ export type PolitiqueEquipe = {
 
 /**
  * Une autorisation proposée : un outil, son **cran**, et **sa raison**
- * (`AutorisationProposee.to_dict`, #1039).
+ * (`ProposedPermission.to_dict`, #1039).
  *
  * `cran` vaut `allow` / `ask` / `deny` ; `decideur` n'a de sens que sur `ask`
  * (#586) et porte alors le décideur **effectif** — `auto` ou `humain`, jamais
@@ -3354,7 +3354,7 @@ export type AutorisationEquipe = {
 
 /**
  * Un skill de l'outillage du projet que ce rôle branche
- * (`SkillBranche.to_dict`, #1039).
+ * (`AttachedSkill.to_dict`, #1039).
  *
  * `etat` est celui de l'entrée d'outillage dont il sort : un `a-generer`
  * n'existera qu'une fois l'outillage écrit (#1033), et un rôle branché dessus
@@ -3369,7 +3369,7 @@ export type SkillEquipe = {
 };
 
 /**
- * Un rôle que l'analyse propose de recruter (`RolePropose.to_dict`, #1039).
+ * Un rôle que l'analyse propose de recruter (`ProposedRole.to_dict`, #1039).
  *
  * `justification` est **l'endroit du projet** qui fait exister ce rôle — le
  * fichier lu, pas une phrase : c'est ce qui rend la proposition contestable.
@@ -3404,7 +3404,7 @@ export type RoleEquipe = {
 };
 
 /**
- * Ce que la personne lit du navigateur de Maestro (`navigateur_de_maestro()`,
+ * Ce que la personne lit du navigateur de Maestro (`maestro_browser()`,
  * #1532) : son nom et son usage, servis une fois avec la proposition — la face de
  * la carte et la ligne d'un rôle lisent la même phrase.
  */
@@ -3414,7 +3414,7 @@ export type NavigateurDeMaestro = {
 };
 
 /**
- * Un rôle que l'analyse a **choisi de ne pas** proposer (`RoleEcarte.to_dict`).
+ * Un rôle que l'analyse a **choisi de ne pas** proposer (`ExcludedRole.to_dict`).
  *
  * L'orchestrateur en fait toujours partie, *par décision* : c'est Maestro, et
  * c'est lui qui recrute (docs/37 §4.2). Sans cette liste, « pas de rôle base de
@@ -3568,7 +3568,7 @@ export type RoleValideEquipe = {
   navigateur: boolean;
 };
 
-/** Un agent que la validation a créé dans le projet (`AgentCree.to_dict`, #1040). */
+/** Un agent que la validation a créé dans le projet (`CreatedAgent.to_dict`, #1040). */
 export type AgentCreeEquipe = {
   nom: string;
   role: string;

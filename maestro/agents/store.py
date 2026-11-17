@@ -17,7 +17,7 @@ devenues des **gabarits de rôle** (`gabarits_du_code`), une matière que l'anal
 d'équipe consulte et que personne n'instancie. Un dépôt vide rend donc un
 catalogue vide, et c'est exactement ce que veut dire *un projet naît sans agent* :
 un projet créé ou importé n'a aucun agent tant que son équipe n'a pas été
-proposée, validée et écrite (`maestro.equipe`).
+proposée, validée et écrite (`maestro.team`).
 
 **Trois états, et non deux** (#259). « Du code » et « personnalisé » ne suffisaient
 pas : changer le modèle d'un agent du code obligeait à le **dupliquer** en agent
@@ -97,7 +97,7 @@ NOMS_SYSTEME: frozenset[str] = frozenset({"orchestrateur", "assistance"})
 #: partirait donc en exécution avec le playbook du code, et le texte écrit pour ce
 #: projet-là (#257) n'atteindrait jamais le modèle — en silence. C'est aussi ce qui
 #: fait que les rôles proposés par l'analyse d'équipe portent d'autres noms que leur
-#: gabarit (`maestro.equipe.gabarits`, `dev` descend de `developpeur`).
+#: gabarit (`maestro.team.role_templates`, `dev` descend de `developpeur`).
 #:
 #: Les acteurs système s'y ajoutent pour leur raison propre, ci-dessus.
 NOMS_RESERVES: frozenset[str] = NOMS_DU_CODE | NOMS_SYSTEME
@@ -553,7 +553,7 @@ def gabarits_du_code(
     ordre, recouvertes des surcharges (#259) posées sur elles. C'est ce que l'API
     sert au niveau gabarit (`GET /api/catalogue` sans `?projet=`), ce que les
     écrans de réglages éditent, et la matière dont l'analyse d'équipe tire les
-    rôles proposés (`maestro.equipe.gabarits`).
+    rôles proposés (`maestro.team.role_templates`).
 
     Rien ici n'est exécuté : un gabarit ne reçoit pas de tâche, il se recopie dans
     un projet qui le valide. `modele` (#69) bascule les cinq fiches comme ailleurs ;
@@ -631,7 +631,7 @@ def definition_validee(definition: AgentDefinition) -> AgentDefinition:
     **Publique** depuis #1040, au même titre et pour la même raison que
     `politique_validee` dans `maestro.agents.permissions` : la validation d'une
     équipe entière se fait **avant** d'écrire le premier fichier
-    (`maestro.equipe.creation.refus_de`), et une seconde définition de « fiche
+    (`maestro.team.creation.rejected_roles`), et une seconde définition de « fiche
     valide » finirait par refuser ce que le dépôt accepte, ou l'inverse. Une
     seule règle, appelée des deux côtés.
 

@@ -149,8 +149,6 @@ from maestro.engine.verification import (
     VerificateurTaches,
 )
 from maestro.engine.verification import Verdict as VerdictVerification
-from maestro.equipe.manque import RoleManquant, role_manquant
-from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.machine import Machine, constater, programmes_de_l_outillage
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
@@ -203,6 +201,8 @@ from maestro.sandbox.verification import (
     RegistreDesMiroirs,
     miroir_de_verification,
 )
+from maestro.team.gap import MissingRole, missing_role
+from maestro.team.proposal import EXECUTION_TOOL
 from maestro.telemetry import (
     STEP_ACCEPTANCE,
     RunJournal,
@@ -1375,13 +1375,13 @@ class LocalExecutor(TaskExecutor):
                     # la prendre. Depuis #1181 il voyage aussi sur le résultat, en
                     # prérequis : la boucle propose de recruter ce rôle dans le
                     # fil, et la tâche reprend sur l'équipe complétée.
-                    manque = role_manquant(decision.uncovered)
+                    manque = missing_role(decision.uncovered)
                     if manque is not None:
                         self._consigne_role_manquant(task, manque, journal)
                     result = _echec(
                         task, agent="—", role=ROLE_A_ASSIGNER, score=decision.score,
                         erreur=(
-                            f"{decision.reason} {manque.phrase()}"
+                            f"{decision.reason} {manque.sentence()}"
                             if manque is not None
                             else decision.reason
                         ),
@@ -3897,9 +3897,9 @@ class LocalExecutor(TaskExecutor):
 
         Ce que cet accord ne couvre pas, et c'est délibérément étroit :
 
-        - **un seul outil**, celui par lequel l'acte se fait (`OUTIL_EXECUTION`).
+        - **un seul outil**, celui par lequel l'acte se fait (`EXECUTION_TOOL`).
           C'est aussi le seul sur lequel une équipe proposée pose un cran
-          (`maestro.equipe.proposition`), et le seul que l'observation nomme.
+          (`maestro.team.proposal`), et le seul que l'observation nomme.
           Tout autre outil classé `ask` garde son humain — « vide le dossier »
           n'a jamais accordé un message dans Slack, que `core/permissions/devops`
           met en `ask`/`humain` ;
@@ -3942,7 +3942,7 @@ class LocalExecutor(TaskExecutor):
         async def arbitre(
             outil: str, arguments: dict[str, str], motif: str, decideur: Decideur
         ) -> tuple[bool, str]:
-            if task.granted_act and outil == OUTIL_EXECUTION:
+            if task.granted_act and outil == EXECUTION_TOOL:
                 # L'accord est déjà donné : il n'y a personne à déranger, donc
                 # rien à composer, rien à mémoriser et rien à attendre. Le
                 # détail part quand même — c'est lui qui portera l'acte accordé
@@ -4159,7 +4159,7 @@ class LocalExecutor(TaskExecutor):
         )
 
     def _consigne_role_manquant(
-        self, task: Task, manque: RoleManquant, journal: RunJournal
+        self, task: Task, manque: MissingRole, journal: RunJournal
     ) -> None:
         """Signale au fil le rôle qui manque à l'équipe pour prendre `task` (#1041).
 
@@ -4191,7 +4191,7 @@ class LocalExecutor(TaskExecutor):
             role=ROLE_ORCHESTRATEUR,
             statut=STATUT_ROLE_MANQUANT,
             entree="",
-            sortie=manque.phrase(),
+            sortie=manque.sentence(),
             usage=StepUsage(),
             projet_id=task.project_id,
         )
