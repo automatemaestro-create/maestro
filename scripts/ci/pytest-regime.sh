@@ -127,6 +127,44 @@ case "$DOCKER_DEMARRAGE_DELAI" in
   '' | *[!0-9]*) DOCKER_DEMARRAGE_DELAI=180 ;;
 esac
 
+# --- Un démon que le confinement refuse n'est pas un démon éteint (#1714) -------------------------
+# Sous Windows, un agent de Maestro joue à l'intégrité basse (#1515, docs/17 §7), et tout ce qu'il
+# lance hérite de ce niveau, ce filet compris. Le moteur de Docker Desktop n'ouvre pas son tube à ce
+# niveau : `docker` y est refusé, que le moteur tourne ou non, sur `docker_engine` comme sur
+# `dockerDesktopLinuxEngine`. Démarrer Docker Desktop n'y change donc rien (docs/10 §8.4).
+#
+# Le filet lit donc le niveau d'intégrité de SON processus, un fait du jeton que le SID nomme, et
+# jamais le texte de l'erreur de `docker`. Il ne s'en sert que pour expliquer un moteur muet : un
+# moteur qui répond garde le conteneur, quel que soit le niveau.
+#
+# Le tube reste fermé à ce niveau, et c'est une décision : qui commande le moteur monte dans un
+# conteneur n'importe quel dossier que la personne peut écrire, et y écrit. L'ouvrir défairait le
+# confinement au lieu de l'aménager.
+SID_INTEGRITE_BASSE="S-1-16-4096"
+#: Le filet tourne-t-il à l'intégrité basse ? Vide tant que la question n'est pas posée, puis 0 ou 1.
+INTEGRITE_BASSE=""
+#: 1 quand le démon est injoignable parce que le filet est confiné — lue par `local.sh`.
+# shellcheck disable=SC2034  # lue par `local.sh` (lint fichier par fichier, #285)
+DOCKER_CONFINE=0
+DOCKER_RAISON_CONFINEMENT="ce filet tourne à l'intégrité basse, celle d'un agent confiné (docs/17 §7) : le moteur Docker n'admet pas ce niveau, qu'il tourne ou non, et démarrer Docker Desktop n'y changerait rien"
+
+# Le `whoami` de Windows, par son chemin : sous Git Bash, celui du `PATH` est le `whoami` de
+# coreutils, qui ne connaît pas `/groups`. Sans `SYSTEMROOT`, il n'y a pas de Windows, et le niveau
+# est sans objet. `MAESTRO_WHOAMI` désigne un autre programme (les tests).
+WHOAMI_WINDOWS="${MAESTRO_WHOAMI:-${SYSTEMROOT:+$SYSTEMROOT/System32/whoami.exe}}"
+
+# Le double barré garde `/groups` de la conversion des chemins de MSYS.
+integrite_basse() {
+  if [ -z "$INTEGRITE_BASSE" ]; then
+    INTEGRITE_BASSE=0
+    if [ -n "$WHOAMI_WINDOWS" ] && [ -x "$WHOAMI_WINDOWS" ] \
+      && "$WHOAMI_WINDOWS" //groups //fo csv 2>/dev/null | grep -q "$SID_INTEGRITE_BASSE"; then
+      INTEGRITE_BASSE=1
+    fi
+  fi
+  [ "$INTEGRITE_BASSE" = 1 ]
+}
+
 #: Pourquoi le démon n'a pas pu être joint — posée par `docker_reveille`, lue par son appelant.
 DOCKER_RAISON=""
 #: Ce qu'a donné le démarrage QUAND IL A ÉTÉ TENTÉ (#988) — vide si le filet n'a rien démarré. Lue
@@ -217,6 +255,7 @@ docker_lanceur() {
 # qui la rend jouable depuis `regime_pytest_pressenti`, dont tout le contrat est d'être gratuit.
 docker_reveillable() {
   [ "$DOCKER_DEMARRAGE" != 0 ] || return 1
+  integrite_basse && return 1
   if [ "$(docker_lanceur)" = application ]; then
     docker_desktop_exe >/dev/null
   else
@@ -315,6 +354,12 @@ docker_reveille() {
   local depuis debut duree cause lanceur
   DOCKER_RAISON="démon Docker injoignable"
   DOCKER_DEMARRAGE_ISSUE=""
+  # Avant l'interrupteur et le lanceur : à ce niveau, la cause est le confinement, quoi qu'on règle.
+  if integrite_basse; then
+    DOCKER_RAISON="$DOCKER_RAISON_CONFINEMENT"
+    DOCKER_CONFINE=1
+    return 1
+  fi
   docker_reveillable || return 1
   lanceur="$(docker_lanceur)"
   printf '    ─── démon Docker éteint : démarrage de Docker Desktop (%s, jusqu'\''à %s s) …\n' \
@@ -364,6 +409,10 @@ regime_pytest_pressenti() {
     *)
       if docker_repond; then
         PYTEST_REGIME=conteneur
+      elif integrite_basse; then
+        # Rien à réveiller : le confinement ferme le moteur (#1714), et `--list` le dit.
+        PYTEST_REGIME=natif
+        DOCKER_CONFINE=1
       elif docker_reveillable; then
         # Le démon dort, mais on sait le réveiller (#425). Annoncer « natif » ici annoncerait un
         # régime que le lancement ne tiendra pas — or cette sonde ne sert qu'à dire ce qui va

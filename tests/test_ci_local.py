@@ -315,6 +315,22 @@ printf '%b' "${MAESTRO_FAUX_DOCKER_SORTIE:-}"
 exit "${MAESTRO_FAUX_DOCKER_CODE:-0}"
 """
 
+# Le niveau d'intégrité du filet, tel que `whoami /groups /fo csv` le décrit (#1714) : la ligne du
+# libellé obligatoire, dont le SID nomme le niveau. `MAESTRO_FAUX_INTEGRITE=basse` fait du filet un
+# processus confiné, comme celui d'un agent ; tout autre valeur, le niveau ordinaire de la personne.
+#
+# Désigné à CHAQUE lancement par `MAESTRO_WHOAMI`, pas seulement par les tests qui le veulent : sous
+# Windows, le filet appelle sinon le vrai `whoami`, et une suite jouée par un agent confiné y lirait
+# l'intégrité basse — chaque test du réveil de Docker changerait alors de verdict avec le poste.
+SHIM_WHOAMI = """\
+#!/usr/bin/env bash
+case "${MAESTRO_FAUX_INTEGRITE:-}" in
+  basse) sid=S-1-16-4096 ;;
+  *) sid=S-1-16-8192 ;;
+esac
+printf '"Mandatory Label\\\\Level","Label","%s","Mandatory group"\\n' "$sid"
+"""
+
 
 @dataclass
 class Clone:
@@ -324,6 +340,11 @@ class Clone:
     fauxbin: Path
     journal: Path
     tmp: Path
+
+    @property
+    def windows(self) -> Path:
+        """Où vit le faux `whoami` de Windows : hors du `PATH`, comme le vrai pour Git Bash."""
+        return self.tmp.parent / "windows"
 
     # --- équipement à la carte ---
     def pose_shim(self, nom: str, dossier: Path | None = None, corps: str | None = None) -> None:
@@ -397,6 +418,8 @@ class Clone:
                 # dire au filet d'un test ce qu'aucun décor n'a posé. Un test qui en veut un le
                 # pose.
                 "MAESTRO_DOCKER_JOURNAL_BACKEND": str(self.tmp / "aucun-journal-docker.log"),
+                # Jamais le niveau d'intégrité DU POSTE (#1714) : voir SHIM_WHOAMI.
+                "MAESTRO_WHOAMI": str(self.windows / "whoami.exe"),
             }
         )
         environnement.update(reglages)
@@ -599,6 +622,7 @@ def clone(tmp_path: Path) -> Clone:
     # joue »). Ne pas doubler ce mécanisme par un MAESTRO_PYTEST_REGIME posé dans `lance()` : deux
     # verrous pour une porte, c'est un verrou qu'on oubliera de tourner.
     clone.pose_shim("docker", corps="#!/usr/bin/env bash\nexit 1\n")
+    clone.pose_shim("whoami.exe", clone.windows, corps=SHIM_WHOAMI)
     return clone
 
 
@@ -2573,6 +2597,94 @@ def test_un_plantage_rattrape_par_une_relance_est_nomme_quand_le_moteur_repond(
     assert "démarré par le filet (plugin) en" in ligne and "planté" not in ligne, (
         f"un plantage d'avant le lancement n'appartient pas à ce démarrage : {ligne}"
     )
+
+
+# --- Un démon que le confinement refuse n'est pas un démon éteint (#1714) -------------------------
+# Un agent de Maestro joue sous Windows à l'intégrité basse (#1515), et le moteur de Docker Desktop
+# ne lui ouvre pas son tube : `docker version` y échoue, que le moteur tourne ou non. #1688 a vu le
+# filet de l'agent annoncer un démon « éteint », attendre 180 s un démarrage qui ne pouvait rien
+# rendre, puis jouer 52 suites en natif. Ces tests épinglent ce que le filet dit et fait à ce
+# niveau-là : rien à démarrer, la cause nommée, et le régime conteneur gardé si le moteur répond.
+
+CONFINE = {"MAESTRO_FAUX_INTEGRITE": "basse"}
+
+
+def test_a_l_integrite_basse_le_filet_ne_demarre_pas_docker_et_nomme_le_confinement(
+    clone: Clone,
+) -> None:
+    """Le cas de #1688 : Docker Desktop installé, un moteur muet, un filet confiné."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        **DEMON_ENDORMI,
+        **CONFINE,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not demarrages_desktop(clone.appels()), \
+        "démarrer Docker Desktop ne rouvre pas un tube que le confinement ferme"
+    assert "démon Docker éteint" not in acheve.stdout, acheve.stdout
+    assert lancements_pytest(clone.appels()), "le filet joue quand même, en natif"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "NATIF" in ligne and "intégrité basse" in ligne, ligne
+    # La suite du verdict ne promet pas un remède qui ne marche pas d'ici.
+    assert "le démarre de lui-même" not in acheve.stdout, acheve.stdout
+    assert "hors confinement" in acheve.stdout, acheve.stdout
+
+
+def test_a_l_integrite_basse_la_sonde_annonce_le_natif_et_sa_cause(clone: Clone) -> None:
+    """`--list` dit le régime qui jouera (#194) : à ce niveau, le natif, et pourquoi."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    annonce = clone.lance("--list", **DEMON_ENDORMI, **CONFINE)
+
+    assert annonce.returncode == 0, annonce.stderr
+    lignes = [ligne for ligne in annonce.stdout.splitlines() if ligne.strip().startswith("pytest ")]
+    assert lignes, f"aucune ligne pytest dans l'annonce :\n{annonce.stdout}"
+    assert "venv du poste" in lignes[0] and "intégrité basse" in lignes[0], lignes[0]
+    assert "démarrage de Docker Desktop" not in lignes[0], lignes[0]
+
+
+def test_a_l_integrite_basse_un_moteur_qui_repond_garde_le_conteneur(clone: Clone) -> None:
+    """Le niveau d'intégrité explique un moteur muet ; il ne décide jamais du régime à sa place."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", **CONFINE)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_conteneur(clone.appels()), clone.appels()
+    assert "NATIF" not in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_a_l_integrite_basse_le_conteneur_exige_nomme_le_confinement(clone: Clone) -> None:
+    """Exigé, le conteneur échoue tout de suite, avec la cause que le confinement impose."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest", MAESTRO_PYTEST_REGIME="conteneur", **DEMON_ENDORMI, **CONFINE
+    )
+
+    assert not demarrages_desktop(clone.appels())
+    assert not lancements_pytest(clone.appels()), "rien ne doit être joué en repli"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "exigé" in ligne and "intégrité basse" in ligne, ligne
+
+
+def test_le_lanceur_a_l_integrite_basse_dit_le_confinement(clone: Clone) -> None:
+    """La plomberie est partagée (#405) : le lanceur d'itération dit la même cause."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("tests/test_horloge.py", **DEMON_ENDORMI, **CONFINE)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not demarrages_desktop(clone.appels())
+    sortie = acheve.stdout + acheve.stderr
+    assert "NATIF" in sortie and "intégrité basse" in sortie, sortie
 
 
 # --- Le lanceur d'itération serrée (#405) ---------------------------------------------------------

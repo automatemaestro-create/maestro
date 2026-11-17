@@ -436,6 +436,13 @@ demi-minute. La marge qui reste sous les 300 s est mince, parce que Node, le `.v
 dépendances pip se retéléchargent à chaque passage. Un passage à froid joué pendant la vérification
 d'une autre session n'a pas rendu la main dans les 300 s, et est resté « à vérifier ».
 
+**Docker n'est pas joignable de l'intégrité basse** (#1714). Le moteur de Docker Desktop n'ouvre
+pas son tube à ce niveau : `docker` y est refusé, que le moteur tourne ou non (mesuré le
+2026-11-17). Le filet du dépôt de Maestro le dit et joue en natif, sans attendre un démarrage qui ne
+rendrait rien ([docs/10 §8.4](./10-workflow-git.md)). Le tube n'est pas ouvert à l'agent : qui
+commande le moteur monte dans un conteneur n'importe quel dossier que la personne peut écrire, et y
+écrit. Ce serait une sortie générale du confinement, pas un aménagement.
+
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
 - `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
@@ -456,7 +463,10 @@ d'une autre session n'a pas rendu la main dans les 300 s, et est resté « à v�
   son établi, est vérifiée ; elle ne reçoit ni `MAESTRO_*` ni ce qui est retenu ;
 - une commande de vérification qui remplit son cache sous `LOCALAPPDATA`, comme un gestionnaire de
   paquets, l'écrit à l'intégrité basse. La vérification suivante du même projet le trouve, celle
-  d'un autre projet non, dans une copie comme dans un clone neuf.
+  d'un autre projet non, dans une copie comme dans un clone neuf ;
+- une suite jouée elle-même à l'intégrité basse, comme celle d'un agent confiné, saute ces tests et
+  dit pourquoi : leur témoin y naîtrait bas lui aussi, et ils rougiraient sans rien dire du code
+  (`tests/conftest.py`, #1714).
 
 **Ce que l'isolation ne couvre pas.** L'agent en est informé sous « La machine »
 (`maestro.machine.LIGNE_INTEGRITE_BASSE`), et voici la liste :
