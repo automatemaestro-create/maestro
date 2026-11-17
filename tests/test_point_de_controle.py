@@ -20,7 +20,8 @@ La sonde de démarrage — le second critère — a sa section en fin de module.
 Aucun réseau, aucun modèle : le hook et la frontière se jouent en les appelant
 comme le ferait le CLI, sur un projet jetable. Les tests sur le **vrai** CLI
 portent le marqueur `cli_reel` et ne se jouent que sur demande (voir
-`tests/conftest.py`).
+`tests/conftest.py`) ; ils font partie de la suite de contrat de l'adaptateur
+(`claude_contract`, #1312, docs/44 §7).
 """
 
 from __future__ import annotations
@@ -601,6 +602,7 @@ def _modele_econome() -> str:
     return derniere_version("haiku")
 
 
+@pytest.mark.claude_contract
 @pytest.mark.cli_reel
 def test_sur_le_vrai_cli_un_refus_de_maestro_tient(tmp_path: Path) -> None:
     """La sonde, jouée sur le CLI réel : il consulte le point de contrôle, lui passe le
@@ -623,6 +625,7 @@ def test_sur_le_vrai_cli_un_refus_de_maestro_tient(tmp_path: Path) -> None:
     temoin.verdict()
 
 
+@pytest.mark.claude_contract
 @pytest.mark.cli_reel
 def test_sur_le_vrai_cli_la_sonde_voit_un_refus_qui_ne_tient_pas(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -651,6 +654,7 @@ def test_sur_le_vrai_cli_la_sonde_voit_un_refus_qui_ne_tient_pas(
         temoin.verdict()
 
 
+@pytest.mark.claude_contract
 @pytest.mark.cli_reel
 def test_sur_le_vrai_cli_un_secret_exclu_ne_sort_par_aucune_recherche(tmp_path: Path) -> None:
     """L'étape de reproduction du ticket, jouée de bout en bout sur le CLI réel.

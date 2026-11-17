@@ -136,7 +136,9 @@ Dixième garde-fou (#1304) : **aucun test ne lance le vrai CLI du fournisseur sa
 demande**. Ce que les doubles ne prouvent pas — que le CLI applique un refus de Maestro — se
 prouve sur le CLI réel, avec un vrai modèle : un tel test porte `@pytest.mark.cli_reel` et
 reste **sauté**, raison dite, sauf `MAESTRO_TESTS_CLI_REEL=1`. Même verdict sur tous les
-postes, et ce qu'il coûte n'est payé que par qui le demande.
+postes, et ce qu'il coûte n'est payé que par qui le demande. Joué, il prouve le `maestro` de
+**cette** copie : depuis un worktree au venv partagé, le lanceur du confinement importerait
+celui du clone principal, et le test échoue en le disant (#1312).
 
 Onzième garde-fou (#1295) : **aucun test ne lit les clients d'agents du poste sans le dire**.
 Les ponts de l'outillage (`CLAUDE.md`, `GEMINI.md`) suivent les clients installés et leur
@@ -291,6 +293,12 @@ MARQUEUR_CLI_REEL = "cli_reel"
 #: La variable qui demande ces tests : `1` les joue, toute autre valeur les saute.
 CLE_CLI_REEL = "MAESTRO_TESTS_CLI_REEL"
 
+#: Le marqueur de la **suite de contrat** de l'adaptateur Claude (#1312, docs/44 §7) : ce dont
+#: l'adaptateur a besoin du CLI que son SDK embarque, prouvé sur ce CLI. Il sélectionne
+#: (`-m claude_contract`), il ne saute rien : un test de contrat qui lance le CLI porte aussi
+#: `cli_reel`.
+MARQUEUR_CONTRAT_CLAUDE = "claude_contract"
+
 #: Le marqueur d'un test qui lit VRAIMENT les clients d'agents du poste (#1295) — la garde qui
 #: ferme la résolution sur le `PATH` s'efface alors.
 MARQUEUR_CLIENTS_DU_POSTE = "clients_du_poste"
@@ -360,6 +368,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{MARQUEUR_CLI_REEL}: ce test lance le VRAI CLI du fournisseur et appelle un vrai modèle "
         f"(#1304) — sauté sauf `{CLE_CLI_REEL}=1`.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_CONTRAT_CLAUDE}: ce test fait partie de la suite de contrat de l'adaptateur "
+        "Claude (#1312, docs/44 §7), préalable à toute montée de version du SDK.",
     )
     config.addinivalue_line(
         "markers",
@@ -700,6 +713,41 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if item.get_closest_marker(MARQUEUR_CLI_REEL) is not None:
             item.add_marker(saut)
+
+
+@pytest.fixture(autouse=True)
+def _le_cli_reel_joue_le_maestro_sous_test(request: pytest.FixtureRequest) -> None:
+    """Un test `cli_reel` prouve l'adaptateur de **cette** copie, ou dit pourquoi il ne le peut pas.
+
+    Le CLI d'une session d'agent naît du lanceur du confinement, un processus à part qui
+    importe `maestro` comme tout processus de cet environnement. Depuis un worktree dont
+    le venv est celui du clone principal, c'est le `maestro` du clone principal : le test
+    prouverait un autre code, et son rouge ne désignerait rien (mesuré sur #1312). Même
+    environnement, autre dossier : ce qui s'y importe est ce que le lanceur importe.
+    """
+    if request.node.get_closest_marker(MARQUEUR_CLI_REEL) is None:
+        return
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    racine = Path(__file__).resolve().parents[1]
+    ailleurs = request.getfixturevalue("tmp_path_factory").mktemp("import-du-lanceur")
+    rendu = subprocess.run(
+        [sys.executable, "-c", "import maestro; print(maestro.__file__)"],
+        cwd=ailleurs,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    importe = Path(rendu.stdout.strip()).resolve().parent
+    if importe != (racine / "maestro").resolve():
+        pytest.fail(
+            f"le lanceur du confinement importerait {importe}, pas le maestro de cette copie : "
+            f"jouer ces tests sous `env PYTHONPATH={racine.as_posix()}` (docs/44 §7)",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)

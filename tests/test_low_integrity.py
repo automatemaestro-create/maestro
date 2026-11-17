@@ -436,6 +436,98 @@ def test_a_write_outside_the_project_and_the_workbench_fails(tmp_path, monkeypat
     assert secret.read_text(encoding="utf-8") == "secret"
 
 
+@pytest.fixture
+def person_s_git_runtime() -> Iterator[Path]:
+    """The original Git's runtime, alive at the person's level: its named objects exist.
+
+    A program of the original installation, at her level, as a Git Bash she keeps open
+    would be. While it lives, the directory of named objects its runtime opened exists
+    at her level, and a low process of that same runtime cannot open it (#1708).
+    Yields the root of the original installation.
+    """
+    root = low_session.git_installation()
+    assert root is not None
+    process = subprocess.Popen(
+        [str(root / "usr" / "bin" / "sleep.exe"), "300"], stdout=subprocess.DEVNULL
+    )
+    time.sleep(1.0)
+    assert process.poll() is None
+    yield root
+    process.kill()
+    process.wait()
+
+
+@on_windows
+@pytest.mark.integrite_basse
+@pytest.mark.skipif(low_session.git_installation() is None, reason="Git for Windows is needed")
+def test_a_path_written_in_full_to_the_original_git_s_bash_reaches_a_shell_that_runs(
+    tmp_path, monkeypatch, git_tools, person_s_git_runtime
+):
+    """A setting that names the original bash bypasses the PATH the copy leads (#1708).
+
+    Whatever tool holds the setting (an editor, an ssh command, the `script-shell` of
+    npm), what it runs is that path, which the copy put first on the `PATH` does not
+    change. The runtime it loads must live at low integrity all the same.
+    """
+    monkeypatch.setattr(low_session, "outils_du_poste", lambda: git_tools)
+    original = person_s_git_runtime / "bin" / "bash.exe"
+    workspace = tmp_path / "espace"
+    workspace.mkdir()
+    session = low_session.prepare(workspace, cli_folder=None)
+    try:
+        code, output = _play(
+            [str(original), "-c", "echo alive"], env={**os.environ, **session.env}, cwd=workspace
+        )
+    finally:
+        session.close()
+    assert (code, output.strip()) == (0, "alive"), output
+
+
+@on_windows
+@pytest.mark.integrite_basse
+@pytest.mark.skipif(low_session.git_installation() is None, reason="Git for Windows is needed")
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm is needed")
+def test_a_postinstall_plays_under_a_script_shell_set_on_the_original_git_s_bash(
+    tmp_path, monkeypatch, git_tools, person_s_git_runtime
+):
+    """The case measured on the reference machine (#1691): npm set on the original bash.
+
+    The setting lives in a file, where no `PATH` reaches it: the project's `.npmrc`
+    here, the person's `~/.npmrc` there. The `postinstall` writes the version of the
+    bash that played it, which `cmd` could not: it was bash, and it lived.
+    """
+    monkeypatch.setattr(low_session, "outils_du_poste", lambda: git_tools)
+    original = person_s_git_runtime / "bin" / "bash.exe"
+    workspace = tmp_path / "espace"
+    workspace.mkdir()
+    (workspace / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "temoin-1708",
+                "version": "1.0.0",
+                "private": True,
+                "scripts": {"postinstall": 'echo "$BASH_VERSION" > postinstall.txt'},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".npmrc").write_text(f"script-shell={original}\n", encoding="utf-8")
+    npm = shutil.which("npm")
+    session = low_session.prepare(workspace, cli_folder=None)
+    try:
+        code, output = _play(
+            [str(CMD), "/c", str(npm), "install", "--no-audit", "--no-fund", "--offline"],
+            env={**os.environ, **session.env},
+            cwd=workspace,
+        )
+    finally:
+        session.close()
+    assert code == 0, output
+    played = workspace / "postinstall.txt"
+    assert played.is_file(), output
+    assert played.read_text(encoding="utf-8").strip(), "the postinstall was not played by bash"
+
+
 @on_windows
 @pytest.mark.integrite_basse
 def test_the_launcher_lowers_the_cli_and_withholds_maestro_s_names(monkeypatch):

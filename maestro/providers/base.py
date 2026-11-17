@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -642,6 +642,17 @@ class ModelProvider(ABC):
         qui ne lance aucune commande sur le poste n'a rien à abaisser.
         """
         return False
+
+    def versions_du_fournisseur(self) -> Mapping[str, str]:
+        """Ce sur quoi tourne cet adaptateur, lu maintenant : une ligne par composant (#1312).
+
+        Le journal du run l'écrit une fois par run (`maestro.engine.executor`), pour
+        qu'un run dise sur quel SDK et quel CLI il a tourné. Clés et valeurs sont ce
+        que la personne lit. Vide par défaut : un adaptateur qui ne pilote aucun
+        composant versionné à lui n'a rien à déclarer. La lecture peut lancer un
+        processus (un `--version`) : l'appelant la joue hors de la boucle.
+        """
+        return {}
 
     #: Les façons d'atteindre ce fournisseur depuis le poste (#1609), déclarées
     #: sur la classe comme la gamme : le catalogue les lit sans rien construire.

@@ -122,11 +122,18 @@ chaque git de l'hôte joué dans l'espace. Le conteneur reçoit donc un dépôt 
 
 ## 4. Activation (opt-in)
 
-1. **Construire l'image dédiée** (une fois, Docker démarré) :
+1. **Construire l'image dédiée** (Docker démarré, dans Git Bash) :
 
    ```bash
-   docker build -t maestro-sandbox:latest infra/sandbox
+   docker build --build-arg CLAUDE_CODE_VERSION=$(.venv/Scripts/python.exe -m maestro.sandbox.image_cli) -t maestro-sandbox:latest infra/sandbox
    ```
+
+   L'image installe le CLI **de la version que le SDK de l'hôte embarque** (#1312) : le shim
+   relaie au CLI du conteneur les arguments du SDK de l'hôte, et les deux doivent être de la même
+   version. Sans cette version, la construction s'arrête. L'image le dit par son label
+   `maestro.claude-cli`, que le journal de chaque run lit (« Versions du fournisseur ») : une image
+   construite pour un autre SDK, ou avant ce label, y est dite **à reconstruire**. Après une montée
+   du SDK, on la reconstruit ([docs/44 §7](./44-decision-maestro-possede-ses-contrats.md)).
 
 2. **Configurer l'authentification par variable** : l'état de connexion du
    poste (`claude` connecté) n'est **jamais monté** dans le conteneur. Il faut
@@ -341,6 +348,20 @@ mourrait dès qu'un hook appelle `sh`. La copie ne porte aucune étiquette, si b
 peut pas modifier ses propres outils. La copie d'une version antérieure est retirée dès qu'aucun
 processus ne la tient plus.
 
+**Un chemin écrit en toutes lettres mène aussi à un runtime qui vit** (#1708). Un réglage de la
+personne peut nommer le Git d'origine sans passer par le `PATH` : le `script-shell` de npm réglé
+sur `C:\Program Files\Git\bin\bash.exe`, un éditeur, une commande ssh. L'environnement de l'agent
+porte donc la variable `CYGWIN_TESTING` (`low_session.RUNTIME_APART`). Le runtime Cygwin, celui
+de MSYS2 et de Git for Windows, la lit : il range alors ses objets nommés dans un répertoire à
+part, suffixé par sa date de construction. Quel que soit le chemin qui y mène, un runtime que
+l'agent fait naître ne crée donc ni ne rejoint jamais le répertoire de la personne. Maestro ne
+reconnaît ni l'outil, ni le réglage, ni l'endroit où ce réglage vit. Un MSYS2 que la copie ne
+couvre pas en profite aussi.
+
+Le runtime destine cette variable à ses propres tests, et sa documentation ne la décrit pas. Sa
+seule autre conséquence est de tolérer qu'un parent porte une autre version du runtime. Si une
+version future la retirait, les tests réels ci-dessous échoueraient sur le poste.
+
 **Ce que Maestro ferme à la lecture.** Une étiquette moyenne « pas de lecture vers le haut »
 (`NO_READ_UP`) rend illisible à l'agent ce qui lui permettrait d'agir en Maestro :
 - le jeton de l'API ;
@@ -375,14 +396,15 @@ Une borne que le système refuse (une étiquette, l'absence de Git for Windows) 
 couvre pas est ce qu'elle ne couvre pas pour un agent, listé ci-dessous.
 
 **Un cache par projet pour la vérification** (#1709). L'établi part avec la vérification. Si
-`LOCALAPPDATA` y menait, ce que les outils y rangent (le cache de pip, celui de npm) partirait avec
+`LOCALAPPDATA` y menait, ce que les outils y rangent (le cache de npm, par exemple) partirait avec
 lui, et chaque vérification retéléchargerait tout. La vérification reçoit donc, à la place, le
 `LOCALAPPDATA` de **son projet**, gardé sous `~/.maestro/verification-caches/`
 (`maestro/sandbox/verification_cache.py`) :
-- **un dossier par projet, jamais partagé** : ce qu'une vérification y laisse, la suivante le relit
-  et l'exécute. Partagé, il ferait passer dans le projet B ce que la vérification du projet A y a
-  laissé. Par projet, il n'ouvre aucun canal nouveau : les agents d'un projet peuvent déjà déposer
-  dans son arbre ce que la vérification suivante copie. La personne l'a tranché le 2026-11-17 ;
+- **un dossier par projet, jamais partagé** : ce qu'une vérification y laisse, la suivante le relit,
+  et peut l'exécuter. Partagé, il ferait passer dans le projet B ce que la vérification du projet A
+  y a laissé. Par projet, il n'ouvre aucun canal nouveau : les agents d'un projet peuvent déjà
+  déposer dans son arbre ce que la vérification suivante copie. La personne l'a tranché le
+  2026-11-17 ;
 - **le même projet** est reconnu à son **dépôt Git** quand l'arbre vérifié est un dépôt ou un
   worktree (Git le nomme), sinon à sa racine. Une génération écrit l'outillage dans un worktree
   neuf à chaque fois : c'est le dépôt qui lui fait retrouver le cache de la racine. Une racine qui
@@ -410,8 +432,7 @@ Sur le dépôt de Maestro, cloné à part puis vérifié sur le poste de référ
 `shell` de `setup.sh` voit son écriture du profil refusée, et le profil garde son empreinte. Mais
 la commande ne rend pas la main dans ses 300 s, et reste « à vérifier ». L'établi naît vide (un
 cache par session, ci-dessous) : Node, puis `pip install` de toutes les dépendances, se
-téléchargent avant même `npm ci`. Et `npm ci` de `apps/web` échoue de lui-même en une minute, parce
-que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash du Git d'origine.
+téléchargent avant même `npm ci`.
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
@@ -422,8 +443,11 @@ que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash 
   sur le même poste : l'enfant tourne bien à l'intégrité basse, et le témoin a survécu ;
 - écrire dans l'espace, l'établi et le dossier du CLI réussit ; écrire à côté échoue, et lire un
   fichier fermé échoue aussi ;
+- un runtime du Git d'origine tourne au niveau de la personne, et l'agent lance le bash de ce Git
+  par son chemin complet : le bash répond. Un `npm install` dont le `script-shell` est réglé sur ce
+  bash joue son `postinstall` ;
 - le lanceur abaisse le CLI et lui retire les variables `MAESTRO_*` et celles qu'il doit retenir.
-  Le reste de l'environnement passe ;
+  Le reste passe au filtre des variables nommées (§8) ;
 - une commande de vérification dont le script ajoute une ligne à un profil hors de la copie est
   jouée et échoue sur l'écriture refusée, dans une copie comme dans un clone neuf. Le profil garde
   son contenu et sa date, sans restauration. La commande voisine, qui n'écrit que dans sa copie et
@@ -443,22 +467,18 @@ que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash 
   l'autre. Les étiquettes restent après la session ;
 - **le réseau**, bouclage compris : l'agent joint ce qui écoute sur `127.0.0.1`, comme l'API de
   Maestro, un Redis ou le port de débogage d'un navigateur ;
-- **l'environnement** de la personne : l'agent en hérite, hors ce qui est retenu ci-dessus. Une
-  clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
+- **l'environnement** : l'agent ne reçoit que les variables nommées (§8), mais celles-là, il les
+  lit. Une clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
 - **un cache par session pour un agent** : ce qu'un outil range dans le profil (le cache de `npx`,
   par exemple) part avec l'établi de sa session, et se retélécharge à la suivante ;
 - **le cache d'un projet que la vérification garde** (#1709), deux risques acceptés avec la
   décision du 2026-11-17 :
   - un processus bas d'un **autre projet** peut écrire dans ce dossier, puisqu'il est étiqueté bas,
-    et la vérification suivante du projet relit et exécute ce qu'il y a laissé (une roue dans le
-    cache de pip est installée). « Par projet » garantit que Maestro ne fait pas passer un projet
-    dans l'autre, pas qu'un agent hostile d'un autre projet ne puisse pas y écrire ;
+    et la vérification suivante du projet relit ce qu'il y a laissé, qu'une commande peut
+    exécuter. « Par projet » garantit que Maestro ne fait pas passer un projet dans l'autre, pas
+    qu'un agent hostile d'un autre projet ne puisse pas y écrire ;
   - ce qu'une commande y laisse **persiste** jusqu'à la rétention, cache ou état d'un outil, et
     tout agent du poste peut le lire ;
-- **un outil que la personne a réglé sur le Git d'origine** : la copie de Git passe en tête du
-  `PATH`, mais un chemin écrit en toutes lettres dans un réglage mène au Git d'origine, dont le
-  runtime meurt à l'intégrité basse (`0xC0000022`). C'est le cas du `script-shell` de npm réglé
-  sur `C:\Program Files\Git\bin\bash.exe` : tout script `postinstall` meurt, et `npm ci` échoue ;
 - **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
   niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
   pas ;
@@ -469,3 +489,43 @@ que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash 
 (`tests/test_portee.py::test_tuer_python_par_son_nom_revient_a_une_personne`), que le poste l'eût
 refusé ou non. Le poste borne ce que le texte d'une commande ne dit pas ; il ne remplace pas le
 jugement.
+
+## 8. L'environnement d'une session : les variables nommées seules (#1312)
+
+Une session d'agent ne reçoit du poste que les variables que quelqu'un a **nommées**. Une variable
+ambiante que personne n'a nommée — un jeton de forge, la clé d'un autre service, une variable de
+Maestro — n'y entre pas, à tous les niveaux d'intégrité.
+
+**Ce qui nomme une variable** (`maestro/sandbox/session_env.py`) :
+- le **socle** de toute session (`BASE_NAMES`) : ce sans quoi un programme ne démarre pas, ne
+  trouve ni le profil ni le temporaire (`PATH`, `SYSTEMROOT`, `USERPROFILE`, `HOME`, `TEMP`…), la
+  langue (`LANG`, `LC_*`), et les réglages réseau du poste (mandataire, certificats) ;
+- le **fournisseur** : ce qu'il pose lui-même (l'authentification, l'identité Git des commits de
+  l'agent, l'établi d'une session basse), ce dont son CLI a besoin (`CLAUDE_CODE_GIT_BASH_PATH`),
+  et les variables de l'espace du CLI (`ANTHROPIC_*`, `CLAUDE_*`) que les `.env` de Maestro
+  déclarent — c'est ainsi qu'on désigne une passerelle au CLI ;
+- la **personne**, par `MAESTRO_AGENT_ENV` : des noms séparés par des virgules, un `*` final pour
+  une famille (`JAVA_HOME,GRADLE_*`). C'est le geste pour un outil du projet qui a besoin d'une
+  variable du poste.
+
+**Comment.** Le SDK transmet toujours au CLI l'environnement entier de son processus, et n'offre
+aucun moyen d'en retirer une variable. Le filtre est donc posé au lanceur du confinement (§6), qui
+fait naître le CLI. Le fournisseur lui passe les variables ambiantes non nommées, chacune avec
+l'**empreinte** de sa valeur, jamais la valeur, et le lanceur retire celles qui arrivent
+inchangées. Ce que le SDK pose en chemin (son protocole, le dossier courant) a changé de valeur et
+reste : Maestro n'a pas à connaître les variables internes du SDK
+([docs/44](./44-decision-maestro-possede-ses-contrats.md)). La sonde du point de contrôle passe par
+le même lanceur, sous le même filtre.
+
+**Ce que ce filtre ne couvre pas :**
+- le **mode isolé** a sa propre liste blanche, plus étroite : les variables d'authentification
+  seules (§3) ;
+- une session **non confinée** — lanceur absent, CLI introuvable — reçoit l'environnement entier,
+  et la ligne « session non confinée » du journal le dit ;
+- les **chemins texte** (`generate`) : ils n'exposent aucun outil, rien n'y lit l'environnement ;
+- les **vérifications** que Maestro joue lui-même (§7) : elles tournent dans son environnement.
+
+**Prouvé** : `tests/test_session_env.py` (la règle, le lanceur joué pour de vrai, ce que le
+fournisseur nomme) ; sur le vrai CLI, la suite de contrat
+([docs/44 §7](./44-decision-maestro-possede-ses-contrats.md)) — une variable ambiante non nommée ne
+sort pas du shell de l'agent, la même nommée en sort.

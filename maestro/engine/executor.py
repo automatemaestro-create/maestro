@@ -205,6 +205,7 @@ from maestro.team.gap import MissingRole, missing_role
 from maestro.team.proposal import EXECUTION_TOOL
 from maestro.telemetry import (
     STEP_ACCEPTANCE,
+    STEP_VERSIONS,
     RunJournal,
     RunSpendRecorder,
     SpendingCap,
@@ -1155,6 +1156,9 @@ class LocalExecutor(TaskExecutor):
         # exécuteur qui sert plusieurs runs ne fait pas hériter à l'un la décision
         # de l'autre —, et jamais purgé non plus : un identifiant par run.
         self._equipe_actuelle: set[str] = set()
+        # Les runs dont le journal dit déjà sur quoi tourne le fournisseur (#1312),
+        # par `run_id`, même régime : une ligne par run, à sa première tâche.
+        self._versions_consignees: set[str] = set()
         # Et l'autre issue (#1260) : les compétences pour lesquelles un rôle a été
         # recruté pendant le run, par `run_id`, même régime.
         self._recrutees: dict[str, frozenset[str]] = {}
@@ -1275,6 +1279,39 @@ class LocalExecutor(TaskExecutor):
             dict(runtimes) if runtimes is not None else None
         )
 
+    async def _consigne_versions(self, journal: RunJournal, projet_id: str | None) -> None:
+        """Écrit une fois par run ce sur quoi tourne le fournisseur : SDK, CLI, image (#1312).
+
+        Le run est retenu avant d'attendre : deux tâches du même run qui démarrent de
+        front n'écrivent pas deux lignes. Lu hors de la boucle — le fournisseur peut
+        lancer un `--version`. Un fournisseur qui ne déclare rien n'écrit rien ;
+        celui dont la lecture échoue le dit sur la ligne : un run qui ne sait pas
+        dire sur quoi il a tourné dit au moins cela, et sa tâche n'échoue pas pour
+        autant.
+        """
+        if journal.run_id in self._versions_consignees:
+            return
+        self._versions_consignees.add(journal.run_id)
+        try:
+            lignes = await asyncio.to_thread(self._provider.versions_du_fournisseur)
+        except Exception as exc:  # noqa: BLE001 — dire ce qui a tourné n'échoue jamais une tâche
+            sortie = f"versions illisibles ({type(exc).__name__})"
+        else:
+            if not lignes:
+                return
+            sortie = " · ".join(f"{nom} : {version}" for nom, version in lignes.items())
+        journal.consigne(
+            etape=STEP_VERSIONS,
+            nom="Versions du fournisseur",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_TERMINEE,
+            entree="",
+            sortie=sortie,
+            usage=StepUsage(),
+            projet_id=projet_id,
+        )
+
     async def execute(
         self, task: Task, dependances: Sequence[TaskResult], journal: RunJournal
     ) -> TaskResult:
@@ -1302,7 +1339,11 @@ class LocalExecutor(TaskExecutor):
         à la tâche le délai qu'elle a déjà consommé. Ici et pas plus haut, parce
         que ni l'un ni l'autre n'a de sens en dehors d'une tâche : deux tâches
         exécutées de front n'attendent pas la même personne sur le même acte.
+
+        La première tâche d'un run écrit d'abord au journal ce sur quoi tourne le
+        fournisseur (#1312, `_consigne_versions`).
         """
+        await self._consigne_versions(journal, task.project_id)
         debut = perf_counter()
         deliberation = Deliberation()
         # Les deux attentes (#989), **inconnues** tant que la tâche n'est pas

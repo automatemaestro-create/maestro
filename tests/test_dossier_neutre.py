@@ -16,7 +16,8 @@ recevaient rien : seuls les trois chemins texte de l'adaptateur ne passaient auc
 ③ **le contrat, sur le vrai CLI** (`cli_reel`, sauté sauf `MAESTRO_TESTS_CLI_REEL=1`) : un
    mot-témoin posé dans la mémoire du dossier de l'API ressort d'un appel texte qui y tourne
    — l'échantillon fautif, qui prouve que la sonde voit la mémoire — et d'aucun des trois
-   chemins tels que Maestro les monte.
+   chemins tels que Maestro les monte. Ces deux tests font partie de la suite de contrat de
+   l'adaptateur (`claude_contract`, #1312, docs/44 §7).
 
 Le balayage qui exige un `cwd` de **toute** construction de `ClaudeAgentOptions` vit à côté
 des deux autres verrous, dans `tests/test_outillage_contexte.py`.
@@ -281,6 +282,7 @@ def _png_minimal() -> bytes:
     )
 
 
+@pytest.mark.claude_contract
 @pytest.mark.cli_reel
 def test_contrat_la_sonde_voit_la_memoire_du_dossier_courant(
     dossier_de_l_api: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
@@ -301,6 +303,7 @@ def test_contrat_la_sonde_voit_la_memoire_du_dossier_courant(
     assert temoin in reponse, reponse
 
 
+@pytest.mark.claude_contract
 @pytest.mark.cli_reel
 def test_contrat_aucun_appel_texte_ne_recoit_la_memoire_du_dossier_de_l_api(
     dossier_de_l_api: tuple[Path, str],

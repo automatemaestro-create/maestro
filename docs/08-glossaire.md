@@ -185,6 +185,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | établi | `workbench` | là où un agent essaie hors de son projet : ce que crée `mktemp -d`, que la portée reconnaît. À l'intégrité basse, chaque session a le sien, où mènent son temporaire et son `APPDATA`, et il est retiré avec elle |
 | cache de vérification | `verification_cache` | le `LOCALAPPDATA` que la vérification de l'outillage d'un projet garde d'un passage à l'autre, à l'intégrité basse : un par projet, jamais partagé, gardé par rétention |
 | espace de travail | `workspace` | le dossier jetable d'une tâche |
+| socle (d'environnement) | `base_names` | les variables du poste que toute session d'agent reçoit : chemins, profil, temporaire, langue, réseau |
+| variable nommée, retenue | `named`, `withheld` | une variable du poste qu'une session d'agent reçoit parce que quelqu'un l'a nommée ; celle que personne n'a nommée est retenue |
 | secret, coffre | `secret`, `vault` | une valeur sensible et son stockage chiffré |
 | rédaction (masquer) | `redaction` | les secrets masqués avant journalisation |
 | garde-fou (d'un run) | `guardrails` | les plafonds posés sur ce qu'un run ingère, lit ou dépense |
@@ -292,6 +294,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | amont, miroir | `upstream`, `mirror` | le registre distant, et sa copie locale |
 | admission | `admission` | la porte humaine d'un serveur MCP |
 | pool, activation | `pool`, `activation` | les serveurs d'un projet, et ceux qu'un agent monte |
+| suite de contrat | `contract` (marqueur `claude_contract`) | ce dont un adaptateur a besoin de son outil, prouvé sur l'outil réel avant toute montée de version |
+| versions (d'un fournisseur) | `runtime_versions` | ce sur quoi un run a tourné : le SDK, son CLI, le CLI de l'image du mode isolé |
 
 ### Poste et stack
 

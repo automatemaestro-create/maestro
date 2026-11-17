@@ -86,6 +86,17 @@ LANCEUR = [sys.executable, "-m", "maestro.sandbox.confinement"]
 #: alias a son test à elle, qui la provoque exprès.
 PYTHON = getattr(sys, "_base_executable", sys.executable)
 
+#: Ce que le faux CLI lit dans son environnement : sa fin et son arrière-plan. Le
+#: fournisseur les **nomme**, comme une personne nommerait la variable dont le build
+#: de son agent a besoin : une variable ambiante que personne ne nomme n'entre pas
+#: dans une session (#1312, `maestro.sandbox.session_env`).
+CANAL_DU_FAUX_CLI = ("MAESTRO_FAUX_CLI_*", "PID_FICHIER")
+
+
+def _fournisseur() -> ClaudeProvider:
+    """Le fournisseur Claude des chaînes réelles de ce fichier, qui nomme le canal du faux CLI."""
+    return ClaudeProvider(Credentials(), env_agent=CANAL_DU_FAUX_CLI)
+
 #: Ce qui lance, depuis n'importe quel processus Python, un dormeur **détaché** par
 #: un intermédiaire qui meurt aussitôt — le `bash` de l'incident, mort, et son
 #: `msedge` qui tourne encore. Détaché pour de bon : groupe et session à lui sous
@@ -280,7 +291,7 @@ def test_un_processus_lance_en_arriere_plan_est_arrete_a_la_fin_de_la_tache(
 ):
     releves: list[ReleveConfinement] = []
 
-    reponse = asyncio.run(_run_agent(ClaudeProvider(Credentials()), tmp_path, releves))
+    reponse = asyncio.run(_run_agent(_fournisseur(), tmp_path, releves))
 
     assert reponse == "Maquette vérifiée."
     pid = int(faux_cli.read_text(encoding="utf-8"))
@@ -300,7 +311,7 @@ def test_y_compris_quand_la_tache_echoue(faux_cli, tmp_path, monkeypatch):
     releves: list[ReleveConfinement] = []
 
     with pytest.raises(Exception):  # noqa: B017 — l'échec du SDK, quel que soit son type
-        asyncio.run(_run_agent(ClaudeProvider(Credentials()), tmp_path, releves))
+        asyncio.run(_run_agent(_fournisseur(), tmp_path, releves))
 
     pid = int(faux_cli.read_text(encoding="utf-8"))
     assert _mort_sous(pid), f"le processus {pid} survit à la tâche en échec"
@@ -315,7 +326,7 @@ def test_y_compris_quand_la_tache_est_annulee(faux_cli, tmp_path, monkeypatch):
 
     async def scenario() -> None:
         tache = asyncio.create_task(
-            _run_agent(ClaudeProvider(Credentials()), tmp_path, releves)
+            _run_agent(_fournisseur(), tmp_path, releves)
         )
         echeance = time.monotonic() + 30
         while not (faux_cli.exists() and faux_cli.read_text(encoding="utf-8").strip()):
@@ -336,7 +347,7 @@ def test_un_callback_qui_leve_ne_casse_pas_la_tache(faux_cli, tmp_path):
         raise RuntimeError("journal indisponible")
 
     reponse = asyncio.run(
-        ClaudeProvider(Credentials()).run_agent(
+        _fournisseur().run_agent(
             "Vérifie la maquette.",
             model="claude-opus-5",
             workspace=tmp_path,
@@ -373,7 +384,7 @@ def test_sans_lanceur_installe_la_session_tourne_et_le_dit(monkeypatch, tmp_path
     monkeypatch.setattr(claude_mod, "TextBlock", _Texte)
     releves: list[ReleveConfinement] = []
 
-    asyncio.run(_run_agent(ClaudeProvider(Credentials()), tmp_path, releves))
+    asyncio.run(_run_agent(_fournisseur(), tmp_path, releves))
 
     assert vu["cli_path"] is None
     assert ENV_COMMANDE not in vu["env"]
@@ -405,7 +416,7 @@ def test_la_session_de_l_agent_commite_sous_l_identite_de_maestro(monkeypatch, t
     monkeypatch.setattr(claude_mod, "AssistantMessage", _Message)
     monkeypatch.setattr(claude_mod, "TextBlock", _Texte)
 
-    asyncio.run(_run_agent(ClaudeProvider(Credentials()), tmp_path, []))
+    asyncio.run(_run_agent(_fournisseur(), tmp_path, []))
 
     env = vu["env"]
     assert isinstance(env, dict)
@@ -436,7 +447,7 @@ def test_la_sonde_du_point_de_controle_passe_par_le_meme_lanceur(monkeypatch, tm
     monkeypatch.setattr(confinement, "chemin_lanceur", lambda: Path("maestro-confinement"))
     cli = DoubleCli(monkeypatch, session=_livre)
 
-    assert _sous_politique(ClaudeProvider(Credentials()), tmp_path) == "Livré."
+    assert _sous_politique(_fournisseur(), tmp_path) == "Livré."
 
     (sonde,) = cli.sondes
     (session,) = cli.sessions
@@ -453,7 +464,7 @@ def test_une_sonde_qui_leve_ne_laisse_pas_le_dossier_du_releve(monkeypatch, tmp_
     cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
 
     with pytest.raises(GardeFouInoperant):
-        _sous_politique(ClaudeProvider(Credentials()), tmp_path)
+        _sous_politique(_fournisseur(), tmp_path)
 
     (sonde,) = cli.sondes
     assert cli.sessions == []
