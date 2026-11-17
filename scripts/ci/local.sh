@@ -247,6 +247,8 @@ liste_jobs() {
     lanceur="python -m pytest"
     if [ "$PYTEST_REGIME_DEMANDE" = natif ]; then
       ou="venv du poste (--natif)"
+    elif [ "$DOCKER_CONFINE" = 1 ]; then
+      ou="venv du poste — Docker injoignable à l'intégrité basse d'un agent confiné, régime dégradé"
     else
       ou="venv du poste — Docker ne répond pas, régime dégradé"
     fi
@@ -1590,11 +1592,18 @@ if [ "$PYTEST_JOUE" = 1 ] && [ "$PYTEST_REGIME" = natif ]; then
   if [ -n "$PYTEST_REGIME_MOTIF" ]; then
     printf '%spytest a joué en NATIF%s — %s.\n' "$C_Y" "$C_0" "$PYTEST_REGIME_MOTIF"
     printf 'Ce verdict ne porte donc que sur cette plateforme, et il a coûté dix à trente fois le\n'
-    # « Démarrer Docker suffit » n'est plus vrai depuis #425 : s'il était seulement éteint, le
-    # filet vient de le démarrer lui-même. Arriver ici veut donc dire qu'il n'y en a pas, ou que le
-    # démarrage a échoué — et c'est le MOTIF ci-dessus, jamais cette ligne, qui dit lequel des deux.
-    printf 'régime nominal. Docker Desktop rétablit les deux, et le filet le démarre de lui-même\n'
-    printf 'dès lors qu'\''il est installé (docs/10 §8.4).\n\n'
+    if [ "$DOCKER_CONFINE" = 1 ]; then
+      # Confiné (#1714), le filet ne peut rien rétablir d'ici : le remède est d'en sortir, pas de
+      # démarrer Docker Desktop, que le motif ci-dessus vient d'écarter.
+      printf 'régime nominal. Le confinement l'\''impose : le conteneur se rejoue hors confinement, par\n'
+      printf 'la personne ou par le pipeline de la PR (docs/17 §7).\n\n'
+    else
+      # « Démarrer Docker suffit » n'est plus vrai depuis #425 : s'il était seulement éteint, le
+      # filet vient de le démarrer lui-même. Arriver ici veut donc dire qu'il n'y en a pas, ou que
+      # le démarrage a échoué — et c'est le MOTIF ci-dessus, jamais cette ligne, qui dit lequel.
+      printf 'régime nominal. Docker Desktop rétablit les deux, et le filet le démarre de lui-même\n'
+      printf 'dès lors qu'\''il est installé (docs/10 §8.4).\n\n'
+    fi
   else
     printf '%spytest a joué en NATIF%s (demandé) — pas de contrôle croisé Windows/Linux.\n\n' "$C_Y" "$C_0"
   fi

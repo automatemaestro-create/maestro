@@ -764,8 +764,35 @@ def _pas_d_integrite_basse_d_office(
     en CI. Le marqueur `integrite_basse` efface la garde pour le test qui exerce le mécanisme.
     """
     if request.node.get_closest_marker(MARQUEUR_INTEGRITE_BASSE) is not None:
+        raison = injouable_a_ce_niveau()
+        if raison is not None:
+            pytest.skip(raison)
         return
     monkeypatch.setattr("maestro.sandbox.low_integrity.available", lambda: False)
+
+
+#: Pourquoi un test du mécanisme ne se joue pas dans une suite déjà abaissée (#1714).
+RAISON_DEJA_A_L_INTEGRITE_BASSE = (
+    "la suite tourne déjà à l'intégrité basse, celle d'un agent confiné : ce test compare un "
+    "processus abaissé au niveau de la personne, et son témoin naîtrait bas lui aussi — "
+    "injouable ici, il se joue hors confinement (docs/17 §7)"
+)
+
+
+def injouable_a_ce_niveau() -> str | None:
+    """La raison de ne pas exercer le mécanisme depuis ce processus, ou `None` (#1714).
+
+    Un test marqué `integrite_basse` fait naître un processus bas et le confronte à la
+    personne : un témoin qu'il ne doit pas arrêter, un dossier où il ne doit pas écrire.
+    Jouée par un agent confiné, la suite est déjà basse, et ce qu'elle prend pour la
+    personne l'est aussi : le test rougirait sans rien dire du code. Il est donc sauté,
+    et sa raison le dit. Le niveau se lit sur le jeton du processus, jamais deviné.
+    """
+    from maestro.sandbox import low_integrity
+
+    if low_integrity.available() and low_integrity.current_integrity() == "low":
+        return RAISON_DEJA_A_L_INTEGRITE_BASSE
+    return None
 
 
 @pytest.fixture(autouse=True)

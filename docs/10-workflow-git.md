@@ -3738,6 +3738,23 @@ Les points de conception, à comprendre avant d'y toucher :
 
   `MAESTRO_DOCKER_DEMARRAGE=0` éteint la tentative, `MAESTRO_DOCKER_DEMARRAGE_DELAI` déplace le
   plafond.
+- **Ni un démon que le confinement refuse (#1714).** Sous Windows, un agent de Maestro joue à
+  l'intégrité basse ([docs/17 §7](./17-isolation-execution.md)), et le filet qu'il lance aussi. Le
+  moteur de Docker Desktop refuse ce niveau, qu'il tourne ou non : mesuré le 2026-11-17 sur le
+  poste de référence, `docker version` y rend « permission denied » sur `dockerDesktopLinuxEngine`
+  comme sur `docker_engine`, et répond à la personne au même instant. #1688 avait annoncé un démon
+  « éteint », attendu 180 s un démarrage qui ne pouvait rien rendre, puis joué 52 suites en natif
+  en 35 min 26 s. Le filet lit donc le niveau d'intégrité de son processus : le SID `S-1-16-4096`
+  dans `whoami /groups`, un fait du jeton, jamais le texte de l'erreur de `docker`. Il ne s'en
+  sert que pour expliquer un moteur muet :
+  - un moteur qui répond garde le conteneur, à n'importe quel niveau ;
+  - un moteur muet, à l'intégrité basse, ne déclenche aucun démarrage. Le repli natif nomme le
+    confinement, `--list` l'annonce, et la suite du verdict renvoie au conteneur rejoué hors
+    confinement, par la personne ou par le pipeline de la PR.
+
+  Le tube n'est pas ouvert à ce niveau, et c'est une décision : qui commande le moteur monte dans
+  un conteneur n'importe quel dossier que la personne peut écrire. L'ouvrir défairait le
+  confinement.
 - **L'étiquette de l'image porte l'empreinte de `pyproject.toml` et de
   [`scripts/ci/pytest.Dockerfile`](../scripts/ci/pytest.Dockerfile).** Une dépendance ajoutée au
   dépôt change l'étiquette, donc l'image manque, donc elle est reconstruite : personne n'a à s'en

@@ -10,7 +10,9 @@ project and the workbench.
 after the same test has proved, on that very child, that it runs at low integrity and
 that a witness named after nothing else on the machine survives a stop by its name. A
 low process does not even see the person's processes; the only ones it could stop are
-other low processes, and the suite starts none outside these tests.
+other low processes, and the suite starts none outside these tests. A suite that already
+runs low, as a confined agent's does, skips them with their reason (`conftest`, #1714):
+there, the witness would be low too.
 """
 
 from __future__ import annotations
@@ -21,11 +23,13 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+import conftest  # the folder's conftest, on pytest's sys.path
 import pytest
 
 from maestro.config import ConfigError, load_settings
@@ -526,6 +530,58 @@ def test_a_postinstall_plays_under_a_script_shell_set_on_the_original_git_s_bash
     played = workspace / "postinstall.txt"
     assert played.is_file(), output
     assert played.read_text(encoding="utf-8").strip(), "the postinstall was not played by bash"
+
+
+# --- A suite that already runs at low integrity (#1714) ------------------------------------
+
+
+def test_a_suite_at_low_integrity_names_why_the_mechanism_cannot_be_played_there(monkeypatch):
+    """Played by a confined agent, these tests would compare low to low.
+
+    Their witness is born low and a low process stops it; their "outside" folder lies in
+    the agent's low workbench and a low process writes there. They would fail without
+    saying anything of the code, so they are skipped with this reason.
+    """
+    monkeypatch.setattr(low_integrity, "available", lambda: True)
+    monkeypatch.setattr(low_integrity, "current_integrity", lambda: "low")
+    reason = conftest.injouable_a_ce_niveau()
+    assert reason is not None and "intégrité basse" in reason
+    for level in ("medium", "high"):
+        monkeypatch.setattr(low_integrity, "current_integrity", lambda level=level: level)
+        assert conftest.injouable_a_ce_niveau() is None
+    monkeypatch.setattr(low_integrity, "available", lambda: False)
+    monkeypatch.setattr(low_integrity, "current_integrity", lambda: "low")
+    assert conftest.injouable_a_ce_niveau() is None
+
+
+@on_windows
+@pytest.mark.integrite_basse
+def test_a_suite_played_at_low_integrity_skips_these_tests_with_their_reason(
+    tmp_path, monkeypatch, git_tools
+):
+    """The suite itself, born low as an agent's would be: the low tests say why they skip.
+
+    The test it plays only runs `whoami`: nothing here may stop or write anything of the
+    person's. It is played by the base interpreter, as the other children of this file
+    are, with the worktree and the venv's packages on its path.
+    """
+    monkeypatch.setattr(low_session, "outils_du_poste", lambda: git_tools)
+    workspace = tmp_path / "espace"
+    workspace.mkdir()
+    session = low_session.prepare(workspace, cli_folder=None)
+    target = "tests/test_low_integrity.py::test_a_tree_born_at_low_integrity_runs_at_low_integrity"
+    path = os.pathsep.join([str(ROOT), sysconfig.get_path("purelib")])
+    try:
+        code, output = _play(
+            [BASE_PYTHON, "-m", "pytest", target, "-rs", "-q", "-p", "no:cacheprovider"],
+            env={**os.environ, **session.env, "PYTHONPATH": path, "PYTHONIOENCODING": "utf-8"},
+            cwd=ROOT,
+        )
+    finally:
+        session.close()
+    assert code == 0, output
+    assert "1 skipped" in output, output
+    assert "intégrité basse" in output, output
 
 
 @on_windows
