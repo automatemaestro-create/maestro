@@ -428,11 +428,13 @@ tout à chaque vérification (mesuré le 2026-11-17). `setup.sh` télécharge No
 `.tools/node/` de la copie, et un clone neuf le retélécharge, comme il recrée son `.venv` et ses
 `node_modules`.
 
-Sur le dépôt de Maestro, cloné à part puis vérifié sur le poste de référence (2026-11-17), l'étape
-`shell` de `setup.sh` voit son écriture du profil refusée, et le profil garde son empreinte. Mais
-la commande ne rend pas la main dans ses 300 s, et reste « à vérifier ». L'établi naît vide (un
-cache par session, ci-dessous) : Node, puis `pip install` de toutes les dépendances, se
-téléchargent avant même `npm ci`.
+Sur le dépôt de Maestro, cloné à part puis vérifié deux fois de suite sur le poste de référence
+(2026-11-17, #1709), l'étape `shell` de `setup.sh` voit son écriture du profil refusée, et le
+profil garde son empreinte. Chaque passage rend un verdict joué, « échouée » sur cette seule étape :
+268 s à froid, puis 232 s avec le cache du projet (253 Mo, celui de npm). Le cache fait gagner une
+demi-minute. La marge qui reste sous les 300 s est mince, parce que Node, le `.venv` et ses
+dépendances pip se retéléchargent à chaque passage. Un passage à froid joué pendant la vérification
+d'une autre session n'a pas rendu la main dans les 300 s, et est resté « à vérifier ».
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
