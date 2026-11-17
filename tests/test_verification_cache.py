@@ -190,8 +190,23 @@ def test_a_cache_held_by_another_process_is_not_shared_and_its_death_releases_it
         child.kill()
         child.wait()
 
-    with held(root, caches=caches) as after:
-        assert after == caches / project_key(root) / CACHE_FOLDER
+    assert _held_once_released(root, caches) == caches / project_key(root) / CACHE_FOLDER
+
+
+def _held_once_released(root: Path, caches: Path, *, within_s: float = 10.0) -> Path | None:
+    """Opens `root`'s cache as soon as the system has released a dead holder's lock.
+
+    Windows unlocks what a dead process held at a moment that depends on the system's
+    load (`LockFileEx`): the release is certain, not immediate. Meanwhile a verification
+    keeps to its workbench, which is the behaviour `held` owes; the test waits for the
+    release it asserts, never for a fixed time.
+    """
+    deadline = time.monotonic() + within_s
+    while True:
+        with held(root, caches=caches) as local:
+            if local is not None or time.monotonic() > deadline:
+                return local
+        time.sleep(0.05)
 
 
 def test_a_cache_that_cannot_be_opened_leaves_the_verification_to_its_workbench(
