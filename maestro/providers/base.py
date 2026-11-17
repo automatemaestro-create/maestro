@@ -451,7 +451,10 @@ class AccesFournisseur:
 
     `temoins` sont les clés des constats de la sonde du poste (`maestro.poste`)
     qui attestent cet accès ici : un CLI trouvé, une clé, un serveur qui répond.
-    `cle_requise` est vrai quand l'accès ne marche pas sans clé.
+    `cle_requise` est vrai quand l'accès ne marche pas sans clé. `connexion` rend
+    la commande qu'une personne lance pour connecter cet accès sur ce poste, quand
+    il en demande une. Elle est résolue quand l'accès est servi, parce qu'une
+    installation la pose hors du `PATH` (#1515).
     """
 
     id: str
@@ -462,6 +465,7 @@ class AccesFournisseur:
     adresse: str | None = None
     adresse_defaut: str | None = None
     temoins: tuple[str, ...] = ()
+    connexion: Callable[[], str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """L'accès en dict JSON-sérialisable : des noms de variables, jamais une valeur secrète."""
@@ -473,6 +477,7 @@ class AccesFournisseur:
             "adresse": self.adresse,
             "adresse_defaut": self.adresse_defaut,
             "temoins": list(self.temoins),
+            "connexion": self.connexion() if self.connexion is not None else None,
         }
 
 

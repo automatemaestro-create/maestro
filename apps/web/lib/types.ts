@@ -1300,6 +1300,9 @@ export type Fournisseur = {
  * l'adresse quand l'accès en a une, `adresse_defaut` celle qu'il prend sans
  * réglage. `temoins` sont les clés des constats de la sonde du poste
  * (`ConstatPoste.cle`) qui disent l'accès **présent ici** — présent, pas éprouvé.
+ * `connexion` est la commande qu'une personne lance dans un terminal pour
+ * connecter l'accès sur ce poste, telle que l'API l'a trouvée (#1515), ou `null`
+ * quand l'accès n'en demande pas.
  */
 export type AccesFournisseur = {
   id: string;
@@ -1309,6 +1312,7 @@ export type AccesFournisseur = {
   adresse: string | null;
   adresse_defaut: string | null;
   temoins: string[];
+  connexion: string | null;
 };
 
 /** Les motifs d'une épreuve (`maestro.providers.base.MOTIFS_EPREUVE`). */

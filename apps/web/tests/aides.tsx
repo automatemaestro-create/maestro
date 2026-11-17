@@ -539,6 +539,7 @@ export const ACCES_CLAUDE: AccesFournisseur[] = [
     adresse: null,
     adresse_defaut: null,
     temoins: ["cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"],
+    connexion: '"C:\\Program Files\\Maestro\\python\\maestro-connexion.exe"',
   },
   {
     id: "cle",
@@ -548,6 +549,7 @@ export const ACCES_CLAUDE: AccesFournisseur[] = [
     adresse: null,
     adresse_defaut: null,
     temoins: ["cle:ANTHROPIC_API_KEY"],
+    connexion: null,
   },
 ];
 
@@ -560,6 +562,7 @@ export const ACCES_OPENAI: AccesFournisseur[] = [
     adresse: "OPENAI_BASE_URL",
     adresse_defaut: "http://localhost:11434/v1",
     temoins: ["serveur:ollama", "serveur:openai-configure"],
+    connexion: null,
   },
   {
     id: "cle",
@@ -569,6 +572,7 @@ export const ACCES_OPENAI: AccesFournisseur[] = [
     adresse: "OPENAI_BASE_URL",
     adresse_defaut: "https://api.openai.com/v1",
     temoins: ["cle:OPENAI_API_KEY"],
+    connexion: null,
   },
 ];
 

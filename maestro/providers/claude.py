@@ -73,7 +73,15 @@ from maestro.installation import cli_claude_resolu
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
 from maestro.projets.modele import ENV_IDENTITE_GIT
-from maestro.providers import blocage, checklist, controle, courrier, decision, question
+from maestro.providers import (
+    blocage,
+    checklist,
+    claude_login,
+    controle,
+    courrier,
+    decision,
+    question,
+)
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -360,6 +368,9 @@ class ClaudeProvider(ModelProvider):
             libelle="Abonnement Claude, par Claude Code sur ce poste",
             variables=(("CLAUDE_AUTH_MODE", AuthMode.SUBSCRIPTION.value),),
             temoins=("cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"),
+            # Les sessions de Maestro ont leur propre dossier du CLI : ce qui les
+            # connecte est `maestro-connexion`, pas la connexion du CLI de la personne.
+            connexion=claude_login.command,
         ),
         AccesFournisseur(
             id="cle",

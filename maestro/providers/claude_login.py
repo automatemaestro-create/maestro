@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -29,8 +30,32 @@ from pathlib import Path
 from maestro.emplacements import dossier_du_cli_claude
 from maestro.installation import cli_claude_resolu
 
+#: The command's name, as `pyproject.toml` declares it.
+COMMAND = "maestro-connexion"
+
 #: How long `auth status` may take to answer.
 _STATUS_TIMEOUT_S = 30.0
+
+
+def command() -> str:
+    """What the person types in a terminal to connect Maestro on this machine.
+
+    An installation puts the command next to its interpreter, off the `PATH`: its full
+    path is named then. A clone whose package was not reinstalled has no command at
+    all, and the module is named through this interpreter. A path with a space is
+    quoted, so the line can be pasted as it is.
+    """
+    name = COMMAND + (".exe" if sys.platform == "win32" else "")
+    beside = Path(sys.executable).with_name(name)
+    if beside.is_file():
+        return _quoted(str(beside))
+    if shutil.which(COMMAND):
+        return COMMAND
+    return f"{_quoted(sys.executable)} -m {__name__}"
+
+
+def _quoted(path: str) -> str:
+    return f'"{path}"' if " " in path else path
 
 
 def cli_environment(folder: Path | None = None) -> dict[str, str]:

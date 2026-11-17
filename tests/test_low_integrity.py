@@ -104,6 +104,25 @@ def test_the_provider_built_from_settings_uses_the_machine_s_cli_folder(monkeypa
     assert ClaudeProvider.from_settings(_settings(MODE_HOTE)).integrite_basse is False
 
 
+def test_the_subscription_access_names_the_command_that_connects_maestro(monkeypatch, tmp_path):
+    from maestro.providers import claude_login
+
+    interpreter = tmp_path / "Program Files" / "Maestro" / "python" / "python.exe"
+    interpreter.parent.mkdir(parents=True)
+    monkeypatch.setattr(sys, "executable", str(interpreter))
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    # A clone whose package was not reinstalled: the module, through this interpreter.
+    assert claude_login.command() == f'"{interpreter}" -m maestro.providers.claude_login'
+    # An installation: the command beside its interpreter, off the PATH, quoted.
+    name = claude_login.COMMAND + (".exe" if WINDOWS else "")
+    (interpreter.parent / name).write_bytes(b"")
+    assert claude_login.command() == f'"{interpreter.parent / name}"'
+    subscription = next(a for a in ClaudeProvider.ACCES if a.id == "abonnement")
+    assert subscription.to_dict()["connexion"] == claude_login.command()
+    others = [a for a in ClaudeProvider.ACCES if a.id != "abonnement"]
+    assert all(a.to_dict()["connexion"] is None for a in others)
+
+
 def test_the_provider_lowers_only_on_the_host():
     conteneur = IsolationConfig(image="i", reseau="bridge", shim=Path("shim"))
     provider = ClaudeProvider(Credentials(), isolation=conteneur, integrite_basse=True)
