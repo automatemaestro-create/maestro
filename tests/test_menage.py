@@ -37,6 +37,7 @@ from maestro.emplacements import (
     NOM_JETABLE,
     NOM_PROJETS,
     TEMOIN_PID,
+    caches_de_verification,
     racine_ateliers,
     racine_etat,
     racine_projets,
@@ -161,6 +162,7 @@ def poste(maison: Path, temporaire: Path) -> dict[str, Path]:
         "jeton": etat / "jeton-api",
         "ateliers": _dossier(racine_ateliers() / "scenarios"),
         "profil": _dossier(etat / NOM_PROFIL_NAVIGATEUR),
+        "caches_verification": _dossier(caches_de_verification() / "0123456789abcdef").parent,
         "intrus_etat": _dossier(etat / "banc-728"),
         "hote_mort": _dossier(jetable / "maestro-hote-run-1-abcdefgh"),
         "stack": _dossier(jetable / "controltower-8058-3058"),
@@ -198,6 +200,7 @@ def test_le_check_montre_chaque_racine_et_le_hors_racine_avec_taille_et_propriet
         "projet": None,  # la racine des projets se montre entière, pas projet par projet
         "jeton": (RACINE_ETAT, DECLARE),
         "profil": (RACINE_ETAT, DECLARE),
+        "caches_verification": (RACINE_ETAT, DECLARE),
         "intrus_etat": (RACINE_ETAT, A_RETIRER),
         "hote_mort": (RACINE_JETABLE, RAMASSABLE),
         "stack": (RACINE_JETABLE, A_SON_PROPRIETAIRE),

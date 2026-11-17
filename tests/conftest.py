@@ -161,6 +161,12 @@ test qui vérifie un démarrage attendrait le service d'un run en vol sur la mac
 délai d'une commande, cinq minutes), et sa preuve dirait qu'il a attendu : un verdict qui
 dépend du poste. Tant qu'un test garde le répertoire temporaire du poste, son créneau est celui
 de la session ; un test qui pose son propre `TMPDIR` garde le comportement réel.
+
+Quatorzième garde-fou (#1709) : **aucun test n'ouvre les caches de vérification du poste**. À
+l'intégrité basse, une vérification de l'outillage tient le cache de son projet sous
+`~/.maestro/verification-caches/` : un test qui l'atteindrait y laisserait un dossier, et en
+trouverait un laissé par le poste, un verdict qui dépendrait de lui. La racine des caches est un
+dossier de la session ; un test qui en veut une à lui la passe (`held(…, caches=…)`).
 """
 
 from __future__ import annotations
@@ -753,6 +759,21 @@ def _creneau_des_services_isole(
         return a_la_session if racine == du_poste else racine
 
     monkeypatch.setattr("maestro.sandbox.verification.racine_du_creneau", racine_du_creneau)
+
+
+@pytest.fixture(autouse=True)
+def _caches_de_verification_isoles(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Les caches de vérification à la session, jamais ceux du poste (#1709).
+
+    Ce qui est remplacé est `maestro.sandbox.verification_cache.caches_de_verification`, que
+    `held` relit **à chaque ouverture**.
+    """
+    a_la_session = tmp_path_factory.getbasetemp() / "caches-de-verification"
+    monkeypatch.setattr(
+        "maestro.sandbox.verification_cache.caches_de_verification", lambda: a_la_session
+    )
 
 
 @pytest.fixture(autouse=True)

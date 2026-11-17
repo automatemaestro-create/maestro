@@ -10,11 +10,13 @@ répond tient en trois lignes, et ce module en est la seule source :
   défaut (#1022). Jamais ramassée.
 - `~/.maestro/` (`racine_etat`) — l'état du poste : jeton de l'API, journal
   SQLite, profil de navigateur, dossier du CLI des sessions (`dossier_du_cli_claude`),
-  outils copiés pour les agents (`outils_du_poste`, #1515), et sous `ateliers/`
-  (`racine_ateliers`, #1457) les ateliers des passages (exercices, banc comparatif)
-  et de la relecture visuelle. Seuls ces
-  ateliers sont vidés, et par **rétention** — leurs derniers passages restent,
-  ce sont les pièces d'un rouge (`maestro.scenarios.projets.retenir`).
+  outils copiés pour les agents (`outils_du_poste`, #1515), les caches que la
+  vérification de l'outillage garde projet par projet (`caches_de_verification`,
+  #1709), et sous `ateliers/` (`racine_ateliers`, #1457) les ateliers des passages
+  (exercices, banc comparatif) et de la relecture visuelle. Seuls ces caches et ces
+  ateliers sont vidés, et par **rétention** — les caches des projets vérifiés depuis
+  peu (`maestro.sandbox.verification_cache`), les derniers passages des ateliers, qui
+  sont les pièces d'un rouge (`maestro.scenarios.projets.retenir`).
 - `<temp>/maestro/` (`racine_jetable`) — le jetable : ateliers d'hôte, espaces
   des tâches, copies de vérification. Ramassée (`maestro.sandbox.ramassage`).
 
@@ -110,6 +112,13 @@ NOM_CLI_CLAUDE = "claude"
 #: for Windows, dont le runtime ne démarre pas à l'intégrité basse sous son propre
 #: chemin (`maestro.sandbox.low_session`, #1515).
 NOM_OUTILS = "outils"
+
+#: Le dossier de l'état du poste où la vérification de l'outillage garde, **un par
+#: projet**, le `LOCALAPPDATA` de ses commandes jouées à l'intégrité basse (#1709) : ce
+#: que les outils y rangent (caches de paquets) survit d'une vérification à l'autre du
+#: même projet, jamais d'un projet à l'autre (`maestro.sandbox.verification_cache`).
+#: Un nom neuf qui s'enregistre, donc en anglais (docs/55 §4).
+NOM_CACHES_DE_VERIFICATION = "verification-caches"
 
 #: Le dossier du code qui porte la configuration **livrée** : les défauts suivis par le
 #: dépôt, que le paquet embarque tels quels (`core/mcp/*.json`, `core/permissions/*.json`).
@@ -266,6 +275,16 @@ def dossier_du_cli_claude() -> Path:
 def outils_du_poste() -> Path:
     """`~/.maestro/outils` — les outils qu'un agent reçoit en copie. Non créé."""
     return racine_etat() / NOM_OUTILS
+
+
+def caches_de_verification() -> Path:
+    """`~/.maestro/verification-caches` — un cache par projet vérifié, gardé par rétention.
+
+    Non créé : `maestro.sandbox.verification_cache` y ouvre le dossier d'un projet à sa
+    première vérification à l'intégrité basse, et sa rétention retire ceux qu'aucune
+    vérification n'a rouverts depuis longtemps.
+    """
+    return racine_etat() / NOM_CACHES_DE_VERIFICATION
 
 
 # ── Le répertoire temporaire ──────────────────────────────────────────────────

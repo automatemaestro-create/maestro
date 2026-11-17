@@ -51,8 +51,9 @@ docs/38 §4.1) et dans le **rapport** montré à la personne, commande par comma
   en donne les cas) : la copie protège la racine, pas le profil de la personne, où un
   script d'installation écrit sans que son texte le dise. Là où les agents tournent à
   l'intégrité basse, chaque commande y joue aussi, et ce qu'elle écrirait hors de sa
-  copie est refusé par le poste. Là où ils sont bornés et que le poste ne peut pas
-  borner la vérification, rien n'est joué, et la raison le dit.
+  copie est refusé par le poste, hors le cache de son projet où ses outils rangent leurs
+  paquets d'une vérification à l'autre (#1709). Là où ils sont bornés et que le poste ne
+  peut pas borner la vérification, rien n'est joué, et la raison le dit.
 
 ⚠ **L'analyse n'exécute toujours rien** (docs/38, promesse n° 2 de #1030) : ce
 module n'est appelé qu'à l'écriture (`maestro.outillage.ecriture`), après le geste
@@ -526,7 +527,7 @@ class Verificateur:
             borne = execution.borne_du_poste()
             with (
                 _espace_de_jeu(racine, perimetre, versionne=versionne) as copie,
-                _sous_la_borne(copie, borne, joueur, interprete) as (joueur, interprete),
+                _sous_la_borne(racine, copie, borne, joueur, interprete) as (joueur, interprete),
             ):
                 portee = PorteeProjet(racine=copie)
                 debut = time.monotonic()
@@ -677,18 +678,19 @@ def _sans_espace_de_jeu(exc: Exception) -> str:
 
 @contextmanager
 def _sous_la_borne(
-    copie: Path, borne: str, joueur: Joueur, interprete: tuple[str, ...]
+    racine: Path, copie: Path, borne: str, joueur: Joueur, interprete: tuple[str, ...]
 ) -> Iterator[tuple[Joueur, tuple[str, ...]]]:
     """Le joueur et l'interpréteur des commandes jouées dans `copie`, sous `borne` (#1691).
 
     À l'intégrité basse, chaque commande reçoit l'abaissement de la copie et le bash qui
     démarre abaissé ; ailleurs, rien ne change. L'abaissement se prépare une fois pour
-    toute la vérification, et part avec elle.
+    toute la vérification, et part avec elle. Son `LOCALAPPDATA` est le cache du projet de
+    `racine` (#1709), que la vérification suivante du même projet retrouve.
     """
     if borne != execution.BORNE_INTEGRITE_BASSE:
         yield joueur, interprete
         return
-    with execution.abaissement(copie) as abaisse:
+    with execution.abaissement(copie, projet=racine) as abaisse:
         yield functools.partial(joueur, abaissement=abaisse), abaisse.interprete
 
 
