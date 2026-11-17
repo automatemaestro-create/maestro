@@ -233,18 +233,12 @@ fi
 # PIDS_SUR_PORT, lus dans la table des écoutes d'`etat-stack.sh` (#1696). Une table qui ne s'est pas
 # lue entière se dit, sous le préfixe de l'appelant : le constat qui suit juge ce qu'elle a manqué.
 pids_sur_port() {
-  port="$1"
-  PIDS_SUR_PORT=""
   code_table=0
-  etat_stack_ecoutes || code_table=$?
+  etat_stack_pids_du_port "$1" || code_table=$?
   if [ "$code_table" != 0 ]; then
     echo "[$2] ⚠ $ETAT_STACK_ECOUTES_AVIS"
   fi
-  while read -r port_lu pid_lu; do
-    [ "$port_lu" = "$port" ] || continue
-    case "$pid_lu" in '' | *[!0-9]*) continue ;; esac
-    case " $PIDS_SUR_PORT " in *" $pid_lu "*) ;; *) PIDS_SUR_PORT="$PIDS_SUR_PORT $pid_lu" ;; esac
-  done <<<"$ETAT_STACK_ECOUTES"
+  PIDS_SUR_PORT="$ETAT_STACK_PIDS"
 }
 
 # Libère le port d'un service de la stack (« API » ou « UI ») : l'ancienne session qu'on remplace,

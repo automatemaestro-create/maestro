@@ -104,21 +104,29 @@ case "$(uname -s)" in
   *) WINDOWS=0 ;;
 esac
 
-# Les PID qui ÉCOUTENT sur un port (même repérage que scripts/controltower/start.sh).
+# Qui écoute sur un port se lit dans `etat-stack.sh`, seul lecteur de la table des écoutes du dépôt
+# (#1696) : sous Windows, la table TCP du système, et non `netstat`, qui tait les écoutes qu'un poste
+# range dans un état 0 (#1579).
+# shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
+# n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
+. "$RACINE/scripts/controltower/etat-stack.sh"
+
+# Les PID qui ÉCOUTENT sur un port, dans PIDS_SUR_PORT, comme les désigne `start.sh`. Une table qui
+# ne s'est pas lue entière se dit : un repli peut ne pas voir une écoute, une lecture impossible n'en
+# voit aucune, et ce qu'elle n'a pas nommé n'est pas tué au jugé.
 pids_sur_port() {
-  port="$1"
-  if [ "$WINDOWS" = 1 ]; then
-    netstat -ano 2>/dev/null \
-      | awk -v port="$port" '$1 == "TCP" && $4 == "LISTENING" && $2 ~ (":" port "$") {print $5}' \
-      | sort -u
-  else
-    lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null | sort -u || true
+  code_table=0
+  etat_stack_pids_du_port "$1" || code_table=$?
+  if [ "$code_table" != 0 ]; then
+    echo "[captures] ⚠ $ETAT_STACK_ECOUTES_AVIS"
   fi
+  PIDS_SUR_PORT="$ETAT_STACK_PIDS"
 }
 
 liberer_port() {
   port="$1"; quoi="$2"
-  for pid in $(pids_sur_port "$port"); do
+  pids_sur_port "$port"
+  for pid in $PIDS_SUR_PORT; do
     echo "[captures] ancienne session ${quoi} sur :${port} (PID ${pid}) — arrêt"
     if [ "$WINDOWS" = 1 ]; then
       taskkill //F //PID "$pid" >/dev/null 2>&1 || true
