@@ -291,6 +291,20 @@ laisse 300 s. Une commande sans retour dans son délai est **non tranchée**, un
 installation qui n'a pas fini laisse les lignes suivantes se jouer : un succès y est tenu, un échec
 n'y tranche pas.
 
+**Une vérification se joue là où le livrable en rend le verdict** (#1695). Quand le projet dit
+rendre un verdict dans un autre environnement que le poste du banc (un autre système, un conteneur)
+et qu'il déclare une commande qui l'y joue d'ici, le lecteur retient celle-là. Sinon, il retient la
+variante du poste et nomme l'endroit où se rend ce verdict, avec son origine. Un échec sur le poste
+y est alors **non tranché** : rien ne dit qu'il vient du livrable. Un succès est tenu. Une
+installation qui échoue dans ces conditions laisse les lignes suivantes se jouer, comme celle qui
+n'a pas fini.
+
+La suite de Maestro rend son verdict sous Linux (#372). Rejouée en natif sous Windows, quatre tests
+qui dépendent du poste la faisaient manquer (#1696, #1697), sur ses deux côtés, alors que le
+livrable n'y était pour rien. Le système où tourne une intégration continue n'est pas une telle
+déclaration : sans elle, un échec sur le poste reste un manque. C'est ce que le banc existe pour
+voir, comme le typage du bilan de p5, qui ne passait que sur l'arbre de l'agent.
+
 **Une ligne que la personne a écartée est sans objet** (#1681). C'est le cas du formatage quand elle
 dit « aucun formateur appliqué au dépôt ». Un modèle lit ses choix et nomme les lignes qu'un choix
 exclut en toutes lettres. Ces lignes ne se jouent ni ne se jugent, et ne comptent ni pour ni contre.

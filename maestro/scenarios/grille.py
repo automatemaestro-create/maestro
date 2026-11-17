@@ -56,6 +56,18 @@ vient du livrable. Un succès, lui, est tenu. Le dépôt de Maestro se met en ro
 l'autre ne tient dans un délai fixe, et le temps qu'elles prennent ne dit rien de
 leur justesse.
 
+**Une vérification se joue là où le livrable en rend le verdict** (#1695). Quand le
+projet dit rendre un verdict dans un autre environnement que le poste (un autre
+système, un conteneur) et déclare une commande qui l'y joue d'ici, le lecteur retient
+celle-là. Sinon, il retient la variante du poste et nomme cet environnement
+(`ELSEWHERE:`) : un échec sur le poste ne tranche pas, puisque rien ne dit qu'il vient
+du livrable, et un succès est tenu. La suite de Maestro rend son verdict sous Linux
+(`scripts/ci/pytest.sh`, #372). Jouée en natif sous Windows, des tests qui dépendent du
+poste la faisaient manquer. Le système où tourne une intégration continue n'est pas une
+telle déclaration : sans elle, un échec sur le poste reste un manque. C'est ce que le
+banc existe pour voir, comme le typage du bilan de p5, qui ne passait que sur l'arbre de
+l'agent.
+
 **Une ligne que la personne a écartée est sans objet** (#1681). « Aucun formateur
 appliqué au dépôt » écarte le formatage : un modèle lit les choix de la personne et
 nomme les lignes qu'un choix exclut en toutes lettres (`lignes_ecartees`). Ces
@@ -244,6 +256,9 @@ CHAMP_SERVIR = "SERVIR"
 CHAMP_PAGES = "PAGES"
 CHAMP_ABSENTES = "ABSENTES"
 CHAMP_DELAIS = "DELAIS"
+#: Les lignes dont le projet dit rendre le verdict ailleurs que sur le poste, sans commande
+#: qui l'y joue d'ici (#1695). Un nom neuf qui voyage naît en anglais (docs/55 § 3).
+CHAMP_AILLEURS = "ELSEWHERE"
 AUCUNE = "aucune"
 
 #: Une ligne `CHAMP: valeur`. Des blancs **de ligne** seulement (`[ \t]`) : `\s`
@@ -260,6 +275,13 @@ _DELAI = re.compile(
     r"(?:[ \t]*\((?P<origine>[^()]*)\))?"
 )
 
+#: Un verdict du champ `ELSEWHERE:` : `CHAMP=où il se rend (d'où le lecteur le tient)`. L'endroit
+#: ne porte ni virgule ni parenthèse ; l'origine, entre parenthèses, peut porter des virgules.
+_AILLEURS = re.compile(
+    r"(?P<champ>[A-Z]+)[ \t]*=[ \t]*(?P<systeme>[^=(),]*[^=(),\s])"
+    r"(?:[ \t]*\((?P<origine>[^()]*)\))?"
+)
+
 SYSTEME_COMMANDES = (
     "Tu lis un dépôt de logiciel et tu nommes, pour chaque vérification, la commande que "
     "le projet lui-même déclare pour la jouer : dans ses scripts, son README, ses "
@@ -270,7 +292,9 @@ SYSTEME_COMMANDES = (
     "vérifie du même outil, tel que le projet l'installe. N'ajoute aucune option qui "
     "assouplirait la vérification.\n"
     "Les commandes se jouent par bash, depuis la racine d'un clone neuf du dépôt, l'une "
-    "après l'autre dans l'ordre ci-dessous, sur le système qu'on te donne. Quand le projet "
+    "après l'autre dans l'ordre ci-dessous, sur le système qu'on te donne. Chacune se joue "
+    "telle que tu la donnes, sans rien y ajouter : donne-la entière, avec les arguments que "
+    "son usage exige pour jouer la vérification sur tout le projet. Quand le projet "
     "déclare une même commande en plusieurs variantes selon le système, retiens celle de "
     "ce système. Le serveur reçoit son port dans la variable d'environnement PORT.\n"
     "Le délai d'une commande est celui que le projet laisse à la vérification qu'elle joue. "
@@ -280,6 +304,14 @@ SYSTEME_COMMANDES = (
     "pose aucune, c'est la limite par défaut de cet hébergement. Sinon, c'est la durée que "
     "ses instructions annoncent pour elle. Une vérification que ni son intégration continue "
     "ni ses instructions ne bornent n'a pas de délai : ne lui en invente pas.\n"
+    "Une vérification se joue là où le projet en rend le verdict. Quand le projet dit qu'il "
+    "rend le verdict d'une vérification dans un autre environnement que ce système (un autre "
+    "système d'exploitation, un conteneur) et qu'il déclare une commande qui l'y joue depuis "
+    "ce système (un script qui lance son conteneur, par exemple), retiens cette commande-là "
+    "plutôt que la variante qui se joue directement ici. S'il n'en déclare aucune, retiens "
+    f"celle qui se joue ici et nomme cet environnement sous {CHAMP_AILLEURS}. Le système où "
+    "tourne son intégration continue ne suffit pas : il faut que le projet dise que ce "
+    "verdict se rend là-bas et pas ici.\n"
     "Réponds par exactement ces lignes, et rien d'autre :\n"
     f"{CHAMPS_COMMANDES[AXE_INSTALLATION]}: la commande qui installe les dépendances, ou {AUCUNE}\n"
     f"{CHAMPS_COMMANDES[AXE_LINT]}: la commande du linter, ou {AUCUNE}\n"
@@ -293,7 +325,10 @@ SYSTEME_COMMANDES = (
     f"{CHAMP_ABSENTES}: des chemins qui doivent répondre 404, par exemple un contenu "
     f"inconnu sous une route paramétrée (au plus {ABSENTES_MAX}), ou {AUCUNE}\n"
     f"{CHAMP_DELAIS}: pour chaque commande ci-dessus que le projet borne, `CHAMP=secondes "
-    f"(d'où vient ce délai)`, séparés par des virgules, ou {AUCUNE}"
+    f"(d'où vient ce délai)`, séparés par des virgules, ou {AUCUNE}\n"
+    f"{CHAMP_AILLEURS}: pour chaque commande ci-dessus dont le projet dit rendre le verdict "
+    "ailleurs que sur ce système sans en déclarer une qui l'y joue d'ici, `CHAMP=où ce "
+    f"verdict se rend (d'où tu le tiens)`, séparés par des virgules, ou {AUCUNE}"
 )
 
 #: Les lignes qu'un choix de la personne peut écarter, sous le champ que le modèle nomme,
@@ -488,15 +523,37 @@ class Delai:
 
 
 @dataclass(frozen=True)
+class Ailleurs:
+    """Où le livrable dit rendre le verdict d'une ligne, quand ce n'est pas le poste et que
+    rien de ce qu'il déclare ne l'y joue d'ici — et d'où le lecteur le tient (#1695)."""
+
+    systeme: str
+    origine: str = ""
+
+    def en_mots(self) -> str:
+        """Pourquoi un échec de cette ligne sur le poste ne tranche pas."""
+        origine = f" ({self.origine})" if self.origine else ""
+        return (
+            f"le livrable rend ce verdict sous {self.systeme}{origine}, pas sur ce poste : "
+            "rien ne dit que l'échec vient de lui"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"system": self.systeme, "origin": self.origine}
+
+
+@dataclass(frozen=True)
 class Commandes:
-    """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, ses pages, et
-    le délai que le livrable laisse à celles qu'il borne."""
+    """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, ses pages, le
+    délai que le livrable laisse à celles qu'il borne, et les lignes dont il rend le verdict
+    ailleurs que sur le poste."""
 
     par_axe: Mapping[str, str] = field(default_factory=dict)
     servir: str = ""
     pages: tuple[str, ...] = ()
     absentes: tuple[str, ...] = ()
     delais: Mapping[str, Delai] = field(default_factory=dict)
+    ailleurs: Mapping[str, Ailleurs] = field(default_factory=dict)
     brut: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -507,6 +564,7 @@ class Commandes:
             "pages": list(self.pages),
             "absentes": list(self.absentes),
             "delais": {axe: delai.to_dict() for axe, delai in self.delais.items()},
+            "elsewhere": {axe: verdict.to_dict() for axe, verdict in self.ailleurs.items()},
             "brut": self.brut,
         }
 
@@ -968,6 +1026,7 @@ def commandes_depuis(brut: str) -> Commandes:
         pages=chemins(CHAMP_PAGES, PAGES_MAX),
         absentes=chemins(CHAMP_ABSENTES, ABSENTES_MAX),
         delais=_delais(valeur(CHAMP_DELAIS)),
+        ailleurs=_ailleurs(valeur(CHAMP_AILLEURS)),
         brut=brut or "",
     )
 
@@ -984,6 +1043,21 @@ def _delais(texte: str) -> dict[str, Delai]:
             continue
         delais[axe] = Delai(secondes, (trouve.group("origine") or "").strip())
     return delais
+
+
+def _ailleurs(texte: str) -> dict[str, Ailleurs]:
+    """Les verdicts du champ `ELSEWHERE:`, par ligne jouée — un champ hors des lignes jouées
+    ne s'applique à rien, et le premier de chaque ligne fait foi."""
+    axes = {champ: axe for axe, champ in CHAMPS_COMMANDES.items()}
+    ailleurs: dict[str, Ailleurs] = {}
+    for trouve in _AILLEURS.finditer(texte):
+        axe = axes.get(trouve.group("champ"))
+        if axe is None or axe in ailleurs:
+            continue
+        ailleurs[axe] = Ailleurs(
+            trouve.group("systeme").strip(), (trouve.group("origine") or "").strip()
+        )
+    return ailleurs
 
 
 def lignes_ecartees(lecteur: Lecteur, choix: Sequence[str], axes: Sequence[str] = AXES) -> Ecartees:
@@ -1029,9 +1103,11 @@ def _jouer_les_commandes(
 ) -> dict[str, Ligne]:
     """Les lignes jouées, dans l'ordre — une installation ratée laisse les suivantes non jouées.
 
-    Une commande sans retour dans son délai ne tranche pas (#1681), et une installation
-    qui n'a pas fini laisse les suivantes se jouer : un succès est tenu, un échec ne
-    tranche pas. Une ligne écartée par la personne ne se joue pas.
+    Une commande sans retour dans son délai ne tranche pas (#1681), ni l'échec d'une
+    ligne dont le livrable rend le verdict ailleurs que sur le poste (#1695). Une
+    installation qui n'a pas abouti pour l'une de ces raisons laisse les suivantes se
+    jouer : un succès est tenu, un échec ne tranche pas. Une ligne écartée par la
+    personne ne se joue pas.
     """
     lignes: dict[str, Ligne] = {}
     bloquee = illisible
@@ -1052,7 +1128,14 @@ def _jouer_les_commandes(
                 bloquee = "l'installation n'a pas de commande : rien n'a de quoi passer"
             continue
         lignes[axe], expiree = _jouer_la_ligne(
-            axe, commande, commandes.delais.get(axe), copie, poste, trace, inachevee
+            axe,
+            commande,
+            commandes.delais.get(axe),
+            commandes.ailleurs.get(axe),
+            copie,
+            poste,
+            trace,
+            inachevee,
         )
         if axe == AXE_INSTALLATION and lignes[axe].etat == MANQUE:
             bloquee = "l'installation a échoué : rien n'a de quoi passer"
@@ -1060,6 +1143,11 @@ def _jouer_les_commandes(
             inachevee = (
                 "derrière une installation qui n'a pas fini dans son délai, un échec ne dit "
                 "rien du livrable"
+            )
+        elif axe == AXE_INSTALLATION and lignes[axe].etat == NON_TRANCHE:
+            inachevee = (
+                "derrière une installation que le livrable ne fait pas sur ce poste, un échec "
+                "ne dit rien de lui"
             )
     if AXE_PAGES in axes:
         lignes[AXE_PAGES] = _pages(copie, commandes, illisible, lignes, poste, trace, ecartees)
@@ -1070,6 +1158,7 @@ def _jouer_la_ligne(
     axe: str,
     commande: str,
     delai: Delai | None,
+    ailleurs: Ailleurs | None,
     copie: Path,
     poste: PosteDuBanc,
     trace: Callable[[str, str], None],
@@ -1077,8 +1166,9 @@ def _jouer_la_ligne(
 ) -> tuple[Ligne, bool]:
     """La commande d'une ligne jouée dans son délai — la ligne, et si la commande a expiré.
 
-    Une commande sans retour ne tranche pas. Derrière une installation inachevée
-    (`inachevee` dit pourquoi), un échec ne tranche pas non plus.
+    Une commande sans retour ne tranche pas. Un échec ne tranche pas non plus quand le
+    livrable rend ce verdict ailleurs que sur le poste (`ailleurs`), ni derrière une
+    installation inachevée (`inachevee` dit pourquoi). Un succès est tenu.
     """
     delai_s = DELAI_DU_BANC_S if delai is None else delai.secondes
     fait = poste.jouer(f"{SANS_TERMINAL} {commande}", copie, delai_s)
@@ -1088,6 +1178,8 @@ def _jouer_la_ligne(
         etat = NON_TRANCHE
     elif fait.code == 0:
         etat = TENU
+    elif ailleurs is not None:
+        etat, mots = NON_TRANCHE, f"{mots} — {ailleurs.en_mots()}"
     elif inachevee:
         etat, mots = NON_TRANCHE, f"{mots} — {inachevee}"
     else:
@@ -1197,6 +1289,12 @@ def _commandes_en_mots(commandes: Commandes) -> str:
         for axe, delai in commandes.delais.items()
     )
     morceaux.append(f"délais du livrable : {delais or f'aucun, {DELAI_DU_BANC_S:g} s du banc'}")
+    ailleurs = ", ".join(
+        f"{LIBELLES[axe]} sous {verdict.systeme}"
+        + (f" ({verdict.origine})" if verdict.origine else "")
+        for axe, verdict in commandes.ailleurs.items()
+    )
+    morceaux.append(f"verdicts rendus ailleurs : {ailleurs or 'aucun'}")
     return " ; ".join(morceaux)
 
 
