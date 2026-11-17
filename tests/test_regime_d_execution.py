@@ -55,16 +55,16 @@ from maestro.controltower.regeneration_playbooks import (
     projets_avec_equipe,
 )
 from maestro.decideur import Decideur
-from maestro.equipe.creation import (
-    TITRE_SKILLS,
-    RoleValide,
-    SkillRetenu,
-    playbook_branche,
-    scinder_section_skills,
-)
 from maestro.lecture import OUTIL_SHELL
 from maestro.portee import PORTEE_PROJET, PORTEES, PorteeProjet
 from maestro.providers.base import ModelProvider
+from maestro.team.creation import (
+    SKILLS_HEADING,
+    RetainedSkill,
+    ValidatedRole,
+    playbook_with_sections,
+    split_skills_section,
+)
 
 #: Le régime que p5 avait écrit dans le playbook de `dev-nextjs`, au mot près pour le
 #: passage fautif : la règle inventée est la fin du premier cas.
@@ -89,10 +89,10 @@ METIER_DE_P5 = (
 
 #: Les skills de p5, tels que la création les branche.
 SKILLS_DE_P5 = (
-    SkillRetenu(
+    RetainedSkill(
         "mettre-en-route", ".agents/skills/mettre-en-route/SKILL.md", ("npm install",)
     ),
-    SkillRetenu(
+    RetainedSkill(
         "lancer-les-tests", ".agents/skills/lancer-les-tests/SKILL.md", ("npx vitest run",)
     ),
 )
@@ -106,18 +106,18 @@ POLITIQUE_DE_P5 = PolitiqueOutils(
 
 def _fiche_de_p5() -> AgentDefinition:
     """La fiche de `dev-nextjs` telle que la création l'a écrite : métier puis skills."""
-    role = RoleValide(
-        nom="dev-nextjs",
+    role = ValidatedRole(
+        name="dev-nextjs",
         role="Développeur Next.js du livre de recettes",
-        competences=("nextjs", "react", "typescript"),
+        competencies=("nextjs", "react", "typescript"),
         playbook=METIER_DE_P5,
         skills=SKILLS_DE_P5,
     )
     return AgentDefinition(
-        nom=role.nom,
+        nom=role.name,
         role=role.role,
-        competences=role.competences,
-        playbook=playbook_branche(role),
+        competences=role.competencies,
+        playbook=playbook_with_sections(role),
     )
 
 
@@ -342,13 +342,13 @@ def test_l_orchestrateur_dit_la_portee_avec_la_meme_precision_que_l_agent() -> N
 def test_la_section_des_skills_se_met_de_cote_et_se_remet_telle_quelle() -> None:
     fiche = _fiche_de_p5()
 
-    corps, section = scinder_section_skills(fiche.playbook)
+    corps, section = split_skills_section(fiche.playbook)
 
     assert corps == METIER_DE_P5
-    assert section.startswith(TITRE_SKILLS)
+    assert section.startswith(SKILLS_HEADING)
     # Le skill par son chemin ; sa commande, il la porte lui-même (#1520).
     assert "`.agents/skills/mettre-en-route/SKILL.md`" in section
-    assert scinder_section_skills(METIER_DE_P5) == (METIER_DE_P5, "")
+    assert split_skills_section(METIER_DE_P5) == (METIER_DE_P5, "")
 
 
 def test_la_reecriture_rend_le_playbook_apres_le_marqueur_et_rien_d_autre() -> None:
@@ -408,11 +408,11 @@ def test_la_regeneration_reecrit_le_metier_et_garde_les_skills_et_l_ancien_texte
     apres = store.pour_projet("prj-p5").lire("dev-nextjs")
     assert apres is not None
     assert "service extérieur" not in apres.playbook
-    _, section = scinder_section_skills(avant.playbook)
+    _, section = split_skills_section(avant.playbook)
     assert apres.playbook == f"{sans_regime}\n\n{section}\n"
     # Le modèle n'a reçu que le métier : l'inventaire des skills ne se rédige pas.
     ((prompt, _),) = redacteur.appels
-    assert TITRE_SKILLS not in prompt
+    assert SKILLS_HEADING not in prompt
     # Rien n'est perdu : l'ancien playbook est gardé, entier.
     garde = tmp_path / "archive" / "prj-p5" / "dev-nextjs.md"
     assert garde.read_text(encoding="utf-8") == avant.playbook

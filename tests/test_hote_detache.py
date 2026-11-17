@@ -1726,10 +1726,10 @@ def _demande_renfort(run_id: str = RUN, *, attente_s: float = 30.0) -> Any:
     """La demande du moteur de l'essai : un plan d'animation, une équipe d'un dev."""
     from maestro.agents.catalog import Agent
     from maestro.engine.renfort import DemandeRenfort
-    from maestro.equipe import manque_au_plan
     from maestro.orchestrator.schema import Task
+    from maestro.team import plan_gap
 
-    manque = manque_au_plan(
+    manque = plan_gap(
         [
             Task(
                 id="logo",

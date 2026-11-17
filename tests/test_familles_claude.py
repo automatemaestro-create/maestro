@@ -194,7 +194,7 @@ def test_changer_la_ligne_opus_fait_passer_tout_le_produit(tmp_path):
         "profils_outilles": ["claude-opus-99"],
         "cadre_generique": "claude-opus-99",
         # Un agent écrit par une validation d'équipe ne porte aucun modèle
-        # (`maestro.equipe.creation`) : il suit le défaut à l'exécution.
+        # (`maestro.team.creation`) : il suit le défaut à l'exécution.
         "agent_sans_modele": "claude-opus-99",
         # Le classifieur route, il ne fait pas le travail : il reste sur Haiku,
         # mais sur sa dernière version, par le même fichier.

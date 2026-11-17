@@ -13,7 +13,7 @@ Deux gestes, joués par `ServicePieces.ecrire` après chaque pièce écrite, et 
 l'ordre qui compte :
 
 1. **tenir** — `rebrancher` : le playbook de chaque agent du projet perd les commandes
-   que sa section des skills figeait (`maestro.equipe.creation.sans_commandes_figees`).
+   que sa section des skills figeait (`maestro.team.creation.without_frozen_commands`).
    La section n'en fige plus depuis #1520 : la commande vit dans le skill, qui fait foi,
    et que la correction réécrit. Ce geste ne sert donc que les équipes recrutées avant ;
    il est muet sur les autres ;
@@ -36,12 +36,12 @@ from pathlib import Path
 
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.controltower.chat import CommandeRemplacee
-from maestro.equipe.creation import sans_commandes_figees
 from maestro.outillage.correction import CorrectionPrise
 from maestro.outillage.generation import prescrites_dans
 from maestro.outillage.modele import USAGES
 from maestro.outillage.redaction import prescrit
 from maestro.outillage.verification import Verification
+from maestro.team.creation import without_frozen_commands
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ def rebrancher(equipe: ConfigurationAgents, projet_id: str) -> Rebranchement:
     recus: dict[str, str] = {}
     for fiche in fiches:
         recu, change = fiche.playbook, False
-        libere = sans_commandes_figees(fiche.playbook)
+        libere = without_frozen_commands(fiche.playbook)
         if libere != fiche.playbook:
             try:
                 cfg.agents.ecrire(replace(fiche, playbook=libere))
@@ -94,7 +94,7 @@ def rebrancher(equipe: ConfigurationAgents, projet_id: str) -> Rebranchement:
             publie = None
         if publie is not None:
             recu = publie.contenu
-            libere = sans_commandes_figees(publie.contenu)
+            libere = without_frozen_commands(publie.contenu)
             if libere != publie.contenu:
                 try:
                     cfg.playbooks.ecrire(fiche.nom, libere)

@@ -13,7 +13,7 @@ reprend.
 ## Une réécriture, pas une génération de zéro
 
 Le playbook d'un agent de projet est celui qu'une personne a lu et validé avec son
-équipe (`maestro.equipe.creation.RoleValide` : *ce qui est créé doit être exactement
+équipe (`maestro.team.creation.ValidatedRole` : *ce qui est créé doit être exactement
 ce qui a été montré*), et elle a pu le retoucher depuis les écrans d'agents depuis.
 Le régénérer de zéro remplacerait ce métier validé par un autre texte, pour corriger
 un seul passage. Le modèle reçoit donc le playbook et en **retire le régime**, sans
@@ -24,7 +24,7 @@ qui en relève, parce qu'un passage d'autorisation ne se reconnaît pas à un mo
 Ce que le code tient, lui, ne passe pas par le modèle :
 
 - la **section des skills**, que Maestro pose et que rien ne rédige
-  (`maestro.equipe.creation.scinder_section_skills`), est mise de côté puis remise
+  (`maestro.team.creation.split_skills_section`), est mise de côté puis remise
   à l'identique ;
 - l'**ancien playbook** est gardé, entier, sous
   `.maestro/regeneration-playbooks/<horodatage>/<projet>/<agent>.md` (chemin
@@ -68,7 +68,7 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
     GenerationIndisponible,
 )
-from maestro.equipe.creation import scinder_section_skills
+from maestro.team.creation import split_skills_section
 
 #: Où l'ancien playbook est gardé — relatif au répertoire courant, comme ce que les
 #: scripts du dépôt invitent à relire (`.maestro/<domaine>/`).
@@ -169,7 +169,7 @@ async def _reecrire(
     archive: Path,
 ) -> Reecriture:
     """Une fiche : son corps réécrit, sa section des skills remise telle quelle."""
-    corps, section = scinder_section_skills(definition.playbook)
+    corps, section = split_skills_section(definition.playbook)
     if not corps:
         return Reecriture(
             projet_id, definition.nom, ISSUE_INCHANGE, "aucun texte hors des skills"

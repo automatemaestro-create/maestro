@@ -177,6 +177,19 @@ def test_maestro_s_variables_are_the_names_its_env_files_declare(tmp_path):
     assert names == {"GITHUB_TOKEN", "LANGFUSE_SECRET_KEY", "MAESTRO_API_PORT"}
 
 
+def test_a_lowered_process_inherits_neither_maestro_s_namespace_nor_the_withheld_names():
+    """One filter for the launcher and the verification (#1691), case ignored as on Windows."""
+    environ = {
+        "MAESTRO_API_TOKEN": "t",
+        "maestro_settings": "s",
+        "GitHub_Token": "g",
+        "PATH": "p",
+        "ANTHROPIC_API_KEY": "k",
+    }
+    kept = low_session.withhold(environ, {"GITHUB_TOKEN"})
+    assert kept == {"PATH": "p", "ANTHROPIC_API_KEY": "k"}
+
+
 def test_the_provider_keeps_from_a_low_cli_what_is_maestro_s_and_not_the_model_s(
     monkeypatch, tmp_path
 ):

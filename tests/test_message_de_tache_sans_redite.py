@@ -36,15 +36,6 @@ import pytest
 from maestro.agents.fiche_outillee import runtime_outille
 from maestro.controltower.auto_amelioration import MARQUEUR_PLAYBOOK
 from maestro.controltower.generation_agent import INTENTION_MAX, GenerateurDefinitionAgent
-from maestro.equipe import (
-    TITRE_SKILLS,
-    RoleValide,
-    SkillRetenu,
-    definition,
-    proposer_equipe,
-    skills_constates,
-)
-from maestro.equipe.modele import RolePropose
 from maestro.outillage import (
     Choix,
     constats_depuis_choix,
@@ -57,6 +48,15 @@ from maestro.outillage.verification import A_VERIFIER, Verificateur
 from maestro.projets.modele import Projet
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
+from maestro.team import (
+    SKILLS_HEADING,
+    RetainedSkill,
+    ValidatedRole,
+    definition,
+    observed_skills,
+    propose_team,
+)
+from maestro.team.model import ProposedRole
 
 QUAND = "2026-10-01T09:00:00+00:00"
 
@@ -161,7 +161,7 @@ class _Capture:
     raisons_a_verifier: tuple[str, ...]
     skills_du_message: tuple[str, ...]
     skills_du_role: tuple[str, ...]
-    role: RolePropose
+    role: ProposedRole
 
 
 def _choix_de_p5() -> list[Choix]:
@@ -173,7 +173,7 @@ def _choix_de_p5() -> list[Choix]:
     ]
 
 
-def _role_le_plus_outille(roles: tuple[RolePropose, ...]) -> RolePropose:
+def _role_le_plus_outille(roles: tuple[ProposedRole, ...]) -> ProposedRole:
     """Le rôle qui branche le plus de skills — celui du socle, sur p5."""
     return max(roles, key=lambda role: len(role.skills))
 
@@ -198,26 +198,26 @@ def _tache_de_p5(tmp_path: Path) -> _Capture:
         verificateur=Verificateur(joueur=_Joueur(), interprete=FAUX_BASH),
     )
     # ② L'équipe proposée, le playbook rédigé depuis l'intention, le rôle créé.
-    proposition = proposer_equipe(
-        constats, recommandation, projet_id=projet.id, choix=choix, source=source
+    proposition = propose_team(
+        constats, recommandation, project_id=projet.id, choices=choix, source=source
     )
     propose = _role_le_plus_outille(proposition.roles)
     redige = asyncio.run(
         GenerateurDefinitionAgent(
             provider=_RedacteurQuiReformule(), fournisseurs=lambda: ()
-        ).proposer(propose.intention[:INTENTION_MAX])
+        ).proposer(propose.intent[:INTENTION_MAX])
     )
-    valide = skills_constates(
-        RoleValide(
-            nom=propose.nom,
+    valide = observed_skills(
+        ValidatedRole(
+            name=propose.name,
             role=propose.role,
-            competences=propose.competences,
+            competencies=propose.competencies,
             playbook=redige.playbook,
             skills=tuple(
-                SkillRetenu(nom=s.nom, chemin=s.chemin, commandes=s.commandes)
+                RetainedSkill(name=s.name, path=s.path, commands=s.commands)
                 for s in propose.skills
             ),
-            politique=propose.politique(),
+            policy=propose.policy(),
         ),
         lambda chemin: (racine / chemin).is_file(),
     )
@@ -228,7 +228,7 @@ def _tache_de_p5(tmp_path: Path) -> _Capture:
             "Poser le socle Next.js du livre de recettes",
             projet=projet,
             tache_id="t-socle",
-            politique=valide.politique,
+            politique=valide.policy,
         )
     )
     (message,) = executant.messages
@@ -240,7 +240,7 @@ def _tache_de_p5(tmp_path: Path) -> _Capture:
             v.raison for v in preparation.rapport.verifications if v.etat == A_VERIFIER
         ),
         skills_du_message=tuple(s.nom for s in outillage_du_projet(projet).skills),
-        skills_du_role=tuple(s.nom for s in valide.skills),
+        skills_du_role=tuple(s.name for s in valide.skills),
         role=propose,
     )
 
@@ -297,9 +297,9 @@ def test_les_skills_se_listent_une_fois_dans_le_prompt_systeme(tmp_path: Path) -
 
     assert capture.skills_du_role
     for nom in capture.skills_du_role:
-        assert nom not in capture.role.intention
+        assert nom not in capture.role.intent
         assert _nommes(capture.systeme, nom) == 1, nom
-    assert capture.systeme.count(TITRE_SKILLS) == 1
+    assert capture.systeme.count(SKILLS_HEADING) == 1
 
 
 def test_le_prompt_systeme_tutoie_l_agent_de_bout_en_bout(tmp_path: Path) -> None:

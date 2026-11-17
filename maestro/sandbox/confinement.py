@@ -114,7 +114,7 @@ from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox import session_env
 from maestro.sandbox.arbre import Arbre, ProcessusNomme
-from maestro.sandbox.low_session import LowSession
+from maestro.sandbox.low_session import LowSession, withhold
 
 #: La commande que le lanceur confine — le vrai CLI —, en **liste JSON** : un chemin
 #: d'installation porte volontiers des espaces, et une liste ne se redécoupe pas.
@@ -127,10 +127,6 @@ ENV_RELEVE = "MAESTRO_CONFINEMENT_RELEVE"
 #: personne. Toute autre valeur est refusée : un lancement ne s'abaisse jamais à moitié.
 ENV_INTEGRITE = "MAESTRO_CONFINEMENT_INTEGRITE"
 INTEGRITE_BASSE = "basse"
-
-#: L'espace de noms de Maestro, retiré de l'environnement d'un CLI abaissé (#1515) : jeton
-#: de l'API, clé du coffre, réglages. Ce qui reste est l'environnement de la personne.
-PREFIXE_MAESTRO = "MAESTRO_"
 
 #: Les autres variables retirées d'un CLI abaissé, séparées par des virgules : celles que
 #: les `.env` de Maestro déclarent (`maestro.sandbox.low_session.maestro_variables`).
@@ -412,11 +408,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Les variables arrivées du poste sans que personne ne les nomme (#1312).
     environ = session_env.without_withheld(environ, empreintes)
     if basse:
-        environ = {
-            nom: valeur
-            for nom, valeur in environ.items()
-            if not _de_maestro(nom) and nom.upper() not in retenues
-        }
+        # Ni l'espace de noms de Maestro (jeton de l'API, clé du coffre, réglages), ni ce
+        # que ses `.env` déclarent : ce qui reste est l'environnement de la personne.
+        environ = withhold(environ, retenues)
     _recueillir_les_orphelins()
     try:
         arbre = Arbre.lancer(
@@ -442,11 +436,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if chemin_releve:
         _ecrire(releve, Path(chemin_releve))
     return code
-
-
-def _de_maestro(nom: str) -> bool:
-    """La variable `nom` est-elle de l'espace de noms de Maestro ? (casse ignorée, Windows)."""
-    return nom.upper().startswith(PREFIXE_MAESTRO)
 
 
 def _integrite_depuis(brut: str) -> bool:

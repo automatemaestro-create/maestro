@@ -116,6 +116,14 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | équipe | `team` | les agents d'un projet |
 | composition (de l'équipe) | `composition` | l'équipe que le modèle compose pour le besoin réel |
 | proposition | `proposal` | ce que Maestro propose et que la personne valide |
+| membre (de l'équipe) | `member` | un agent de l'équipe montrée à la personne, retenu ou non |
+| rôle écarté | `excluded_role` | un rôle que la proposition ne retient pas, avec sa raison. L'orchestrateur en est un, nommément |
+| autorisation (proposée) | `permission` | un outil, le cran que la proposition d'une équipe lui donne, et la raison de ce cran |
+| cran (d'une autorisation) | `tier` | `allow`, `ask` ou `deny`. Ces valeurs ne changent pas |
+| skill branché | `attached_skill` | un skill de l'outillage du projet qu'un rôle reçoit dans son playbook |
+| intention (d'un rôle) | `intent` | ce dont part la rédaction du playbook d'un rôle pour ce projet |
+| esquisse (de playbook) | `sketch` | le playbook provisoire d'un rôle composé hors des gabarits, tant que sa rédaction n'a pas abouti |
+| navigateur de Maestro | `maestro_browser` | le navigateur que Maestro monte pour les agents qui regardent une interface. Sur un rôle, le champ s'écrit `browser` |
 | renfort | `reinforcement` | compléter l'équipe avant d'exécuter le plan |
 | recrutement | `recruitment` | la demande d'un rôle qui manque |
 | manque | `gap` | le rôle qui manquerait pour prendre une tâche ou un plan |

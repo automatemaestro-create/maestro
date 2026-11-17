@@ -1,35 +1,35 @@
-"""Le travail se répartit sur l'**équipe du projet** (#1041), née d'une validation.
+"""Work is distributed over the **project's team** (#1041), born from a validation.
 
-Lot final du chantier #1021 (#1043) — le lot 5 avait livré sans tests, par la
-convention de découpage ([docs/10 §5.1](../docs/10-workflow-git.md)).
+Final lot of the #1021 effort (#1043) — lot 5 had shipped without tests, by the
+splitting convention ([docs/10 §5.1](../docs/10-workflow-git.md)).
 
-Une équipe créée dans un projet (#1040) ne sert à rien tant que le travail ne lui
-parvient pas. Ce qui relie les deux tient en quatre points, et ce sont eux qu'on
-garde ici :
+A team created in a project (#1040) is useless as long as the work does not
+reach it. What links the two holds in four points, and they are what is guarded
+here:
 
-① **une règle, deux lecteurs** (`catalogue_du_projet`) : l'exécuteur, qui route
-   tâche par tâche, et la boucle, qui fait découper l'objectif. Un plan proposé
-   sur une équipe et exécuté sur une autre enverrait toutes ses tâches en repli
-   « à assigner » sans que rien ne le dise ;
-② **le catalogue est remplacé pour l'appel**, jamais trié : le catalogue du
-   routeur est figé au câblage, et un agent recruté pour un projet naît après lui
-   et ailleurs. L'ordre reçu départage les ex æquo, il ne se réordonne pas ;
-③ **ce que personne ne couvre est un fait constaté au routage** — seul endroit
-   qui connaisse à la fois les compétences demandées, les agents actifs et
-   l'équipe reçue pour cet appel-là. `maestro.equipe.manque` en fait un **poste
-   nommé**, parce qu'un signal qui dirait « personne ne couvre `sql`, `migration` »
-   demanderait à qui le lit de traduire lui-même ;
-④ **un agent ne recrute pas pendant un run** (§3.5 de
-   [docs/31](../docs/31-decision-surface-ecriture-agents.md)) : le manque est
-   signalé au fil, et la tâche reste « à assigner ».
+① **one rule, two readers** (`catalogue_du_projet`): the executor, which routes
+   task by task, and the loop, which has the goal decomposed. A plan proposed
+   on one team and executed on another would send all its tasks to the "to
+   assign" fallback without anything saying so;
+② **the catalog is replaced for the call**, never sorted: the router's catalog
+   is frozen at wiring time, and an agent recruited for a project is born after
+   it and elsewhere. The received order breaks ties, it is not reordered;
+③ **what nobody covers is a fact observed at routing** — the only place that
+   knows at once the requested competencies, the active agents and the team
+   received for that very call. `maestro.team.gap` turns it into a **named
+   position**, because a signal saying "nobody covers `sql`, `migration`" would
+   ask whoever reads it to translate it themselves;
+④ **an agent does not recruit during a run** (§3.5 of
+   [docs/31](../docs/31-decision-surface-ecriture-agents.md)): the gap is
+   signalled in the chat, and the task stays "to assign".
 
-⚠ La quatrième a été **précisée** par #1227, pas retirée : l'*orchestrateur*
-propose désormais de compléter l'équipe juste après la décomposition, et une
-personne accepte ou non (`tests/test_equipe_au_plan.py`). Ce qui vaut ici reste
-vrai — au **routage**, il est trop tard : la tâche part « à assigner », et c'est
-ce qu'on garde. Les deux dernières puces de docs/37 §3 sont, elles, renversées.
+⚠ The fourth was **refined** by #1227, not withdrawn: the *orchestrator* now
+proposes completing the team right after decomposition, and a person accepts or
+not (`tests/test_equipe_au_plan.py`). What holds here stays true — at
+**routing**, it is too late: the task leaves "to assign", and that is what is
+guarded. The last two bullets of docs/37 §3, on the other hand, are overturned.
 
-Ni réseau ni appel modèle réel : fournisseur factice, dépôts jetables.
+No network and no real model call: fake provider, throwaway stores.
 """
 
 from __future__ import annotations
@@ -48,19 +48,19 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_MANQUE,
     LocalExecutor,
 )
-from maestro.equipe import RoleManquant, competences_non_couvertes, role_manquant
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT, orchestrator_prompt
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
 from maestro.router import Router, assign
+from maestro.team import MissingRole, missing_role, uncovered_competencies
 from maestro.telemetry import RunJournal
 
-PROJET = "prj-depensio"
-AUTRE = "prj-autre"
+PROJECT = "prj-depensio"
+OTHER = "prj-autre"
 
 
 class _Constant(ModelProvider):
-    """Fournisseur factice — aucune exécution réelle n'est attendue ici."""
+    """Fake provider — no real execution is expected here."""
 
     name = "constant"
 
@@ -71,108 +71,109 @@ class _Constant(ModelProvider):
         return "LIVRABLE"
 
 
-def _agent(nom: str, *competences: str, role: str = "Rôle") -> Agent:
+def _agent(name: str, *competencies: str, role: str = "Rôle") -> Agent:
     return Agent(
-        nom=nom,
+        nom=name,
         role=role,
-        competences=frozenset(competences),
+        competences=frozenset(competencies),
         modele="m",
         prompt_systeme="…",
     )
 
 
-def _tache(id_: str = "t1", *competences: str, projet_id: str | None = None) -> Task:
+def _task(id_: str = "t1", *competencies: str, project_id: str | None = None) -> Task:
     return Task(
         id=id_,
         title=f"Tâche {id_}",
         description=f"Faire {id_}.",
-        required_competencies=list(competences),
+        required_competencies=list(competencies),
         output_format="markdown",
         dependencies=[],
-        project_id=projet_id,
+        project_id=project_id,
     )
 
 
-def _fiche(nom: str, *competences: str) -> AgentDefinition:
+def _definition(name: str, *competencies: str) -> AgentDefinition:
     return AgentDefinition(
-        nom=nom,
+        nom=name,
         role="Rôle du projet",
-        competences=competences,
+        competences=competencies,
         playbook="Tu travailles sur ce projet.",
     )
 
 
-# --- ② Le catalogue de l'appel : l'équipe du projet --------------------------
+# --- ② The call's catalog: the project's team --------------------------------
 
 
-def test_la_tache_d_un_projet_est_routee_sur_l_equipe_de_ce_projet() -> None:
-    """Le catalogue du routeur est figé au câblage ; les agents d'un projet
-    naissent après lui, et pas dans le même dossier."""
-    cablage = [_agent("cablage", "backend")]
-    equipe = [_agent("dev-du-projet", "backend")]
+def test_a_project_task_is_routed_to_that_project_team() -> None:
+    """The router's catalog is frozen at wiring time; a project's agents are born
+    after it, and not in the same folder."""
+    wiring = [_agent("cablage", "backend")]
+    team = [_agent("dev-du-projet", "backend")]
 
     decision = asyncio.run(
-        Router(cablage).route(_tache("t1", "backend"), agents=equipe)
+        Router(wiring).route(_task("t1", "backend"), agents=team)
     )
 
     assert decision.agent is not None
     assert decision.agent.nom == "dev-du-projet"
 
 
-def test_l_ordre_de_l_equipe_recue_departage_les_ex_aequo() -> None:
-    """L'ordre reçu fait foi et ne doit pas être trié ici : c'est lui qui rend la
-    règle pure déterministe — à score égal, le premier de l'équipe l'emporte."""
-    equipe = [_agent("premier", "backend"), _agent("second", "backend")]
+def test_the_received_team_order_breaks_ties() -> None:
+    """The received order is authoritative and must not be sorted here: it is
+    what makes the pure rule deterministic — on an equal score, the first of the
+    team wins."""
+    team = [_agent("premier", "backend"), _agent("second", "backend")]
 
-    assert assign(_tache("t1", "backend"), equipe).agent.nom == "premier"
-    assert assign(_tache("t1", "backend"), equipe[::-1]).agent.nom == "second"
+    assert assign(_task("t1", "backend"), team).agent.nom == "premier"
+    assert assign(_task("t1", "backend"), team[::-1]).agent.nom == "second"
 
 
-def test_un_ex_aequo_sans_classifieur_part_en_repli_plutot_qu_au_hasard() -> None:
-    """Le routage combiné, lui, ne tranche pas un ex æquo tout seul : sans
-    classifieur, la tâche est marquée « à assigner » — jamais routée au hasard."""
-    equipe = [_agent("premier", "backend"), _agent("second", "backend")]
+def test_a_tie_without_classifier_falls_back_rather_than_at_random() -> None:
+    """Combined routing does not break a tie on its own: without a classifier,
+    the task is marked "to assign" — never routed at random."""
+    team = [_agent("premier", "backend"), _agent("second", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=equipe
+        _task("t1", "backend"), agents=team
     ))
 
     assert decision.needs_assignment
     assert "premier, second" in decision.reason
 
 
-def test_un_agent_desactive_ne_prend_pas_la_tache_de_son_projet() -> None:
-    equipe = [_agent("titulaire", "backend"), _agent("remplacant", "backend")]
+def test_a_disabled_agent_does_not_take_its_project_task() -> None:
+    team = [_agent("titulaire", "backend"), _agent("remplacant", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=equipe, excluded={"titulaire"}
+        _task("t1", "backend"), agents=team, excluded={"titulaire"}
     ))
 
     assert decision.agent is not None
     assert decision.agent.nom == "remplacant"
 
 
-def test_une_equipe_entierement_desactivee_replie_sans_lever() -> None:
-    """Repli explicite plutôt qu'un mauvais routage — et l'équipe a le rôle : il
-    est éteint, pas absent, donc rien n'est signalé comme manquant."""
-    equipe = [_agent("titulaire", "backend")]
+def test_a_fully_disabled_team_falls_back_without_raising() -> None:
+    """An explicit fallback rather than a wrong routing — and the team has the
+    role: it is switched off, not missing, so nothing is signalled as missing."""
+    team = [_agent("titulaire", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=equipe, excluded={"titulaire"}
+        _task("t1", "backend"), agents=team, excluded={"titulaire"}
     ))
 
     assert decision.needs_assignment
     assert decision.uncovered == ()
 
 
-def test_une_equipe_vide_n_est_pas_une_omission() -> None:
-    """Elle l'était, et un projet sans agent se routait alors sur le catalogue du
-    câblage : c'est ce qui faisait travailler les cinq rôles du code dans un projet
-    qui n'avait recruté personne (#1042). `()` veut désormais dire « ce projet n'a
-    aucun agent », et la tâche part en repli — la réponse juste à *un projet naît
-    sans agent*."""
+def test_an_empty_team_is_not_an_omission() -> None:
+    """It used to be, and a project without any agent was then routed on the
+    wiring's catalog: that is what made the code's five roles work in a project
+    that had recruited nobody (#1042). `()` means "this project has no agent",
+    and the task goes to fallback — the right answer to *a project is born
+    without agents*."""
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=()
+        _task("t1", "backend"), agents=()
     ))
 
     assert decision.needs_assignment
@@ -180,191 +181,194 @@ def test_une_equipe_vide_n_est_pas_une_omission() -> None:
     assert "l'équipe reste à recruter" in decision.reason
 
 
-def test_les_deux_causes_d_un_repli_sans_candidat_ne_se_confondent_pas() -> None:
-    """Elles ne se corrigent pas du tout pareil : réactiver un agent, ou en
-    recruter un."""
-    eteinte = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=[_agent("titulaire", "backend")],
+def test_the_two_causes_of_a_fallback_without_candidate_stay_distinct() -> None:
+    """They are not fixed the same way at all: re-enable an agent, or recruit
+    one."""
+    switched_off = asyncio.run(Router([_agent("cablage", "backend")]).route(
+        _task("t1", "backend"), agents=[_agent("titulaire", "backend")],
         excluded={"titulaire"},
     ))
-    vide = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=()
+    empty = asyncio.run(Router([_agent("cablage", "backend")]).route(
+        _task("t1", "backend"), agents=()
     ))
 
-    assert "désactivés" in eteinte.reason
-    assert "désactivés" not in vide.reason
+    assert "désactivés" in switched_off.reason
+    assert "désactivés" not in empty.reason
 
 
-# --- ① Une règle, deux lecteurs ----------------------------------------------
+# --- ① One rule, two readers -------------------------------------------------
 
 
-def test_sans_projet_il_n_y_a_pas_d_equipe_a_donner(tmp_path: Path) -> None:
-    """`None` dit « je n'ai pas d'équipe à te donner » : l'appelant s'en tient au
-    catalogue de son câblage."""
+def test_without_project_there_is_no_team_to_give(tmp_path: Path) -> None:
+    """`None` says "I have no team to give you": the caller sticks to its
+    wiring's catalog."""
     agents = AgentStore(tmp_path / "agents")
 
     assert catalogue_du_projet(agents, None) is None
 
 
-def test_sans_depot_cable_il_n_y_a_pas_d_equipe_a_donner() -> None:
-    """Tests et câblages sans Control Tower : la question ne se pose pas."""
-    assert catalogue_du_projet(None, PROJET) is None
+def test_without_wired_store_there_is_no_team_to_give() -> None:
+    """Tests and wirings without a Control Tower: the question does not arise."""
+    assert catalogue_du_projet(None, PROJECT) is None
 
 
-def test_un_depot_illisible_ne_fait_pas_partir_toutes_les_taches_en_repli(
+def test_an_unreadable_store_does_not_send_every_task_to_fallback(
     tmp_path: Path,
 ) -> None:
-    """Un incident de stockage n'est pas une équipe vide : on garde le catalogue
-    du câblage plutôt que de router toutes les tâches nulle part."""
+    """A storage incident is not an empty team: the wiring's catalog is kept
+    rather than routing every task nowhere."""
     agents = AgentStore(tmp_path / "agents")
 
     assert catalogue_du_projet(agents, "prj/../evade") is None
 
 
-def test_un_projet_sans_agent_rend_une_equipe_vide_et_non_une_absence(
+def test_a_project_without_agent_returns_an_empty_team_not_an_absence(
     tmp_path: Path,
 ) -> None:
-    """Le tuple vide n'est aucun des trois `None` (#1042) : c'est la différence
-    entre « je ne sais pas » et « il n'y a personne », et c'est elle qui fait
-    qu'une tâche d'un projet qui n'a recruté personne attend quelqu'un au lieu
-    d'aller aux gabarits du code."""
+    """The empty tuple is none of the three `None`s (#1042): it is the
+    difference between "I do not know" and "there is nobody", and it is what
+    makes a task of a project that recruited nobody wait for someone instead of
+    going to the code's role templates."""
     agents = AgentStore(tmp_path / "agents")
 
-    assert catalogue_du_projet(agents, PROJET) == ()
+    assert catalogue_du_projet(agents, PROJECT) == ()
 
 
-def test_l_equipe_d_un_projet_porte_les_agents_de_ce_projet(tmp_path: Path) -> None:
+def test_a_project_team_holds_that_project_agents(tmp_path: Path) -> None:
     agents = AgentStore(tmp_path / "agents")
-    agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", "backend"))
-    agents.pour_projet(AUTRE).ecrire(_fiche("dev-du-voisin", "backend"))
+    agents.pour_projet(PROJECT).ecrire(_definition("dev-du-projet", "backend"))
+    agents.pour_projet(OTHER).ecrire(_definition("dev-du-voisin", "backend"))
 
-    ici = catalogue_du_projet(agents, PROJET)
+    here = catalogue_du_projet(agents, PROJECT)
 
-    assert ici is not None
-    noms = {agent.nom for agent in ici}
-    assert "dev-du-projet" in noms
-    assert "dev-du-voisin" not in noms
+    assert here is not None
+    names = {agent.nom for agent in here}
+    assert "dev-du-projet" in names
+    assert "dev-du-voisin" not in names
 
 
-def test_le_decoupage_se_fait_sur_l_equipe_du_projet() -> None:
-    """Le second lecteur de la règle : les rôles et les compétences transmis à
-    l'orchestrateur sont ceux de l'équipe qui exécutera. C'est ce qui fait qu'un
-    tag proposé au découpage est un tag que quelqu'un sait prendre."""
-    equipe = [_agent("dev-du-projet", "comptabilite", role="Comptable")]
+def test_decomposition_uses_the_project_team() -> None:
+    """The rule's second reader: the roles and competencies passed to the
+    orchestrator are those of the team that will execute. That is what makes a
+    tag proposed at decomposition a tag someone knows how to take."""
+    team = [_agent("dev-du-projet", "comptabilite", role="Comptable")]
 
-    prompt = orchestrator_prompt(equipe)
+    prompt = orchestrator_prompt(team)
 
     assert "comptabilite" in prompt
     assert "dev-du-projet" in prompt
     assert prompt != ORCHESTRATOR_SYSTEM_PROMPT
 
 
-# --- ③ Ce que personne ne couvre ---------------------------------------------
+# --- ③ What nobody covers ----------------------------------------------------
 
 
-def test_les_competences_non_couvertes_sont_le_fait_brut_du_routage() -> None:
+def test_uncovered_competencies_are_the_raw_routing_fact() -> None:
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "sql", "migration"), agents=[_agent("dev", "backend")]
+        _task("t1", "sql", "migration"), agents=[_agent("dev", "backend")]
     ))
 
     assert decision.needs_assignment
     assert decision.uncovered == ("migration", "sql")
 
 
-def test_une_tache_prise_par_quelqu_un_ne_signale_aucun_manque() -> None:
+def test_a_task_someone_takes_signals_no_gap() -> None:
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend"), agents=[_agent("dev", "backend")]
+        _task("t1", "backend"), agents=[_agent("dev", "backend")]
     ))
 
     assert decision.agent is not None
     assert decision.uncovered == ()
 
 
-def test_un_ex_aequo_non_departage_n_est_pas_un_manque() -> None:
-    """L'ambiguïté est celle du départage, pas d'un rôle absent : la tâche est
-    routable, quelqu'un la couvre."""
-    equipe = [_agent("un", "backend", "api"), _agent("deux", "backend", "api")]
+def test_an_unbroken_tie_is_not_a_gap() -> None:
+    """The ambiguity is the tiebreak's, not that of a missing role: the task is
+    routable, someone covers it."""
+    team = [_agent("un", "backend", "api"), _agent("deux", "backend", "api")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "backend", "api"), agents=equipe
+        _task("t1", "backend", "api"), agents=team
     ))
 
     assert decision.needs_assignment
     assert decision.uncovered == ()
 
 
-def test_un_agent_desactive_ne_couvre_rien() -> None:
-    """Constaté sur les candidats **actifs** : compter les compétences d'un agent
-    désactivé ferait taire le signal juste au moment où il est vrai."""
-    equipe = [_agent("titulaire", "sql"), _agent("dev", "backend")]
+def test_a_disabled_agent_covers_nothing() -> None:
+    """Observed on the **active** candidates: counting the competencies of a
+    disabled agent would silence the signal right when it is true."""
+    team = [_agent("titulaire", "sql"), _agent("dev", "backend")]
 
     decision = asyncio.run(Router([_agent("cablage", "backend")]).route(
-        _tache("t1", "sql"), agents=equipe, excluded={"titulaire"}
+        _task("t1", "sql"), agents=team, excluded={"titulaire"}
     ))
 
     assert decision.uncovered == ("sql",)
 
 
-def test_les_competences_non_couvertes_sont_triees() -> None:
-    """`Agent.competences` est un `frozenset` : un signal dont l'ordre bouge d'un
-    run à l'autre n'est pas comparable."""
-    non_couvertes = competences_non_couvertes(
+def test_uncovered_competencies_are_sorted() -> None:
+    """`Agent.competences` is a `frozenset`: a signal whose order moves from one
+    run to the next is not comparable."""
+    uncovered = uncovered_competencies(
         ("sql", "monitoring", "migration"), [_agent("dev", "backend", "sql")]
     )
 
-    assert non_couvertes == ("migration", "monitoring")
+    assert uncovered == ("migration", "monitoring")
 
 
-# --- ③ bis Un manque nommé est un poste, pas une liste de tags ---------------
+# --- ③ bis A named gap is a position, not a list of tags ---------------------
 
 
-def test_le_manque_nomme_le_gabarit_qui_couvre_le_plus() -> None:
-    manque = role_manquant(("sql", "migration"))
+def test_the_gap_names_the_role_template_that_covers_the_most() -> None:
+    gap = missing_role(("sql", "migration"))
 
-    assert manque is not None
-    assert manque.gabarit == "donnees"
-    assert manque.role == "Base de données"
-
-
-def test_un_manque_qu_aucun_gabarit_ne_couvre_rend_les_competences_telles_quelles() -> None:
-    """Un rôle fabriqué se lirait comme un rôle existant : proposer « Designer »
-    pour une tâche qui demande `comptabilite` serait un recrutement au hasard."""
-    manque = role_manquant(("comptabilite",))
-
-    assert manque is not None
-    assert manque.gabarit is None
-    assert manque.role == "comptabilite"
+    assert gap is not None
+    assert gap.role_template == "donnees"
+    assert gap.role == "Base de données"
 
 
-def test_rien_a_combler_ne_nomme_aucun_poste() -> None:
-    assert role_manquant(()) is None
+def test_a_gap_no_role_template_covers_returns_the_competencies_as_they_are() -> None:
+    """A made-up role would read as an existing role: proposing "Designer" for
+    a task that requires `comptabilite` would be a recruitment at random."""
+    gap = missing_role(("comptabilite",))
+
+    assert gap is not None
+    assert gap.role_template is None
+    assert gap.role == "comptabilite"
 
 
-def test_la_phrase_du_manque_dit_les_trois_choses_qu_il_faut_pour_agir() -> None:
-    """Ce qui manque, le poste que cela désigne, et que le recrutement ne se fait
-    pas ici — sans la dernière, le lecteur d'un run peut croire que Maestro va
-    s'en charger, et la tâche resterait « à assigner » sans que personne bouge.
-
-    ⚠ La phrase disait aussi « le recrutement se fait hors du run » jusqu'à #1227.
-    Elle ne le dit plus, parce que c'est devenu faux : l'orchestrateur propose de
-    compléter l'équipe **dans** le run, avant d'exécuter, et une phrase qui
-    renverrait ailleurs ferait chercher un écran là où un geste attend dans le
-    fil. Ce qui n'a pas bougé est ce qui comptait — un agent ne recrute pas
-    (docs/31 §3.5), et rien n'est créé sans accord (#1040)."""
-    phrase = RoleManquant(competences=("sql",), role="Expert BDD", gabarit="donnees").phrase()
-
-    assert "sql" in phrase
-    assert "gabarit `donnees`" in phrase
-    assert "hors du run" not in phrase
+def test_nothing_to_fill_names_no_position() -> None:
+    assert missing_role(()) is None
 
 
-# --- ④ Le manque arrive au fil, et la tâche reste à assigner -----------------
+def test_the_gap_sentence_says_the_three_things_needed_to_act() -> None:
+    """What is missing, the position it designates, and that recruiting does not
+    happen here — without the last one, whoever reads a run may believe Maestro
+    will take care of it, and the task would stay "to assign" with nobody
+    moving.
+
+    ⚠ The sentence also said "recruiting happens outside the run" until #1227.
+    It no longer does, because that became false: the orchestrator proposes
+    completing the team **within** the run, before executing, and a sentence
+    pointing elsewhere would have the reader look for a screen while an action
+    waits in the chat. What did not move is what mattered — an agent does not
+    recruit (docs/31 §3.5), and nothing is created without consent (#1040)."""
+    sentence = MissingRole(
+        competencies=("sql",), role="Expert BDD", role_template="donnees"
+    ).sentence()
+
+    assert "sql" in sentence
+    assert "gabarit `donnees`" in sentence
+    assert "hors du run" not in sentence
 
 
-def _executeur_de_projet(tmp_path: Path, *competences: str) -> LocalExecutor:
-    """Un exécuteur dont l'équipe du projet ne couvre que `competences`."""
+# --- ④ The gap reaches the chat, and the task stays to assign ----------------
+
+
+def _project_executor(tmp_path: Path, *competencies: str) -> LocalExecutor:
+    """An executor whose project team covers only `competencies`."""
     agents = AgentStore(tmp_path / "agents")
-    agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", *competences))
+    agents.pour_projet(PROJECT).ecrire(_definition("dev-du-projet", *competencies))
     return LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
@@ -373,92 +377,92 @@ def _executeur_de_projet(tmp_path: Path, *competences: str) -> LocalExecutor:
     )
 
 
-def test_une_tache_que_personne_ne_sait_prendre_signale_son_poste(tmp_path: Path) -> None:
+def test_a_task_nobody_can_take_signals_its_position(tmp_path: Path) -> None:
     journal = RunJournal()
-    executeur = _executeur_de_projet(tmp_path, "backend")
+    executor = _project_executor(tmp_path, "backend")
 
-    resultat = asyncio.run(
-        executeur.execute(_tache("t1", "comptabilite", projet_id=PROJET), [], journal)
+    result = asyncio.run(
+        executor.execute(_task("t1", "comptabilite", project_id=PROJECT), [], journal)
     )
 
-    assert resultat.statut == "echec"
-    assert resultat.agent == "—"
-    assert "à assigner" in (resultat.erreur or "")
-    assert "aucun rôle de l'équipe ne couvre" in (resultat.erreur or "")
+    assert result.statut == "echec"
+    assert result.agent == "—"
+    assert "à assigner" in (result.erreur or "")
+    assert "aucun rôle de l'équipe ne couvre" in (result.erreur or "")
 
 
-def test_le_signal_est_consigne_au_nom_de_l_orchestrateur_et_ne_coute_rien(
+def test_the_signal_is_recorded_under_the_orchestrator_and_costs_nothing(
     tmp_path: Path,
 ) -> None:
-    """C'est lui qui répartit le travail et lui qui recrute, et la tâche n'a par
-    définition aucun agent à nommer. Constater un manque ne dépense rien : le
-    routage a échoué avant tout appel modèle."""
+    """It is the one that distributes the work and the one that recruits, and
+    the task by definition has no agent to name. Observing a gap spends
+    nothing: routing failed before any model call."""
     journal = RunJournal()
-    executeur = _executeur_de_projet(tmp_path, "backend")
+    executor = _project_executor(tmp_path, "backend")
 
-    asyncio.run(executeur.execute(_tache("t1", "comptabilite", projet_id=PROJET), [], journal))
+    asyncio.run(executor.execute(_task("t1", "comptabilite", project_id=PROJECT), [], journal))
 
-    manque = next(r for r in journal.records if r.etape.endswith(SUFFIXE_ETAPE_MANQUE))
-    assert manque.agent == "orchestrateur"
-    assert manque.statut == STATUT_ROLE_MANQUANT
-    assert (manque.usage.calls, manque.usage.input_tokens, manque.usage.output_tokens) == (
+    gap = next(r for r in journal.records if r.etape.endswith(SUFFIXE_ETAPE_MANQUE))
+    assert gap.agent == "orchestrateur"
+    assert gap.statut == STATUT_ROLE_MANQUANT
+    assert (gap.usage.calls, gap.usage.input_tokens, gap.usage.output_tokens) == (
         0,
         0,
         0,
     )
-    assert "aucun rôle de l'équipe ne couvre" in manque.sortie
+    assert "aucun rôle de l'équipe ne couvre" in gap.sortie
 
 
-def test_une_tache_d_un_projet_sans_agent_attend_quelqu_un(tmp_path: Path) -> None:
-    """Le critère de bout en bout : un projet qui n'a recruté personne ne fait pas
-    travailler les gabarits du code à sa place. La tâche part en repli, et c'est un
-    fait à montrer, pas à combler."""
+def test_a_task_of_a_project_without_agent_waits_for_someone(tmp_path: Path) -> None:
+    """The end-to-end criterion: a project that recruited nobody does not make
+    the code's role templates work in its place. The task goes to fallback, and
+    that is a fact to show, not to fill."""
     agents = AgentStore(tmp_path / "agents")
-    executeur = LocalExecutor(
+    executor = LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
         runtimes={},
         agents_store=agents,
     )
 
-    resultat = asyncio.run(
-        executeur.execute(_tache("t1", "backend", projet_id=PROJET), [], RunJournal())
+    result = asyncio.run(
+        executor.execute(_task("t1", "backend", project_id=PROJECT), [], RunJournal())
     )
 
-    assert resultat.statut == "echec"
-    assert "l'équipe reste à recruter" in (resultat.erreur or "")
+    assert result.statut == "echec"
+    assert "l'équipe reste à recruter" in (result.erreur or "")
 
 
-def test_hors_projet_le_cablage_travaille_comme_avant(tmp_path: Path) -> None:
-    """Le complément : sans projet il n'y a pas d'équipe où chercher, donc le
-    catalogue du câblage reste celui qui travaille — `maestro-run` n'a pas de
-    projet et n'en a jamais eu."""
+def test_outside_a_project_the_wired_catalog_does_the_work(tmp_path: Path) -> None:
+    """The complement: without a project there is no team to look in, so the
+    wiring's catalog stays the one that works — `maestro-run` has no project
+    and never had one."""
     agents = AgentStore(tmp_path / "agents")
-    executeur = LocalExecutor(
+    executor = LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
         runtimes={},
         agents_store=agents,
     )
 
-    resultat = asyncio.run(executeur.execute(_tache("t1", "backend"), [], RunJournal()))
+    result = asyncio.run(executor.execute(_task("t1", "backend"), [], RunJournal()))
 
-    assert resultat.agent == "cablage"
+    assert result.agent == "cablage"
 
 
-def test_une_equipe_qui_couvre_la_tache_ne_signale_aucun_manque(tmp_path: Path) -> None:
+def test_a_team_that_covers_the_task_signals_no_gap(tmp_path: Path) -> None:
     journal = RunJournal()
-    executeur = _executeur_de_projet(tmp_path, "comptabilite")
+    executor = _project_executor(tmp_path, "comptabilite")
 
-    asyncio.run(executeur.execute(_tache("t1", "comptabilite", projet_id=PROJET), [], journal))
+    asyncio.run(executor.execute(_task("t1", "comptabilite", project_id=PROJECT), [], journal))
 
     assert all(not r.etape.endswith(SUFFIXE_ETAPE_MANQUE) for r in journal.records)
 
 
-def test_le_manque_arrive_au_fil_sans_creer_de_carte_fantome() -> None:
-    """Il rejoint `tache.blocage` plutôt que d'ouvrir un type : le fait est le
-    même — ça ne peut pas avancer, et il faut quelqu'un. Ce qui l'en distingue est
-    le `statut`, qui voyage tel quel."""
+def test_the_gap_reaches_the_chat_without_creating_a_ghost_card() -> None:
+    """It joins `tache.blocage` rather than opening a type: the fact is the
+    same — it cannot move forward, and someone is needed. What sets it apart is
+    the `statut`, which travels as is."""
     (event,) = evenements_depuis_step(
         {
             "run_id": "run-1",
@@ -479,12 +483,12 @@ def test_le_manque_arrive_au_fil_sans_creer_de_carte_fantome() -> None:
 
 
 @pytest.mark.parametrize("competence", ["sql", "comptabilite"])
-def test_le_moteur_ne_recrute_jamais_de_lui_meme(tmp_path: Path, competence: str) -> None:
-    """La frontière de docs/37 §3.5, prise là où elle se tiendrait mal : après un
-    manque signalé, l'équipe du projet est **inchangée**."""
+def test_the_engine_never_recruits_on_its_own(tmp_path: Path, competence: str) -> None:
+    """The boundary of docs/37 §3.5, taken where it would hold badly: after a
+    signalled gap, the project's team is **unchanged**."""
     agents = AgentStore(tmp_path / "agents")
-    agents.pour_projet(PROJET).ecrire(_fiche("dev-du-projet", "backend"))
-    executeur = LocalExecutor(
+    agents.pour_projet(PROJECT).ecrire(_definition("dev-du-projet", "backend"))
+    executor = LocalExecutor(
         _Constant(),
         agents=[_agent("cablage", "backend")],
         runtimes={},
@@ -492,7 +496,7 @@ def test_le_moteur_ne_recrute_jamais_de_lui_meme(tmp_path: Path, competence: str
     )
 
     asyncio.run(
-        executeur.execute(_tache("t1", competence, projet_id=PROJET), [], RunJournal())
+        executor.execute(_task("t1", competence, project_id=PROJECT), [], RunJournal())
     )
 
-    assert agents.pour_projet(PROJET).noms() == ("dev-du-projet",)
+    assert agents.pour_projet(PROJECT).noms() == ("dev-du-projet",)

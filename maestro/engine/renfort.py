@@ -54,14 +54,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from maestro.equipe.manque import ManqueAuPlan
+from maestro.team.gap import PlanGap
 
 
 @dataclass(frozen=True)
 class DemandeRenfort:
     """Ce qu'une personne reçoit pour décider de compléter l'équipe (#1227).
 
-    `manque` porte le poste et les tâches qui l'attendent (`ManqueAuPlan`) :
+    `manque` porte le poste et les tâches qui l'attendent (`PlanGap`) :
     c'est la pièce, et elle est rendue telle quelle plutôt que recopiée en
     champs — la raison montrée dans le fil doit être *la* raison calculée, pas
     une seconde formulation à tenir d'accord avec elle.
@@ -87,7 +87,7 @@ class DemandeRenfort:
     run_id: str
     projet_id: str
     objectif: str
-    manque: ManqueAuPlan
+    manque: PlanGap
     attente_s: float
     tache: str = ""
 

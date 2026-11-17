@@ -51,7 +51,6 @@ from maestro.controltower.orchestration import (
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import ControlTowerState
 from maestro.engine import RunReport
-from maestro.equipe import RoleValide, definition
 from maestro.outillage.contexte import (
     NonTransmis,
     OutillageDuProjet,
@@ -59,6 +58,7 @@ from maestro.outillage.contexte import (
 )
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
+from maestro.team import ValidatedRole, definition
 
 UTILISATEUR = "utilisateur"
 
@@ -188,10 +188,10 @@ def agents(tmp_path: Path, projets: ServiceProjets) -> AgentStore:
     for fiche in projets.lister():
         store.pour_projet(fiche["id"]).ecrire(
             definition(
-                RoleValide(
-                    nom="dev-du-projet",
+                ValidatedRole(
+                    name="dev-du-projet",
                     role="Développeur",
-                    competences=("frontend",),
+                    competencies=("frontend",),
                     playbook="Tu écris le code.",
                 )
             )

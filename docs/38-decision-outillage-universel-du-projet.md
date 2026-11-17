@@ -439,9 +439,15 @@ comme `bash scripts/ci/local.sh` et son diff avec `origin/main`, y trouve son d�
 la copie de travail clonée. Le clone n'a aucune dépendance : la commande d'installation que l'outillage
 écrit s'y joue d'abord, même quand une seule autre commande est jouée (le skill de tests, une correction
 essayée). Un clone impossible ne retombe jamais sur la copie, où cette commande ne trouverait aucun
-dépôt : rien n'est joué, et le verdict le dit. Un projet non versionné garde sa copie. ⚠ Ce que
-l'installation écrit hors du clone (le profil, le dossier personnel) n'y est pas encore borné. C'est
-#1691, qui attend l'intégrité basse de #1515. Elle ne garde que les
+dépôt : rien n'est joué, et le verdict le dit. Un projet non versionné garde sa copie. Ce que
+l'installation écrirait **hors de la copie** (le profil, le dossier personnel, `HKCU`) est borné par
+le poste (#1691) : chaque commande joue sous la borne des agents du poste. Là où ils tournent à
+l'intégrité basse (le défaut sous Windows, [docs/17 §7](./17-isolation-execution.md)), elle y joue
+aussi, et l'écriture lui est refusée : vérifier le `setup.sh` de Maestro laisse le profil PowerShell
+de la personne intact. Son verdict, lui, dépend de ce que l'établi, qui naît vide, laisse le temps de
+télécharger dans le délai (docs/17 §7). Là où les agents sont bornés et que le poste ne peut pas
+borner la vérification (un conteneur hors de Windows), elle n'est pas jouée, et sa raison le dit. Là
+où ils tournent au niveau de la personne (`hote`), elle y joue aussi. `verifications` ne garde que les
 commandes que l'outillage **écrit encore** (#1381) : une commande remplacée — corrigée par la personne,
 proposée par Maestro après un run — garde son verdict tant qu'un fichier de Maestro la porte, et le
 perd quand plus aucun ne l'écrit. Vu sur S9 : le verdict « à vérifier » d'une commande remplacée y
@@ -690,7 +696,7 @@ tâche :
    d'outil refusé est une décision, pas un incident** : ce sont les rejeux qui ont fait les 22
    minutes, pas le premier refus.
 2. **Le playbook et l'autorisation sont d'accord.** L'`intention` d'où #257 écrit le playbook porte
-   désormais le **cran proposé pour l'outil d'exécution** (`maestro.equipe.proposition`, le *fait*),
+   désormais le **cran proposé pour l'outil d'exécution** (`maestro.team.proposal`, le *fait*),
    et le cadre de génération en tire la *consigne* : un playbook ne fait jamais d'une commande le
    premier geste obligatoire de l'agent (`generation_agent._CADRE_GENERATION`). Les deux ne se
    recopient pas — c'est la frontière que `_intention` posait déjà pour tout le reste.
@@ -902,7 +908,7 @@ dispersait l'agent :
 | Sept fois, dans `AGENTS.md`, « **À vérifier** : le projet n'a encore aucun fichier en dehors de son outillage […], tout le sera à la prochaine écriture de l'outillage » | Une raison par commande (`verification._pas_encore`), et une promesse de Maestro dans la raison |
 | `.github/workflows/ci.yml` et `CONTRIBUTING.md` « **à créer** », hors de la tâche du socle | Le registre des réponses (§3.1), écrit comme une consigne |
 | L'index des skills deux fois dans le message — celui d'`AGENTS.md` (§3.3), puis « Skills du projet » — et le titre « L'outillage de ce projet » deux fois | La consigne de l'outillage (`OutillageDuProjet.consigne`) relistait ce que les instructions qu'elle transmet listaient déjà |
-| Les skills du rôle deux fois dans le prompt système | L'intention donnait leurs noms au modèle qui rédige le playbook, qui les recopiait (« Ton périmètre ») ; la création ajoutait ensuite sa section (`playbook_branche`) |
+| Les skills du rôle deux fois dans le prompt système | L'intention donnait leurs noms au modèle qui rédige le playbook, qui les recopiait (« Ton périmètre ») ; la création ajoutait ensuite sa section (`playbook_with_sections`) |
 | Le prompt système tutoyait l'agent, puis le vouvoyait (« Servez-vous-en ») | La section des skills de la création |
 
 **Ce qui est décidé.** Chaque chose se dit une fois, là où elle est vraie :
@@ -918,7 +924,7 @@ dispersait l'agent :
 - la consigne garde sa **règle de lecture** (#1102) et ne liste pas une seconde fois un skill que
   les instructions transmises désignent déjà par son chemin ; un `AGENTS.md` écrit à la main, ou tronqué, qui ne le
   désigne pas le voit listé. Son titre ne reprend plus celui de la section d'`AGENTS.md` ;
-- l'**intention** ne nomme plus les skills du rôle (`maestro.equipe.proposition.intention_du_role`) :
+- l'**intention** ne nomme plus les skills du rôle (`maestro.team.proposal.role_intent`) :
   ce qu'on ne donne pas au modèle, il ne le recopie pas — le principe de #1405. Seule la section de la
   création les nomme, parce qu'elle seule sait lesquels le projet porte (#1212) ;
 - cette section **tutoie** l'agent, comme tout le playbook. Son ancien titre (« … qui sont les
@@ -961,7 +967,7 @@ personne que l'outillage « appelle désormais partout » la nouvelle.
 **Ce qui est décidé.** La commande vit **une fois**, dans le skill, qui fait foi :
 
 - la section des skills **ne fige plus de commande** : elle nomme le skill et son chemin, et dit
-  que c'est lui qui porte la commande (`maestro.equipe.creation`). Une correction qui réécrit le
+  que c'est lui qui porte la commande (`maestro.team.creation`). Une correction qui réécrit le
   skill n'a plus de copie à rattraper ;
 - une équipe recrutée avant se **rebranche** à chaque pièce écrite : la section de chaque agent
   perd ses commandes figées — dans sa fiche comme dans sa version publiée, que le moteur charge en

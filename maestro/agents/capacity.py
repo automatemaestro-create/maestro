@@ -66,7 +66,7 @@ INSTANCES_DEFAUT = 1
 #: Le plafond global des instances qu'un run **dérive de son plan** (#1299). Une
 #: décision, pas une mesure — la même que celle de la concurrence d'un run
 #: d'outillage (#626) et du plafond qu'une proposition d'équipe pose
-#: (`maestro.equipe.gabarits.INSTANCES_MAX_PROPOSEES`) : trois. La seule mesure qui
+#: (`maestro.team.role_templates.MAX_PROPOSED_INSTANCES`) : trois. La seule mesure qui
 #: existe est celle d'une concurrence de **deux** (démo V1, #88 : livrables compacts,
 #: −43 % de coût), et elle ne dit rien de trois ; ce chiffre ne s'appuie donc sur
 #: aucune. Il borne ce que Maestro ouvre de lui-même : la personne en règle un autre

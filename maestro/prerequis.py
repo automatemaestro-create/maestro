@@ -18,7 +18,7 @@ constater sans rien deviner :
 - `prerequis_du_mcp` le lit sur l'exception, **en données** (`ServeurInjoignable`,
   que chaque adaptateur produit dans les mots de Maestro), et y joint la procédure
   que la bibliothèque connaît pour chaque serveur (`RegistreMcp.get`) ;
-- `prerequis_du_role` le lit sur le rôle manquant du routage (`RoleManquant`,
+- `prerequis_du_role` le lit sur le rôle manquant du routage (`MissingRole`,
   #1041).
 
 Le troisième — le blocage signalé — n'a pas de constat mécanique, et c'est voulu :
@@ -48,7 +48,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.mcp_registry import EntreeRegistre, RegistreMcp
-from maestro.equipe.manque import RoleManquant
 from maestro.providers.base import (
     MCP_A_AUTHENTIFIER,
     MCP_DESACTIVE,
@@ -58,6 +57,7 @@ from maestro.providers.base import (
     McpServerUnavailable,
     ServeurInjoignable,
 )
+from maestro.team.gap import MissingRole
 
 #: Un serveur MCP à rendre joignable — authentifier, réactiver, démarrer.
 GENRE_SERVEUR = "serveur"
@@ -95,7 +95,7 @@ class PrerequisManquant:
 
     Les trois derniers champs n'ont de sens que pour un **rôle** : les
     compétences que personne ne couvre, le gabarit qui y répond et ce qu'il en
-    couvre — la forme exacte de `RoleManquant`, pour que la proposition de
+    couvre — la forme exacte de `MissingRole`, pour que la proposition de
     recrutement soit *la* raison calculée et pas une seconde formulation.
     """
 
@@ -112,13 +112,13 @@ class PrerequisManquant:
         """Un rôle qu'un gabarit sait pourvoir — donc à proposer en un geste de recrutement."""
         return self.genre == GENRE_ROLE and bool(self.gabarit)
 
-    def role_manquant(self) -> RoleManquant:
+    def role_manquant(self) -> MissingRole:
         """Le rôle manquant tel que le canal de renfort le transporte (#1227)."""
-        return RoleManquant(
-            competences=self.competences,
+        return MissingRole(
+            competencies=self.competences,
             role=self.objet,
-            gabarit=self.gabarit or None,
-            couvre=self.couvre,
+            role_template=self.gabarit or None,
+            covers=self.couvre,
         )
 
     def phrase(self) -> str:
@@ -181,26 +181,26 @@ def prerequis_du_mcp(
     )
 
 
-def prerequis_du_role(manque: RoleManquant, titre: str = "") -> PrerequisManquant:
+def prerequis_du_role(manque: MissingRole, titre: str = "") -> PrerequisManquant:
     """Le prérequis qu'un rôle manquant du routage constate (#1041).
 
     `titre` est la tâche que personne ne sait prendre : c'est elle que la raison
     nomme, puisque c'est elle qui attend.
     """
-    competences = ", ".join(manque.couvre or manque.competences)
+    competences = ", ".join(manque.covers or manque.competencies)
     sujet = f"la tâche « {titre} »" if titre else "cette tâche"
     return PrerequisManquant(
         genre=GENRE_ROLE,
         objet=manque.role,
         raison=f"{sujet} demande {competences}, et aucun rôle de l'équipe ne le couvre",
         procedure=(
-            f"recruter le rôle « {manque.role} » (gabarit `{manque.gabarit}`)"
-            if manque.gabarit is not None
+            f"recruter le rôle « {manque.role} » (gabarit `{manque.role_template}`)"
+            if manque.role_template is not None
             else f"recruter un rôle qui couvre {competences}, depuis les écrans d'agents du projet"
         ),
-        competences=manque.competences,
-        gabarit=manque.gabarit or "",
-        couvre=manque.couvre,
+        competences=manque.competencies,
+        gabarit=manque.role_template or "",
+        couvre=manque.covers,
     )
 
 

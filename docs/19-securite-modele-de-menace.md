@@ -354,7 +354,8 @@ réponse en trois couches :
   processus de l'autre ;
 - le **réseau**, bouclage compris ;
 - l'**environnement** de la personne, hors ce que Maestro retient ;
-- les vérifications que Maestro joue lui-même, au niveau de la personne.
+- la vérification d'une tâche, que Maestro joue lui-même au niveau de la personne. Celle de
+  l'outillage joue sous la borne des agents (#1691).
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
 n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.

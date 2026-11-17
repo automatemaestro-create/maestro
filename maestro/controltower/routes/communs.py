@@ -27,7 +27,7 @@ from maestro.controltower.projets import detail_refus, statut_http
 from maestro.controltower.routes.contexte import Contexte
 from maestro.controltower.state import STATUTS_EXECUTION_TERMINAUX
 from maestro.decision_humaine import ETENDUE_RUN
-from maestro.equipe import RoleValide
+from maestro.team import ValidatedRole
 
 
 class Diffusion:
@@ -100,7 +100,7 @@ def registre(ctx: Contexte) -> RegistreMcp:
 
 async def creer_equipe_du_projet(
     ctx: Contexte,
-    projet_id: str, roles: Sequence[RoleValide], proposition_id: str = ""
+    projet_id: str, roles: Sequence[ValidatedRole], proposition_id: str = ""
 ) -> dict[str, Any]:
     """Crée l'équipe validée — la voie de #1040, que la route et le fil partagent.
 

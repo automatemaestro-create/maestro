@@ -1,29 +1,29 @@
-"""L'équipe se propose pour le **besoin réel** du projet, et se corrige en langage naturel (#1159).
+"""The team is proposed for the project's **real need**, and corrected in natural language (#1159).
 
-[docs/41](../docs/41-decision-maestro-juge-il-ne-bride-pas.md) renverse la dérivation par
-règles de #1039 : cinq gabarits retenus par des règles fixes ne proposaient **jamais** un
-rôle mobile, d'apprentissage automatique, de sécurité ou de documentation, et le rôle
-données jamais sur un projet neuf. Le modèle compose désormais l'équipe ; les gabarits
-restent une **matière**, et les règles le **repli** quand il ne répond pas.
+[docs/41](../docs/41-decision-maestro-juge-il-ne-bride-pas.md) overturns the rule-based
+derivation of #1039: five templates retained by fixed rules **never** proposed a mobile,
+machine-learning, security or documentation role, and the data role never on a new
+project. The model composes the team; the templates remain **material**, and the rules
+the **fallback** when it does not answer.
 
-Ce que cette suite tient, dans l'ordre du ticket :
+What this suite holds, in the ticket's order:
 
-① **le modèle nomme les rôles pertinents, avec leur raison** — un projet mobile, un
-   pipeline d'apprentissage, et le rôle données sur un projet neuf qui en a besoin ;
-② **l'exécution vérifie ce qu'il écrit** — un rôle sans raison, un gabarit inconnu, un
-   skill que l'outillage ne recommande pas, une preuve que l'analyse n'a pas lue, un
-   nombre d'instances hors bornes, l'orchestrateur : rien de cela ne passe tel quel ;
-③ **le repli se dit** — une composition qui n'aboutit pas retombe sur les règles des
-   gabarits, et la proposition nomme la cause ;
-④ **« ajoute quelqu'un pour la sécurité » est compris** — le rôle est ajouté avec son
-   playbook, par la route que l'étape d'équipe appelle ;
-⑤ **le prompt porte le projet et les mots de la personne**, et le registre de langue ;
-⑦ **ce que la personne a fixé du projet, ses playbooks le suivent** (#1521) — le
-   rédacteur reçoit ses réponses, et une convention corrigée en mots gagne chaque rôle
-   montré dont le playbook la contredit, sur des playbooks que le modèle a lus.
+① **the model names the relevant roles, with their reason** — a mobile project, a
+   learning pipeline, and the data role on a new project that needs it;
+② **execution verifies what it writes** — a role with no reason, an unknown template, a
+   skill the tooling does not recommend, evidence the analysis has not read, a number
+   of instances out of bounds, the orchestrator: none of that passes as is;
+③ **the fallback is stated** — a composition that does not succeed falls back on the
+   template rules, and the proposal names the cause;
+④ **« ajoute quelqu'un pour la sécurité » is understood** — the role is added with its
+   playbook, by the route the team step calls;
+⑤ **the prompt carries the project and the person's words**, and the language register;
+⑦ **what the person has set about the project, their playbooks follow** (#1521) — the
+   writer receives their answers, and a convention corrected in words reaches every
+   shown role whose playbook contradicts it, on playbooks the model has read.
 
-Le fournisseur est **factice** (§5 de docs/41 : les tests unitaires gardent leurs
-doubles) : il rend le texte qu'un modèle aurait rendu, et note ce qu'on lui a demandé.
+The provider is a **fake** (§5 of docs/41: unit tests keep their doubles): it returns
+the text a model would have returned, and records what it was asked.
 """
 
 from __future__ import annotations
@@ -54,31 +54,6 @@ from maestro.controltower.generation_agent import (
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.decideur import Decideur
-from maestro.equipe import (
-    ECARTE_ORCHESTRATEUR,
-    INSTANCES_MAX_CREEES,
-    OUTIL_EXECUTION,
-    proposer_equipe,
-)
-from maestro.equipe.composition import (
-    CADRE_COMPOSITION,
-    DEMANDE_MAX,
-    CompositionIllisible,
-    MembreActuel,
-    corriger_equipe,
-    lire_reponse,
-    prompt_composition,
-    prompt_correction,
-    proposer_equipe_composee,
-)
-from maestro.equipe.modele import (
-    ORIGINE_COMPOSITION_MODELE,
-    ORIGINE_COMPOSITION_REGLES,
-    ORIGINE_PLAYBOOK_ESQUISSE,
-    ORIGINE_PLAYBOOK_GABARIT,
-    ORIGINE_PLAYBOOK_GENERE,
-)
-from maestro.equipe.proposition import faits_du_projet
 from maestro.outillage.generation import generer
 from maestro.outillage.modele import Commande, Constats, Langage
 from maestro.outillage.questionnaire import (
@@ -92,37 +67,62 @@ from maestro.outillage.redaction import rediger
 from maestro.portee import PORTEE_PROJET
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
+from maestro.team import (
+    EXCLUDED_ORCHESTRATOR,
+    EXECUTION_TOOL,
+    MAX_CREATED_INSTANCES,
+    propose_team,
+)
+from maestro.team.composition import (
+    COMPOSITION_INSTRUCTIONS,
+    MAX_REQUEST,
+    CurrentMember,
+    UnreadableComposition,
+    composition_prompt,
+    correct_team,
+    correction_prompt,
+    propose_composed_team,
+    read_response,
+)
+from maestro.team.model import (
+    COMPOSITION_ORIGIN_MODEL,
+    COMPOSITION_ORIGIN_RULES,
+    PLAYBOOK_ORIGIN_GENERATED,
+    PLAYBOOK_ORIGIN_SKETCH,
+    PLAYBOOK_ORIGIN_TEMPLATE,
+)
+from maestro.team.proposal import project_facts
 
-PROJET = "prj-mobile"
+PROJECT = "prj-mobile"
 
 
 # --------------------------------------------------------------------------- #
-# Les doubles : un fournisseur qui rend ce qu'un modèle aurait rendu
+# The doubles: a provider that returns what a model would have returned
 # --------------------------------------------------------------------------- #
 
 
-class _FournisseurEcrit(ModelProvider):
-    """Rend, dans l'ordre, les textes qu'on lui a donnés — et note chaque demande."""
+class _ScriptedProvider(ModelProvider):
+    """Returns, in order, the texts it was given — and records each request."""
 
     name = "ecrit"
 
-    def __init__(self, *reponses: str) -> None:
-        self._reponses = list(reponses)
-        self.demandes: list[tuple[str, str | None]] = []
+    def __init__(self, *replies: str) -> None:
+        self._replies = list(replies)
+        self.requests: list[tuple[str, str | None]] = []
 
     def supports(self, model: str) -> bool:
         return True
 
     async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
-        self.demandes.append((prompt, system_prompt))
-        return self._reponses.pop(0)
+        self.requests.append((prompt, system_prompt))
+        return self._replies.pop(0)
 
     async def run_agent(self, *args: Any, **kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError("la composition d'équipe ne fait qu'écrire")
 
 
-class _FournisseurEnPanne(ModelProvider):
-    """Un fournisseur qui ne répond jamais — quota épuisé, réseau coupé."""
+class _FailingProvider(ModelProvider):
+    """A provider that never answers — quota exhausted, network down."""
 
     name = "en-panne"
 
@@ -136,24 +136,24 @@ class _FournisseurEnPanne(ModelProvider):
         raise AssertionError("jamais appelé")
 
 
-class _GenerateurEcrit(GenerateurDefinitionAgent):
-    """Un générateur de playbooks qui écrit un playbook reconnaissable par rôle.
+class _ScriptedGenerator(GenerateurDefinitionAgent):
+    """A playbook generator that writes a recognisable playbook per role.
 
-    Il note aussi les faits du projet qu'on lui passe (#1521), et réécrit un playbook
-    montré en y posant la consigne reçue — sauf pour les rôles de `en_panne`, dont la
-    réécriture échoue comme un quota épuisé.
+    It also records the project facts it is passed (#1521), and rewrites a shown
+    playbook by adding the instruction it received — except for the roles of
+    `failing`, whose rewrite fails like an exhausted quota.
     """
 
-    def __init__(self, *, en_panne: tuple[str, ...] = ()) -> None:
-        super().__init__(provider=_FournisseurEnPanne())
-        self.intentions: list[str] = []
-        self.faits: list[str] = []
+    def __init__(self, *, failing: tuple[str, ...] = ()) -> None:
+        super().__init__(provider=_FailingProvider())
+        self.intents: list[str] = []
+        self.facts: list[str] = []
         self.corrections: list[tuple[str, str, str]] = []
-        self._en_panne = en_panne
+        self._failing = failing
 
     async def proposer(self, intention: str, **kwargs: Any) -> DefinitionProposee:
-        self.intentions.append(intention)
-        self.faits.append(kwargs.get("faits", ""))
+        self.intents.append(intention)
+        self.facts.append(kwargs.get("faits", ""))
         return DefinitionProposee(
             intention=intention,
             nom="x",
@@ -164,13 +164,13 @@ class _GenerateurEcrit(GenerateurDefinitionAgent):
 
     async def appliquer(self, playbook: str, *, demande: str, consigne: str) -> str:
         self.corrections.append((playbook, demande, consigne))
-        if any(nom in playbook for nom in self._en_panne):
+        if any(name in playbook for name in self._failing):
             raise RuntimeError("quota épuisé (test)")
         return f"{playbook}\n\nRéécrit : {consigne}"
 
 
-class _GenerateurHorsLigne(GenerateurDefinitionAgent):
-    """Un générateur de playbooks qui ne répond jamais — le rôle garde son repli."""
+class _OfflineGenerator(GenerateurDefinitionAgent):
+    """A playbook generator that never answers — the role keeps its fallback."""
 
     async def proposer(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("hors ligne (test)")
@@ -179,18 +179,18 @@ class _GenerateurHorsLigne(GenerateurDefinitionAgent):
         raise RuntimeError("hors ligne (test)")
 
 
-def _json(**contenu: Any) -> str:
-    """Ce qu'un modèle rend, noyé dans un peu de prose pour éprouver la lecture."""
-    return "Voici l'équipe :\n```json\n" + json.dumps(contenu, ensure_ascii=False) + "\n```"
+def _json(**content: Any) -> str:
+    """What a model returns, buried in a little prose to put the reading to the test."""
+    return "Voici l'équipe :\n```json\n" + json.dumps(content, ensure_ascii=False) + "\n```"
 
 
 # --------------------------------------------------------------------------- #
-# Des projets hors des cinq gabarits
+# Projects outside the five templates
 # --------------------------------------------------------------------------- #
 
 
-def _constats_mobile() -> Constats:
-    """Une application Flutter : du Dart, et rien qui ressemble à un gabarit d'écran."""
+def _mobile_findings() -> Constats:
+    """A Flutter application: Dart, and nothing that looks like a screen template."""
     return Constats(
         langages=(Langage(nom="Dart", fichiers=24, part=1.0, exemple="lib/main.dart"),),
         commandes=(
@@ -204,8 +204,8 @@ def _constats_mobile() -> Constats:
     )
 
 
-def _constats_ml() -> Constats:
-    """Un pipeline d'entraînement : du Python et des carnets, aucune interface."""
+def _ml_findings() -> Constats:
+    """A training pipeline: Python and notebooks, no interface."""
     return Constats(
         langages=(
             Langage(nom="Python", fichiers=18, part=0.7, exemple="pipeline/entrainer.py"),
@@ -214,7 +214,7 @@ def _constats_ml() -> Constats:
     )
 
 
-ROLE_MOBILE = {
+MOBILE_ROLE = {
     "nom": "mobile",
     "role": "Développeur mobile",
     "competences": ["flutter", "dart", "ios", "android"],
@@ -226,7 +226,7 @@ ROLE_MOBILE = {
     "skills": ["lancer-les-tests"],
 }
 
-ROLE_ML = {
+ML_ROLE = {
     "nom": "ml",
     "role": "Ingénieur apprentissage automatique",
     "competences": ["machine learning", "entraînement", "évaluation", "données"],
@@ -240,52 +240,50 @@ ROLE_ML = {
 
 
 @pytest.mark.parametrize(
-    ("constats", "brut", "attendu"),
+    ("findings", "raw", "expected"),
     [
-        (_constats_mobile(), ROLE_MOBILE, "Développeur mobile"),
-        (_constats_ml(), ROLE_ML, "Ingénieur apprentissage automatique"),
+        (_mobile_findings(), MOBILE_ROLE, "Développeur mobile"),
+        (_ml_findings(), ML_ROLE, "Ingénieur apprentissage automatique"),
     ],
     ids=["application-mobile", "pipeline-ml"],
 )
-def test_hors_des_gabarits_la_proposition_nomme_les_roles_pertinents_avec_leur_raison(
-    constats: Constats, brut: dict[str, Any], attendu: str
+def test_outside_the_templates_the_proposal_names_the_relevant_roles_with_their_reason(
+    findings: Constats, raw: dict[str, Any], expected: str
 ) -> None:
-    """① Le critère du ticket : ce que les règles n'auraient **jamais** proposé."""
-    regles = proposer_equipe(constats, recommander(constats), projet_id=PROJET)
-    assert attendu not in {role.role for role in regles.roles}
+    """① The ticket's criterion: what the rules would **never** have proposed."""
+    by_rules = propose_team(findings, recommander(findings), project_id=PROJECT)
+    assert expected not in {role.role for role in by_rules.roles}
 
-    reponse = lire_reponse(_json(roles=[brut], ecartes=[]))
-    proposition = proposer_equipe_composee(
-        constats, recommander(constats), reponse, projet_id=PROJET
-    )
+    response = read_response(_json(roles=[raw], ecartes=[]))
+    proposal = propose_composed_team(findings, recommander(findings), response, project_id=PROJECT)
 
-    role = next(r for r in proposition.roles if r.role == attendu)
-    assert role.raison == brut["raison"]
-    assert role.gabarit == ""  # aucun gabarit n'en est la matière
+    role = next(r for r in proposal.roles if r.role == expected)
+    assert role.reason == raw["raison"]
+    assert role.role_template == ""  # no template is its material
     assert role.justification is not None
-    assert role.justification.chemin == brut["preuve"]
-    # Un rôle hors gabarit a un playbook dès la proposition — une esquisse, dite telle.
+    assert role.justification.chemin == raw["preuve"]
+    # A role outside the templates has a playbook from the proposal on — a sketch, said so.
     assert role.playbook.strip()
-    assert role.playbook_origine == ORIGINE_PLAYBOOK_ESQUISSE
-    assert attendu in role.playbook
+    assert role.playbook_origin == PLAYBOOK_ORIGIN_SKETCH
+    assert expected in role.playbook
     assert registre() in role.playbook
-    # Et il reçoit ses autorisations par la même règle qu'un rôle de gabarit.
-    assert [a.outil for a in role.autorisations] == [OUTIL_EXECUTION]
-    assert proposition.composition_origine == ORIGINE_COMPOSITION_MODELE
+    # And it receives its permissions by the same rule as a template role.
+    assert [p.tool for p in role.permissions] == [EXECUTION_TOOL]
+    assert proposal.composition_origin == COMPOSITION_ORIGIN_MODEL
 
 
-def test_les_competences_d_un_role_compose_sont_des_tags_que_le_routage_sait_lire() -> None:
-    """Le routage confronte des tags exacts (`Agent.couverture`), et le catalogue les
-    écrit en minuscules, sans accent, reliés par des tirets. Un « machine learning »
-    tel quel ne serait jamais apparié."""
-    proposition = proposer_equipe_composee(
-        _constats_ml(),
-        recommander(_constats_ml()),
-        lire_reponse(_json(roles=[ROLE_ML])),
-        projet_id=PROJET,
+def test_a_composed_role_s_competencies_are_tags_routing_can_read() -> None:
+    """Routing matches exact tags (`Agent.couverture`), and the catalog writes them in
+    lower case, without accents, joined by hyphens. A « machine learning » as is would
+    never be matched."""
+    proposal = propose_composed_team(
+        _ml_findings(),
+        recommander(_ml_findings()),
+        read_response(_json(roles=[ML_ROLE])),
+        project_id=PROJECT,
     )
 
-    assert proposition.roles[0].competences == (
+    assert proposal.roles[0].competencies == (
         "machine-learning",
         "entrainement",
         "evaluation",
@@ -293,19 +291,19 @@ def test_les_competences_d_un_role_compose_sont_des_tags_que_le_routage_sait_lir
     )
 
 
-def test_le_role_donnees_est_propose_sur_un_projet_neuf_qui_en_a_besoin() -> None:
-    """① Le rôle données ne naissait **que** de fichiers SQL, donc jamais sur un projet
-    neuf. Le modèle lit ce que la personne a répondu, et le propose avec sa raison ;
-    il descend du gabarit `bdd`, dont il garde le playbook de repli."""
-    choix = (
+def test_the_data_role_is_proposed_on_a_new_project_that_needs_it() -> None:
+    """① The data role was born **only** from SQL files, so never on a new project. The
+    model reads what the person answered, and proposes it with its reason; it derives
+    from the `bdd` template, whose fallback playbook it keeps."""
+    choices = (
         Choix(cle="nature", valeur="service-api"),
         Choix(cle="langages", valeur="python"),
     )
-    constats = constats_depuis_choix(choix)
-    regles = proposer_equipe(constats, recommandation_depuis_choix(choix), choix=choix)
-    assert "donnees" not in {role.nom for role in regles.roles}
+    findings = constats_depuis_choix(choices)
+    by_rules = propose_team(findings, recommandation_depuis_choix(choices), choices=choices)
+    assert "donnees" not in {role.name for role in by_rules.roles}
 
-    reponse = lire_reponse(
+    response = read_response(
         _json(
             roles=[
                 {
@@ -319,129 +317,129 @@ def test_le_role_donnees_est_propose_sur_un_projet_neuf_qui_en_a_besoin() -> Non
             ]
         )
     )
-    proposition = proposer_equipe_composee(
-        constats, recommandation_depuis_choix(choix), reponse, projet_id=PROJET
+    proposal = propose_composed_team(
+        findings, recommandation_depuis_choix(choices), response, project_id=PROJECT
     )
 
-    donnees = next(r for r in proposition.roles if r.nom == "donnees")
-    assert donnees.gabarit == "bdd"
-    assert "enregistre et restitue des données" in donnees.raison
-    assert donnees.playbook_origine == ORIGINE_PLAYBOOK_GABARIT
-    assert donnees.justification is None  # aucun fichier ne le prouve encore : rien d'inventé
+    data = next(r for r in proposal.roles if r.name == "donnees")
+    assert data.role_template == "bdd"
+    assert "enregistre et restitue des données" in data.reason
+    assert data.playbook_origin == PLAYBOOK_ORIGIN_TEMPLATE
+    assert data.justification is None  # no file proves it yet: nothing invented
 
 
-def test_un_role_qui_descend_d_un_gabarit_en_garde_la_matiere() -> None:
-    """Les gabarits sont une matière : un rôle « qa » garde ses compétences s'il n'en
-    donne pas, et branche les skills de son gabarit par usage."""
-    constats = _constats_mobile()
-    testeur = {"role": "Testeur", "raison": "les tests Flutter sont déclarés", "gabarit": "qa"}
-    reponse = lire_reponse(_json(roles=[testeur]))
+def test_a_role_derived_from_a_template_keeps_its_material() -> None:
+    """Templates are material: a « qa » role keeps its competencies if it gives none, and
+    attaches its template's skills by usage."""
+    findings = _mobile_findings()
+    tester = {"role": "Testeur", "raison": "les tests Flutter sont déclarés", "gabarit": "qa"}
+    response = read_response(_json(roles=[tester]))
 
-    tests = proposer_equipe_composee(constats, recommander(constats), reponse).roles[0]
+    tests = propose_composed_team(findings, recommander(findings), response).roles[0]
 
-    assert tests.gabarit == "qa"
-    assert set(tests.competences) == {"tests", "e2e", "review", "qa"}
-    assert [s.nom for s in tests.skills] == ["lancer-les-tests"]
-    assert tests.nom not in NOMS_RESERVES
+    assert tests.role_template == "qa"
+    assert set(tests.competencies) == {"tests", "e2e", "review", "qa"}
+    assert [s.name for s in tests.skills] == ["lancer-les-tests"]
+    assert tests.name not in NOMS_RESERVES
 
 
 # --------------------------------------------------------------------------- #
-# ② L'exécution vérifie ce que le modèle écrit
+# ② Execution verifies what the model writes
 # --------------------------------------------------------------------------- #
 
 
-def _compose(*roles: dict[str, Any], constats: Constats | None = None, **extra: Any):
-    constats = constats or _constats_mobile()
-    return proposer_equipe_composee(
-        constats,
-        recommander(constats),
-        lire_reponse(_json(roles=list(roles), **extra)),
-        projet_id=PROJET,
+def _compose(*roles: dict[str, Any], findings: Constats | None = None, **extra: Any):
+    findings = findings or _mobile_findings()
+    return propose_composed_team(
+        findings,
+        recommander(findings),
+        read_response(_json(roles=list(roles), **extra)),
+        project_id=PROJECT,
     )
 
 
-def test_un_role_sans_raison_n_est_pas_propose_et_la_proposition_le_dit() -> None:
-    """Chaque rôle avec sa raison — un rôle qui n'en porte pas est une affirmation."""
-    proposition = _compose(ROLE_MOBILE, {**ROLE_ML, "raison": "  "})
+def test_a_role_without_reason_is_not_proposed_and_the_proposal_says_so() -> None:
+    """Each role with its reason — a role that carries none is an assertion."""
+    proposal = _compose(MOBILE_ROLE, {**ML_ROLE, "raison": "  "})
 
-    assert [r.role for r in proposition.roles] == ["Développeur mobile"]
-    assert "Ingénieur apprentissage automatique" in proposition.composition_raison
-
-
-def test_un_gabarit_inconnu_ne_devient_pas_une_filiation() -> None:
-    role = _compose({**ROLE_MOBILE, "gabarit": "astronaute"}).roles[0]
-
-    assert role.gabarit == ""
-    assert role.playbook_origine == ORIGINE_PLAYBOOK_ESQUISSE
+    assert [r.role for r in proposal.roles] == ["Développeur mobile"]
+    assert "Ingénieur apprentissage automatique" in proposal.composition_reason
 
 
-def test_un_skill_que_l_outillage_ne_recommande_pas_n_est_pas_branche() -> None:
+def test_an_unknown_template_does_not_become_a_lineage() -> None:
+    role = _compose({**MOBILE_ROLE, "gabarit": "astronaute"}).roles[0]
+
+    assert role.role_template == ""
+    assert role.playbook_origin == PLAYBOOK_ORIGIN_SKETCH
+
+
+def test_a_skill_the_tooling_does_not_recommend_is_not_attached() -> None:
     skills = ["lancer-les-tests", "deployer-sur-la-lune"]
-    role = _compose({**ROLE_MOBILE, "skills": skills}).roles[0]
+    role = _compose({**MOBILE_ROLE, "skills": skills}).roles[0]
 
-    assert [s.nom for s in role.skills] == ["lancer-les-tests"]
+    assert [s.name for s in role.skills] == ["lancer-les-tests"]
 
 
-def test_une_preuve_que_l_analyse_n_a_pas_lue_n_est_pas_citee() -> None:
-    """« Ce qui n'est pas vérifié n'est pas cité » : le chemin doit figurer dans les
-    constats, sans quoi le rôle garde sa raison mais perd la pièce inventée."""
-    role = _compose({**ROLE_MOBILE, "preuve": "ios/Runner/Info.plist"}).roles[0]
+def test_evidence_the_analysis_has_not_read_is_not_cited() -> None:
+    """« Ce qui n'est pas vérifié n'est pas cité »: the path must appear in the findings,
+    otherwise the role keeps its reason but loses the invented evidence."""
+    role = _compose({**MOBILE_ROLE, "preuve": "ios/Runner/Info.plist"}).roles[0]
 
     assert role.justification is None
-    assert role.raison == ROLE_MOBILE["raison"]
+    assert role.reason == MOBILE_ROLE["raison"]
 
 
-@pytest.mark.parametrize("instances", [0, -2, INSTANCES_MAX_CREEES + 1, "trois"])
-def test_des_instances_hors_bornes_reviennent_a_une_et_le_disent(instances: Any) -> None:
-    role = _compose({**ROLE_MOBILE, "instances": instances}).roles[0]
+@pytest.mark.parametrize("instances", [0, -2, MAX_CREATED_INSTANCES + 1, "trois"])
+def test_out_of_bounds_instances_fall_back_to_one_and_say_so(instances: Any) -> None:
+    role = _compose({**MOBILE_ROLE, "instances": instances}).roles[0]
 
     assert role.instances == 1
-    assert "hors des bornes" in role.raison_instances
+    assert "hors des bornes" in role.instances_reason
 
 
-def test_des_instances_dans_les_bornes_sont_gardees_avec_leur_raison() -> None:
+def test_instances_within_bounds_are_kept_with_their_reason() -> None:
     role = _compose(
-        {**ROLE_MOBILE, "instances": 2, "raison_instances": "iOS et Android en parallèle"}
+        {**MOBILE_ROLE, "instances": 2, "raison_instances": "iOS et Android en parallèle"}
     ).roles[0]
 
     assert role.instances == 2
-    assert role.raison_instances == "iOS et Android en parallèle"
+    assert role.instances_reason == "iOS et Android en parallèle"
 
 
-def test_l_orchestrateur_n_est_jamais_recrute_meme_si_le_modele_le_propose() -> None:
-    proposition = _compose(
-        ROLE_MOBILE,
+def test_the_orchestrator_is_never_recruited_even_if_the_model_proposes_it() -> None:
+    proposal = _compose(
+        MOBILE_ROLE,
         {"nom": "orchestrateur", "role": "Orchestrateur", "raison": "il faut coordonner"},
     )
 
-    assert all("orchestrateur" not in r.nom for r in proposition.roles)
-    assert ECARTE_ORCHESTRATEUR in proposition.ecartes
+    assert all("orchestrateur" not in r.name for r in proposal.roles)
+    assert EXCLUDED_ORCHESTRATOR in proposal.excluded
 
 
-def test_un_nom_pris_ou_reserve_est_rendu_libre() -> None:
-    constats = _constats_mobile()
-    proposition = proposer_equipe_composee(
-        constats,
-        recommander(constats),
-        lire_reponse(
+def test_a_taken_or_reserved_name_is_made_free() -> None:
+    findings = _mobile_findings()
+    proposal = propose_composed_team(
+        findings,
+        recommander(findings),
+        read_response(
             _json(
                 roles=[
-                    ROLE_MOBILE,
-                    {**ROLE_MOBILE, "role": "Développeur mobile (Android)"},
-                    {**ROLE_MOBILE, "nom": "developpeur", "role": "Développeur"},
+                    MOBILE_ROLE,
+                    {**MOBILE_ROLE, "role": "Développeur mobile (Android)"},
+                    {**MOBILE_ROLE, "nom": "developpeur", "role": "Développeur"},
                 ]
             )
         ),
-        noms_pris=("mobile",),
+        taken_names=("mobile",),
     )
 
-    noms = [r.nom for r in proposition.roles]
-    assert noms == ["mobile-2", "mobile-3", "developpeur-2"]
-    assert not set(noms) & NOMS_RESERVES
+    names = [r.name for r in proposal.roles]
+    assert names == ["mobile-2", "mobile-3", "developpeur-2"]
+    assert not set(names) & NOMS_RESERVES
 
 
 @pytest.mark.parametrize(
-    ("nom", "role", "gabarit", "attendu"),
+    ("name", "role", "template", "expected"),
     [
         ("developpeur", "Développeur backend Python", "developpeur", "dev"),
         ("qa", "QA / Testeur", "qa", "tests"),
@@ -449,102 +447,102 @@ def test_un_nom_pris_ou_reserve_est_rendu_libre() -> None:
         ("developpeur", "Développeur mobile", "", "developpeur-mobile"),
     ],
 )
-def test_un_nom_reserve_retombe_sur_un_nom_parlant_plutot_que_sur_un_suffixe(
-    nom: str, role: str, gabarit: str, attendu: str
+def test_a_reserved_name_falls_back_on_a_meaningful_name_rather_than_a_suffix(
+    name: str, role: str, template: str, expected: str
 ) -> None:
-    """Relevé sur la vraie stack (2026-09-24) : le modèle nomme volontiers un rôle
-    comme l'agent du code dont il descend — `developpeur`, `qa`, `devops` —, noms que
-    le dépôt réserve. Le suffixe les rendait libres mais illisibles
-    (`developpeur-2`). Le rôle prend le nom de son gabarit, ou son libellé."""
-    brut = {
-        "nom": nom,
+    """Observed on the real stack (2026-09-24): the model readily names a role like the
+    code agent it derives from — `developpeur`, `qa`, `devops` —, names the repository
+    reserves. The suffix made them free but unreadable (`developpeur-2`). The role takes
+    its template's name, or its label."""
+    raw = {
+        "nom": name,
         "role": role,
         "raison": "le projet l'appelle",
-        "gabarit": gabarit,
+        "gabarit": template,
         "competences": ["code"],
     }
 
-    (propose,) = _compose(brut, constats=_constats_mobile()).roles
+    (proposed,) = _compose(raw, findings=_mobile_findings()).roles
 
-    assert propose.nom == attendu
+    assert proposed.name == expected
 
 
-def test_les_gabarits_non_retenus_sont_ecartes_nommement_sans_promettre_de_geste() -> None:
-    """Un gabarit que le modèle n'a pas retenu est nommé, avec la raison qu'il en donne
-    — ou une raison qui dit que c'est son jugement. Aucune ne promet un geste (#1159)."""
-    proposition = _compose(
-        ROLE_MOBILE,
+def test_templates_not_retained_are_excluded_by_name_without_promising_an_action() -> None:
+    """A template the model did not retain is named, with the reason it gives — or a
+    reason that says it is its judgement. None promises an action (#1159)."""
+    proposal = _compose(
+        MOBILE_ROLE,
         ecartes=[{"gabarit": "bdd", "raison": "l'application ne stocke rien côté serveur"}],
     )
 
-    ecartes = {e.nom: e.raison for e in proposition.ecartes}
-    assert set(ecartes) == {"orchestrateur", "dev", "donnees", "infra", "interface", "tests"}
-    assert ecartes["donnees"] == "l'application ne stocke rien côté serveur"
-    assert "ne l'a pas retenu" in ecartes["infra"]
-    for raison in ecartes.values():
-        assert "validation" not in raison
+    excluded = {e.name: e.reason for e in proposal.excluded}
+    assert set(excluded) == {"orchestrateur", "dev", "donnees", "infra", "interface", "tests"}
+    assert excluded["donnees"] == "l'application ne stocke rien côté serveur"
+    assert "ne l'a pas retenu" in excluded["infra"]
+    for reason in excluded.values():
+        assert "validation" not in reason
 
 
 @pytest.mark.parametrize(
-    "texte",
+    "text",
     ["", "Je ne sais pas.", '{"roles": "mobile"}', _json(roles=[{"role": "Sans raison"}])],
     ids=["vide", "prose", "roles-pas-une-liste", "aucun-role-valide"],
 )
-def test_une_composition_inexploitable_leve(texte: str) -> None:
-    """Une composition qui ne laisse **aucun** rôle vérifié n'est pas une équipe vide :
-    c'est une réponse inexploitable, et le service retombe sur les règles."""
-    with pytest.raises(CompositionIllisible):
-        proposer_equipe_composee(
-            _constats_mobile(), recommander(_constats_mobile()), lire_reponse(texte)
+def test_an_unusable_composition_raises(text: str) -> None:
+    """A composition that leaves **no** verified role is not an empty team: it is an
+    unusable response, and the service falls back on the rules."""
+    with pytest.raises(UnreadableComposition):
+        propose_composed_team(
+            _mobile_findings(), recommander(_mobile_findings()), read_response(text)
         )
 
 
-def test_l_intention_d_un_role_compose_nomme_son_metier_et_tient_sous_la_borne() -> None:
-    """#257 écrit le playbook depuis l'intention : un libellé seul (« Sécurité ») ne dit
-    pas sur quoi porte le métier. Le régime d'exécution, qui la ferme, doit survivre à
-    la coupe de `ServiceEquipe._playbook`."""
-    role = _compose(ROLE_MOBILE).roles[0]
+def test_a_composed_role_s_intent_names_its_trade_and_fits_under_the_bound() -> None:
+    """#257 writes the playbook from the intent: a label alone (« Sécurité ») does not
+    say what the trade is about. The execution regime, which closes it, must survive the
+    cut of `ServiceEquipe._playbook`."""
+    role = _compose(MOBILE_ROLE).roles[0]
 
-    assert "flutter" in role.intention
-    assert role.intention[:INTENTION_MAX] == role.intention
+    assert "flutter" in role.intent
+    assert role.intent[:INTENTION_MAX] == role.intent
 
 
 # --------------------------------------------------------------------------- #
-# ⑤ Le prompt porte le projet, les mots de la personne et le registre
+# ⑤ The prompt carries the project, the person's words and the register
 # --------------------------------------------------------------------------- #
 
 
-def test_le_cadre_porte_le_registre_et_ouvre_la_liste_des_roles() -> None:
-    cadre = " ".join(CADRE_COMPOSITION.split())
+def test_the_instructions_carry_the_register_and_open_the_list_of_roles() -> None:
+    instructions = " ".join(COMPOSITION_INSTRUCTIONS.split())
 
-    assert registre() in CADRE_COMPOSITION
-    assert "pas une liste fermée" in cadre
-    assert "Ne propose jamais l'orchestrateur" in cadre
-    # Relevé à la relecture de #1159 sur la vraie stack : des raisons parlaient de
-    # « la personne » à la troisième personne, sous les yeux de la personne même.
-    assert "jamais « la personne »" in cadre
+    assert registre() in COMPOSITION_INSTRUCTIONS
+    assert "pas une liste fermée" in instructions
+    assert "Ne propose jamais l'orchestrateur" in instructions
+    # Observed at the review of #1159 on the real stack: reasons spoke of « la personne »
+    # in the third person, before the very eyes of that person.
+    assert "jamais « la personne »" in instructions
 
 
-def test_le_prompt_de_composition_porte_les_constats_les_reponses_et_la_matiere() -> None:
-    choix = (Choix(cle="nature", valeur="service-api"),)
-    constats = _constats_mobile()
+def test_the_composition_prompt_carries_the_findings_the_answers_and_the_material() -> None:
+    choices = (Choix(cle="nature", valeur="service-api"),)
+    findings = _mobile_findings()
 
-    prompt = prompt_composition(constats, recommander(constats), choix, nom_projet="Pousse")
+    prompt = composition_prompt(findings, recommander(findings), choices, project_name="Pousse")
 
     assert "Pousse" in prompt
     assert "Dart" in prompt and "lib/main.dart" in prompt
     assert "nature : service-api" in prompt
     assert "lancer-les-tests" in prompt
-    for gabarit in ("developpeur", "bdd", "devops", "designer", "qa"):
-        assert gabarit in prompt
+    for template in ("developpeur", "bdd", "devops", "designer", "qa"):
+        assert template in prompt
 
 
-def test_le_prompt_de_correction_porte_la_demande_et_l_equipe_actuelle() -> None:
-    constats = _constats_mobile()
-    equipe = (MembreActuel(nom="mobile", role="Développeur mobile", retenu=True, instances=1),)
+def test_the_correction_prompt_carries_the_request_and_the_current_team() -> None:
+    findings = _mobile_findings()
+    team = (CurrentMember(name="mobile", role="Développeur mobile", retained=True, instances=1),)
 
-    prompt = prompt_correction(
-        constats, recommander(constats), (), "ajoute quelqu'un pour la sécurité", equipe
+    prompt = correction_prompt(
+        findings, recommander(findings), (), "ajoute quelqu'un pour la sécurité", team
     )
 
     assert "ajoute quelqu'un pour la sécurité" in prompt
@@ -552,10 +550,10 @@ def test_le_prompt_de_correction_porte_la_demande_et_l_equipe_actuelle() -> None
 
 
 # --------------------------------------------------------------------------- #
-# ④ La correction en langage naturel
+# ④ The natural-language correction
 # --------------------------------------------------------------------------- #
 
-ROLE_SECURITE = {
+SECURITY_ROLE = {
     "nom": "securite",
     "role": "Sécurité applicative",
     "competences": ["securite", "audit", "dependances", "secrets"],
@@ -563,95 +561,93 @@ ROLE_SECURITE = {
     "comptes, et ses dépendances comme ses secrets se relisent",
 }
 
-EQUIPE_MOBILE = (
-    MembreActuel(nom="mobile", role="Développeur mobile", retenu=True, instances=1),
-    MembreActuel(nom="tests", role="QA / Testeur", retenu=False, instances=1),
+MOBILE_TEAM = (
+    CurrentMember(name="mobile", role="Développeur mobile", retained=True, instances=1),
+    CurrentMember(name="tests", role="QA / Testeur", retained=False, instances=1),
 )
 
 
-def test_ajoute_quelqu_un_pour_la_securite_est_compris_et_le_role_ajoute() -> None:
-    constats = _constats_mobile()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(
-            _json(roles=[ROLE_SECURITE], reponse="J'ajoute un rôle Sécurité applicative.")
+def test_add_someone_for_security_is_understood_and_the_role_added() -> None:
+    findings = _mobile_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(
+            _json(roles=[SECURITY_ROLE], reponse="J'ajoute un rôle Sécurité applicative.")
         ),
-        equipe=EQUIPE_MOBILE,
+        team=MOBILE_TEAM,
     )
 
-    (securite,) = correction.ajouts
-    assert securite.nom == "securite"
-    assert securite.role == "Sécurité applicative"
-    assert securite.playbook.strip()
-    assert correction.reponse == "J'ajoute un rôle Sécurité applicative."
+    (security,) = correction.additions
+    assert security.name == "securite"
+    assert security.role == "Sécurité applicative"
+    assert security.playbook.strip()
+    assert correction.reply == "J'ajoute un rôle Sécurité applicative."
     assert correction.to_dict()["cree"] is False
 
 
-def test_une_correction_ne_touche_qu_aux_roles_de_l_equipe_montree() -> None:
-    """Retirer, remettre, changer les instances : seuls les noms de l'équipe montrée
-    sont admis — un nom inventé ne retire rien et n'ajoute rien."""
-    constats = _constats_mobile()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(
+def test_a_correction_only_touches_roles_of_the_shown_team() -> None:
+    """Removing, restoring, changing the instances: only the names of the shown team are
+    admitted — an invented name removes nothing and adds nothing."""
+    findings = _mobile_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(
             _json(
                 retraits=["mobile", "fantome"],
                 remis=["tests", "fantome"],
-                instances={"mobile": 2, "tests": INSTANCES_MAX_CREEES + 5, "fantome": 2},
+                instances={"mobile": 2, "tests": MAX_CREATED_INSTANCES + 5, "fantome": 2},
                 reponse="Fait.",
             )
         ),
-        equipe=EQUIPE_MOBILE,
+        team=MOBILE_TEAM,
     )
 
-    assert correction.retraits == ("mobile",)
-    assert correction.remis == ("tests",)
+    assert correction.removals == ("mobile",)
+    assert correction.restored == ("tests",)
     assert correction.instances == {"mobile": 2}
 
 
-def test_un_ajout_ne_reprend_pas_le_nom_d_un_role_deja_montre() -> None:
-    constats = _constats_mobile()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(_json(roles=[{**ROLE_SECURITE, "nom": "mobile"}], reponse="Ajouté.")),
-        equipe=EQUIPE_MOBILE,
+def test_an_addition_does_not_reuse_the_name_of_an_already_shown_role() -> None:
+    findings = _mobile_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(_json(roles=[{**SECURITY_ROLE, "nom": "mobile"}], reponse="Ajouté.")),
+        team=MOBILE_TEAM,
     )
 
-    assert correction.ajouts[0].nom == "mobile-2"
+    assert correction.additions[0].name == "mobile-2"
 
 
-def test_une_demande_qui_ne_porte_pas_sur_l_equipe_rend_la_reponse_sans_rien_changer() -> None:
-    """Se laisser corriger, c'est aussi dire qu'on n'a pas compris — jamais deviner."""
-    constats = _constats_mobile()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(_json(reponse="Je n'ai pas compris quel rôle vous voulez changer.")),
-        equipe=EQUIPE_MOBILE,
+def test_a_request_not_about_the_team_returns_the_reply_without_changing_anything() -> None:
+    """Accepting correction also means saying one has not understood — never guessing."""
+    findings = _mobile_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(_json(reponse="Je n'ai pas compris quel rôle vous voulez changer.")),
+        team=MOBILE_TEAM,
     )
 
-    assert correction.ajouts == () and correction.retraits == ()
-    assert correction.reponse.startswith("Je n'ai pas compris")
+    assert correction.additions == () and correction.removals == ()
+    assert correction.reply.startswith("Je n'ai pas compris")
 
 
-def test_une_correction_muette_leve() -> None:
-    constats = _constats_mobile()
-    with pytest.raises(CompositionIllisible):
-        corriger_equipe(
-            constats, recommander(constats), lire_reponse(_json()), equipe=EQUIPE_MOBILE
-        )
+def test_a_silent_correction_raises() -> None:
+    findings = _mobile_findings()
+    with pytest.raises(UnreadableComposition):
+        correct_team(findings, recommander(findings), read_response(_json()), team=MOBILE_TEAM)
 
 
 # --------------------------------------------------------------------------- #
-# ⑥ Le navigateur de Maestro (#1532) : qui construit une interface web le reçoit
+# ⑥ Maestro's browser (#1532): whoever builds a web interface receives it
 # --------------------------------------------------------------------------- #
 
 
-def _constats_web() -> Constats:
-    """Le livre de recettes de p5 : du TypeScript et des feuilles de style."""
+def _web_findings() -> Constats:
+    """p5's recipe book: TypeScript and style sheets."""
     return Constats(
         langages=(
             Langage(nom="TypeScript", fichiers=30, part=0.8, exemple="app/page.tsx"),
@@ -665,225 +661,224 @@ def _constats_web() -> Constats:
     )
 
 
-def _role_web(nom: str, role: str, gabarit: str, navigateur: Any) -> dict[str, Any]:
+def _web_role(name: str, role: str, template: str, browser: Any) -> dict[str, Any]:
     return {
-        "nom": nom,
+        "nom": name,
         "role": role,
         "raison": f"le livre de recettes a des pages (app/page.tsx) : {role} y travaille",
-        "gabarit": gabarit,
-        "navigateur": navigateur,
+        "gabarit": template,
+        "navigateur": browser,
     }
 
 
-EQUIPE_WEB = (
-    _role_web("dev", "Développeur Next.js", "developpeur", True),
-    _role_web("charte", "Designer UI", "designer", True),
-    _role_web("tests", "Testeur Vitest", "qa", True),
-    _role_web("ci", "Intégration continue", "devops", False),
+WEB_TEAM = (
+    _web_role("dev", "Développeur Next.js", "developpeur", True),
+    _web_role("charte", "Designer UI", "designer", True),
+    _web_role("tests", "Testeur Vitest", "qa", True),
+    _web_role("ci", "Intégration continue", "devops", False),
 )
 
 
-def test_une_equipe_qui_construit_une_interface_web_recoit_le_navigateur() -> None:
-    """Le critère du ticket : le modèle juge qui regarde l'écran, et la proposition le
-    porte — rôle par rôle, dans la forme que l'écran reçoit."""
-    proposition = _compose(*EQUIPE_WEB, constats=_constats_web())
+def test_a_team_building_a_web_interface_receives_the_browser() -> None:
+    """The ticket's criterion: the model judges who watches the screen, and the proposal
+    carries it — role by role, in the shape the screen receives."""
+    proposal = _compose(*WEB_TEAM, findings=_web_findings())
 
-    par_nom = {role.nom: role.navigateur for role in proposition.roles}
-    assert par_nom == {"dev": True, "charte": True, "tests": True, "ci": False}
-    servi = {role["nom"]: role["navigateur"] for role in proposition.to_dict()["roles"]}
-    assert servi == par_nom
-    # La personne lit son nom et son usage, servis une fois : la face de la carte et
-    # la ligne d'un rôle disent la même phrase (variante B retenue sur #1532).
-    assert proposition.to_dict()["navigateur_de_maestro"] == {
+    by_name = {role.name: role.browser for role in proposal.roles}
+    assert by_name == {"dev": True, "charte": True, "tests": True, "ci": False}
+    served = {role["nom"]: role["navigateur"] for role in proposal.to_dict()["roles"]}
+    assert served == by_name
+    # The person reads its name and its usage, served once: the face of the card and a
+    # role's line say the same sentence (variant B retained on #1532).
+    assert proposal.to_dict()["navigateur_de_maestro"] == {
         "libelle": "Navigateur de Maestro",
         "usage": "ouvrir et parcourir une page, la capturer à une largeur donnée, "
         "émuler la réduction des animations, lire les erreurs de la console",
     }
-    # Un outil de plus dans les mains du rôle — son profil outillé ne bouge pas.
-    dev = next(r for r in proposition.roles if r.nom == "dev")
-    assert not any("navigateur" in outil for outil in dev.outils)
+    # One more tool in the role's hands — its tooled profile does not move.
+    dev = next(r for r in proposal.roles if r.name == "dev")
+    assert not any("navigateur" in tool for tool in dev.tools)
 
 
-def test_une_equipe_sans_interface_ne_recoit_pas_le_navigateur() -> None:
-    """Un pipeline d'apprentissage n'a rien à regarder dans un navigateur : le modèle ne
-    le donne pas, et un rôle qui ne dit rien n'en reçoit pas."""
-    proposition = _compose(ROLE_ML, constats=_constats_ml())
-    assert [role.navigateur for role in proposition.roles] == [False]
+def test_a_team_without_interface_does_not_receive_the_browser() -> None:
+    """A learning pipeline has nothing to watch in a browser: the model does not give it,
+    and a role that says nothing receives none."""
+    proposal = _compose(ML_ROLE, findings=_ml_findings())
+    assert [role.browser for role in proposal.roles] == [False]
 
 
-@pytest.mark.parametrize("brut", ["true", "oui", 1, None])
-def test_un_navigateur_hors_contrat_n_est_pas_donne(brut: Any) -> None:
-    """« oui » écrit en toutes lettres n'est pas une décision qu'on lit : hors contrat,
-    le rôle ne reçoit rien — jamais deviné."""
-    proposition = _compose(
-        _role_web("dev", "Développeur Next.js", "developpeur", brut), constats=_constats_web()
+@pytest.mark.parametrize("raw", ["true", "oui", 1, None])
+def test_a_browser_outside_the_contract_is_not_given(raw: Any) -> None:
+    """« oui » spelled out is not a decision one reads: outside the contract, the role
+    receives nothing — never guessed."""
+    proposal = _compose(
+        _web_role("dev", "Développeur Next.js", "developpeur", raw), findings=_web_findings()
     )
-    assert proposition.roles[0].navigateur is False
+    assert proposal.roles[0].browser is False
 
 
-def test_le_cadre_nomme_le_navigateur_et_dit_qui_le_recoit() -> None:
-    cadre = " ".join(CADRE_COMPOSITION.split())
-    assert "Maestro a un navigateur" in cadre
-    assert '"navigateur": true' in cadre
-    assert "Un projet sans interface web n'en a pas besoin" in cadre
-    # Le contrat de correction le porte aussi : retirer ou donner, en mots.
-    assert '"navigateur": {"nom d\'un rôle de l\'équipe montrée": false}' in cadre
+def test_the_instructions_name_the_browser_and_say_who_receives_it() -> None:
+    instructions = " ".join(COMPOSITION_INSTRUCTIONS.split())
+    assert "Maestro a un navigateur" in instructions
+    assert '"navigateur": true' in instructions
+    assert "Un projet sans interface web n'en a pas besoin" in instructions
+    # The correction contract carries it too: take away or give, in words.
+    assert '"navigateur": {"nom d\'un rôle de l\'équipe montrée": false}' in instructions
 
 
-EQUIPE_WEB_MONTREE = (
-    MembreActuel(nom="dev", role="Développeur Next.js", navigateur=True),
-    MembreActuel(nom="tests", role="Testeur Vitest", navigateur=True),
-    MembreActuel(nom="ci", role="Intégration continue"),
+SHOWN_WEB_TEAM = (
+    CurrentMember(name="dev", role="Développeur Next.js", browser=True),
+    CurrentMember(name="tests", role="Testeur Vitest", browser=True),
+    CurrentMember(name="ci", role="Intégration continue"),
 )
 
 
-def test_retire_le_navigateur_au_testeur_est_compris() -> None:
-    """La personne le retire **en mots** : le modèle sait qui l'a (l'équipe montrée le
-    dit), et la correction ne nomme que des rôles montrés, d'un booléen strict."""
-    constats = _constats_web()
-    prompt = prompt_correction(
-        constats, recommander(constats), (), "retire le navigateur au testeur", EQUIPE_WEB_MONTREE
+def test_take_the_browser_from_the_tester_is_understood() -> None:
+    """The person takes it away **in words**: the model knows who has it (the shown team
+    says so), and the correction names only shown roles, with a strict boolean."""
+    findings = _web_findings()
+    prompt = correction_prompt(
+        findings, recommander(findings), (), "retire le navigateur au testeur", SHOWN_WEB_TEAM
     )
     assert "- tests — Testeur Vitest (a le navigateur de Maestro)" in prompt
     assert "- ci — Intégration continue\n" in prompt
 
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(
             _json(navigateur={"tests": False, "inconnu": False, "dev": "non"}, reponse="")
         ),
-        equipe=EQUIPE_WEB_MONTREE,
+        team=SHOWN_WEB_TEAM,
     )
 
-    assert correction.navigateur == {"tests": False}
+    assert correction.browser == {"tests": False}
     assert correction.to_dict()["navigateur"] == {"tests": False}
-    # Muet, le modèle a quand même changé l'équipe : la phrase par défaut le dit.
-    assert "navigateur de Maestro retiré à : tests" in correction.reponse
+    # Silent, the model still changed the team: the default sentence says so.
+    assert "navigateur de Maestro retiré à : tests" in correction.reply
 
 
-def test_donne_le_navigateur_a_l_integration_continue_est_compris() -> None:
-    constats = _constats_web()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(_json(navigateur={"ci": True}, reponse="C'est fait.")),
-        equipe=EQUIPE_WEB_MONTREE,
+def test_give_the_browser_to_continuous_integration_is_understood() -> None:
+    findings = _web_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(_json(navigateur={"ci": True}, reponse="C'est fait.")),
+        team=SHOWN_WEB_TEAM,
     )
-    assert correction.navigateur == {"ci": True}
+    assert correction.browser == {"ci": True}
 
 
-def test_un_navigateur_mal_place_dans_une_composition_ne_la_fait_pas_tomber() -> None:
-    """Posé au mauvais niveau, il est ignoré : l'équipe ne se perd pas pour autant."""
-    reponse = lire_reponse(_json(roles=[ROLE_MOBILE], navigateur=True))
-    assert reponse.navigateur == {}
-    assert reponse.roles
+def test_a_misplaced_browser_in_a_composition_does_not_bring_it_down() -> None:
+    """Set at the wrong level, it is ignored: the team is not lost for all that."""
+    response = read_response(_json(roles=[MOBILE_ROLE], navigateur=True))
+    assert response.browser == {}
+    assert response.roles
 
 
-def test_les_regles_de_repli_donnent_le_navigateur_a_qui_regarde_l_ecran() -> None:
-    """Quand le modèle ne répond pas, les règles le donnent aux rôles qui écrivent,
-    conçoivent ou vérifient une interface constatée — à eux seuls."""
-    web = proposer_equipe(_constats_web(), recommander(_constats_web()), projet_id=PROJET)
-    assert {role.nom: role.navigateur for role in web.roles} == {
+def test_the_fallback_rules_give_the_browser_to_whoever_watches_the_screen() -> None:
+    """When the model does not answer, the rules give it to the roles that write, design
+    or verify an observed interface — to them alone."""
+    web = propose_team(_web_findings(), recommander(_web_findings()), project_id=PROJECT)
+    assert {role.name: role.browser for role in web.roles} == {
         "dev": True,
         "interface": True,
         "tests": True,
     }
 
-    ml = proposer_equipe(_constats_ml(), recommander(_constats_ml()), projet_id=PROJET)
-    assert not any(role.navigateur for role in ml.roles)
+    ml = propose_team(_ml_findings(), recommander(_ml_findings()), project_id=PROJECT)
+    assert not any(role.browser for role in ml.roles)
 
 
-def test_un_projet_neuf_declare_application_web_recoit_le_navigateur_par_les_regles() -> None:
-    """Sur un projet neuf, aucun fichier ne prouve encore l'interface : la réponse le dit."""
-    choix = (Choix(cle="nature", valeur="application-web"), Choix(cle="langages", valeur="ts"))
-    constats = constats_depuis_choix(choix)
-    proposition = proposer_equipe(constats, recommandation_depuis_choix(choix), choix=choix)
-    assert any(role.navigateur for role in proposition.roles)
+def test_a_new_project_declared_web_application_receives_the_browser_by_the_rules() -> None:
+    """On a new project, no file proves the interface yet: the answer says it."""
+    choices = (Choix(cle="nature", valeur="application-web"), Choix(cle="langages", valeur="ts"))
+    findings = constats_depuis_choix(choices)
+    proposal = propose_team(findings, recommandation_depuis_choix(choices), choices=choices)
+    assert any(role.browser for role in proposal.roles)
 
 
 # --------------------------------------------------------------------------- #
-# Le service : le modèle d'abord, les règles en repli, dites comme telles
+# The service: the model first, the rules as fallback, stated as such
 # --------------------------------------------------------------------------- #
 
 
 @pytest.fixture()
-def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Sous un dossier utilisateur factice : `valider_racine` refuse `AppData` (#221)."""
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    atelier = tmp_path / "atelier"
-    atelier.mkdir()
-    return atelier
+def workshop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Under a fake home folder: `valider_racine` refuses `AppData` (#221)."""
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    workshop = tmp_path / "atelier"
+    workshop.mkdir()
+    return workshop
 
 
 @pytest.fixture()
-def gabarits(tmp_path: Path) -> ConfigurationAgents:
-    racine = tmp_path / "core"
+def agent_config(tmp_path: Path) -> ConfigurationAgents:
+    root = tmp_path / "core"
     return ConfigurationAgents(
-        agents=AgentStore(racine / "agents"),
-        surcharges=SurchargeStore(racine / "surcharges"),
-        playbooks=PlaybookStore(racine / "playbooks"),
-        permissions=PermissionStore(racine / "permissions"),
-        mcp=McpStore(racine / "mcp"),
-        capacites=CapacityStore(racine / "capacite"),
+        agents=AgentStore(root / "agents"),
+        surcharges=SurchargeStore(root / "surcharges"),
+        playbooks=PlaybookStore(root / "playbooks"),
+        permissions=PermissionStore(root / "permissions"),
+        mcp=McpStore(root / "mcp"),
+        capacites=CapacityStore(root / "capacite"),
     )
 
 
-def _projet_flutter(atelier: Path, projets: ServiceProjets) -> str:
-    racine = atelier / "pousse"
-    (racine / "lib").mkdir(parents=True)
-    (racine / "lib" / "main.dart").write_text("void main() {}\n", encoding="utf-8")
-    (racine / "pubspec.yaml").write_text("name: pousse\n", encoding="utf-8")
-    return str(projets.creer("pousse", str(racine), origine="existant")["id"])
+def _flutter_project(workshop: Path, projects: ServiceProjets) -> str:
+    root = workshop / "pousse"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib" / "main.dart").write_text("void main() {}\n", encoding="utf-8")
+    (root / "pubspec.yaml").write_text("name: pousse\n", encoding="utf-8")
+    return str(projects.creer("pousse", str(root), origine="existant")["id"])
 
 
 def _service(
     tmp_path: Path,
-    atelier: Path,
-    gabarits: ConfigurationAgents,
-    fournisseur: ModelProvider,
-    generateur: GenerateurDefinitionAgent | None = None,
+    workshop: Path,
+    agent_config: ConfigurationAgents,
+    provider: ModelProvider,
+    generator: GenerateurDefinitionAgent | None = None,
 ) -> tuple[ServiceEquipe, str]:
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,))
-    projet = _projet_flutter(atelier, projets)
+    projects = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,))
+    project = _flutter_project(workshop, projects)
     service = ServiceEquipe(
-        projets,
-        gabarits,
-        generateur=generateur or _GenerateurHorsLigne(),
-        compositeur=CompositeurEquipe(provider=fournisseur),
+        projects,
+        agent_config,
+        generateur=generator or _OfflineGenerator(),
+        compositeur=CompositeurEquipe(provider=provider),
     )
-    return service, projet
+    return service, project
 
 
-def test_le_service_compose_l_equipe_par_le_modele(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_the_service_composes_the_team_through_the_model(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    fournisseur = _FournisseurEcrit(
-        _json(roles=[{**ROLE_MOBILE, "preuve": "lib/main.dart"}])
-    )
-    generateur = _GenerateurEcrit()
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+    provider = _ScriptedProvider(_json(roles=[{**MOBILE_ROLE, "preuve": "lib/main.dart"}]))
+    generator = _ScriptedGenerator()
+    service, project = _service(tmp_path, workshop, agent_config, provider, generator)
 
-    servi = asyncio.run(service.proposer(projet))
+    served = asyncio.run(service.proposer(project))
 
-    assert servi["composition"]["origine"] == ORIGINE_COMPOSITION_MODELE
-    (mobile,) = servi["roles"]
+    assert served["composition"]["origine"] == COMPOSITION_ORIGIN_MODEL
+    (mobile,) = served["roles"]
     assert mobile["role"] == "Développeur mobile"
     assert mobile["justification"]["chemin"] == "lib/main.dart"
-    # Le playbook est écrit pour ce projet, depuis l'intention du rôle composé.
-    assert mobile["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
-    assert "Développeur mobile" in generateur.intentions[0]
-    # Le modèle a reçu le projet réellement analysé, sous le cadre qui porte le registre.
-    prompt, systeme = fournisseur.demandes[0]
+    # The playbook is written for this project, from the composed role's intent.
+    assert mobile["playbook_origine"] == PLAYBOOK_ORIGIN_GENERATED
+    assert "Développeur mobile" in generator.intents[0]
+    # The model received the project actually analysed, under the instructions that
+    # carry the register.
+    prompt, system = provider.requests[0]
     assert "Dart" in prompt
-    assert systeme == CADRE_COMPOSITION
+    assert system == COMPOSITION_INSTRUCTIONS
 
 
-#: Ce que le questionnaire a compris du carnet de chants de S9 (#1350) — la matière dont
-#: son outillage s'est écrit, et que son manifeste garde.
-ACQUIS_DU_CARNET = (
+#: What the questionnaire understood of S9's songbook (#1350) — the material its tooling
+#: was written from, and which its manifest keeps.
+SONGBOOK_CHOICES = (
     Choix(
         "nature",
         "Le carnet de chants d'une chorale : un fichier texte par chant, assemblé avec le "
@@ -907,156 +902,158 @@ ACQUIS_DU_CARNET = (
 )
 
 
-def _projet_ne_dans_le_fil(
-    atelier: Path, projets: ServiceProjets, *, ses_fichiers: bool = False
+def _project_born_in_chat(
+    workshop: Path, projects: ServiceProjets, *, with_own_files: bool = False
 ) -> str:
-    """Un projet neuf outillé depuis ses réponses : sur le disque, rien que l'outillage.
+    """A new project tooled from its answers: on disk, nothing but the tooling.
 
-    C'est l'état où le fil propose l'équipe (S9) : `AGENTS.md`, les skills et le
-    manifeste — ce que Maestro a écrit —, et aucun fichier du projet lui-même.
+    This is the state in which the chat proposes the team (S9): `AGENTS.md`, the skills
+    and the manifest — what Maestro wrote —, and no file of the project itself.
     """
-    racine = atelier / "carnet"
-    projet_id = str(projets.creer("carnet-de-chants", str(racine), origine="nouveau")["id"])
-    acquis = list(ACQUIS_DU_CARNET)
+    root = workshop / "carnet"
+    project_id = str(projects.creer("carnet-de-chants", str(root), origine="nouveau")["id"])
+    choices = list(SONGBOOK_CHOICES)
     generer(
-        racine,
-        rediger(constats_depuis_choix(acquis), recommandation_depuis_choix(acquis)),
-        source=source_manifeste_des_choix(projet_id, acquis),
+        root,
+        rediger(constats_depuis_choix(choices), recommandation_depuis_choix(choices)),
+        source=source_manifeste_des_choix(project_id, choices),
     )
-    if ses_fichiers:
-        (racine / "chants").mkdir()
-        (racine / "chants" / "ave-verum.txt").write_text("Ave verum corpus\n", encoding="utf-8")
-    return projet_id
+    if with_own_files:
+        (root / "chants").mkdir()
+        (root / "chants" / "ave-verum.txt").write_text("Ave verum corpus\n", encoding="utf-8")
+    return project_id
 
 
-def _service_du_carnet(
+def _songbook_service(
     tmp_path: Path,
-    atelier: Path,
-    gabarits: ConfigurationAgents,
-    fournisseur: ModelProvider,
+    workshop: Path,
+    agent_config: ConfigurationAgents,
+    provider: ModelProvider,
     *,
-    ses_fichiers: bool = False,
+    with_own_files: bool = False,
 ) -> tuple[ServiceEquipe, str]:
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,))
-    projet = _projet_ne_dans_le_fil(atelier, projets, ses_fichiers=ses_fichiers)
+    projects = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,))
+    project = _project_born_in_chat(workshop, projects, with_own_files=with_own_files)
     service = ServiceEquipe(
-        projets,
-        gabarits,
-        generateur=_GenerateurHorsLigne(),
-        compositeur=CompositeurEquipe(provider=fournisseur),
+        projects,
+        agent_config,
+        generateur=_OfflineGenerator(),
+        compositeur=CompositeurEquipe(provider=provider),
     )
-    return service, projet
+    return service, project
 
 
-def test_un_projet_encore_vide_compose_son_equipe_sur_ce_qu_il_est(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_still_empty_project_composes_its_team_on_what_it_is(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """#1350 : l'équipe du carnet parle du carnet, pas d'un dépôt qui « se construit et se teste ».
+    """#1350: the songbook's team speaks of the songbook, not of a repository that « se
+    construit et se teste ».
 
-    Le fil demande l'équipe **sans réponses** (la carte n'en a pas) : sans elles, le
-    projet était analysé, et son disque ne portait que l'outillage de Maestro — le modèle
-    ne savait du carnet que son nom, et ses raisons valaient pour n'importe quel dépôt.
-    Un projet qui n'a encore aucun fichier à lui se **décrit** (la règle de l'outillage
-    dans le fil) : son équipe se compose sur les réponses que son manifeste garde.
+    The chat asks for the team **without answers** (the card has none): without them, the
+    project was analysed, and its disk held only Maestro's tooling — the model knew of
+    the songbook only its name, and its reasons held for any repository. A project that
+    has no file of its own yet is **described** (the tooling rule in the chat): its team
+    is composed on the answers its manifest keeps.
     """
-    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_MOBILE]))
-    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, fournisseur)
+    provider = _ScriptedProvider(_json(roles=[MOBILE_ROLE]))
+    service, project = _songbook_service(tmp_path, workshop, agent_config, provider)
 
-    asyncio.run(service.proposer(projet))
+    asyncio.run(service.proposer(project))
 
-    prompt, _ = fournisseur.demandes[0]
+    prompt, _ = provider.requests[0]
     assert "un projet neuf, décrit par les réponses de la personne" in prompt
     assert "nature : Le carnet de chants d'une chorale" in prompt
-    # Ce que chaque skill fait pour ce projet, pour que les rôles s'y rattachent.
+    # What each skill does for this project, so that the roles attach to it.
     assert "Assembler le carnet à partir des chants" in prompt
 
 
-def test_un_projet_qui_a_ses_fichiers_compose_son_equipe_sur_sa_lecture(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_project_with_its_own_files_composes_its_team_on_its_reading(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Le pendant : dès que le projet a ses fichiers, c'est eux qui disent ce qu'il est."""
-    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_MOBILE]))
-    service, projet = _service_du_carnet(
-        tmp_path, atelier, gabarits, fournisseur, ses_fichiers=True
+    """The counterpart: as soon as the project has its files, they say what it is."""
+    provider = _ScriptedProvider(_json(roles=[MOBILE_ROLE]))
+    service, project = _songbook_service(
+        tmp_path, workshop, agent_config, provider, with_own_files=True
     )
 
-    asyncio.run(service.proposer(projet))
+    asyncio.run(service.proposer(project))
 
-    prompt, _ = fournisseur.demandes[0]
+    prompt, _ = provider.requests[0]
     assert "un projet existant, lu par l'analyse" in prompt
     assert "nature :" not in prompt
 
 
-#: Les deux skills que l'outillage du carnet écrit — sa construction et ses tests.
-SKILLS_DU_CARNET = {
+#: The two skills the songbook's tooling writes — its build and its tests.
+SONGBOOK_SKILLS = {
     "construire-le-projet": ".agents/skills/construire-le-projet/SKILL.md",
     "lancer-les-tests": ".agents/skills/lancer-les-tests/SKILL.md",
 }
 
 
-def _skills_servis(servi: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Les skills que les rôles proposés branchent, par nom — tels que la carte les lit."""
-    return {skill["nom"]: skill for role in servi["roles"] for skill in role["skills"]}
+def _served_skills(served: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The skills the proposed roles attach, by name — as the card reads them."""
+    return {skill["nom"]: skill for role in served["roles"] for skill in role["skills"]}
 
 
-def _execution(servi: dict[str, Any], nom: str) -> dict[str, Any]:
-    """L'autorisation d'exécution du rôle `nom`, telle que la carte la déplie."""
-    role = next(r for r in servi["roles"] if r["nom"] == nom)
+def _execution(served: dict[str, Any], name: str) -> dict[str, Any]:
+    """The execution permission of role `name`, as the card unfolds it."""
+    role = next(r for r in served["roles"] if r["nom"] == name)
     (execution,) = role["autorisations"]
     return execution
 
 
-def test_un_skill_que_l_outillage_a_ecrit_est_dit_ecrit_sur_la_carte(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_skill_the_tooling_wrote_is_said_written_on_the_card(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """#1591 : l'équipe d'un projet décrit se dérive de ses réponses, sans regarder le disque.
+    """#1591: the team of a described project is derived from its answers, without looking
+    at the disk.
 
-    Sur le parcours `verify` de l'herbier, les pièces de l'outillage venaient d'être écrites
-    sur accord, et la carte d'équipe disait « mettre-en-route (à générer) » : la
-    recommandation tirée des réponses ne sait pas ce que le projet porte, si bien que toute
-    entrée y sortait `a-generer`. Ce que le projet porte est écrit.
+    On the herbarium's `verify` walkthrough, the tooling's pieces had just been written on
+    agreement, and the team card said « mettre-en-route (à générer) »: the recommendation
+    drawn from the answers does not know what the project holds, so every entry came out
+    `a-generer`. What the project holds is written.
     """
-    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+    service, project = _songbook_service(tmp_path, workshop, agent_config, _FailingProvider())
 
-    servi = asyncio.run(service.proposer(projet))
+    served = asyncio.run(service.proposer(project))
 
-    skills = _skills_servis(servi)
-    assert {nom: s["chemin"] for nom, s in skills.items()} == SKILLS_DU_CARNET
+    skills = _served_skills(served)
+    assert {name: s["chemin"] for name, s in skills.items()} == SONGBOOK_SKILLS
     for skill in skills.values():
-        assert (atelier / "carnet" / skill["chemin"]).is_file()
+        assert (workshop / "carnet" / skill["chemin"]).is_file()
         assert skill["etat"] == "deja-present", skill["nom"]
 
 
-def test_un_skill_que_le_projet_ne_porte_pas_reste_a_generer(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_skill_the_project_does_not_hold_stays_to_generate(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Le pendant de #1591 : « à générer » ne reste que sur un skill absent du disque."""
-    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
-    (atelier / "carnet" / SKILLS_DU_CARNET["lancer-les-tests"]).unlink()
+    """The counterpart of #1591: « à générer » stays only on a skill absent from the disk."""
+    service, project = _songbook_service(tmp_path, workshop, agent_config, _FailingProvider())
+    (workshop / "carnet" / SONGBOOK_SKILLS["lancer-les-tests"]).unlink()
 
-    servi = asyncio.run(service.proposer(projet))
+    served = asyncio.run(service.proposer(project))
 
-    skills = _skills_servis(servi)
+    skills = _served_skills(served)
     assert skills["lancer-les-tests"]["etat"] == "a-generer"
     assert skills["construire-le-projet"]["etat"] == "deja-present"
-    # Ses commandes ne sont écrites nulle part : la raison le dit, comme avant.
-    assert "aucune n'a pu être lue" in _execution(servi, "tests")["raison"]
+    # Its commands are written nowhere: the reason says so, as before.
+    assert "aucune n'a pu être lue" in _execution(served, "tests")["raison"]
 
 
-def test_la_raison_du_cran_nomme_les_skills_ou_l_outillage_a_ecrit_les_commandes(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_the_tier_reason_names_the_skills_where_the_tooling_wrote_the_commands(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """#1591 : « Aucune commande n'est encore écrite dans le projet » était faux.
+    """#1591: « Aucune commande n'est encore écrite dans le projet » was false.
 
-    Les commandes du rôle venaient d'être écrites dans les skills de l'outillage accepté.
-    La raison dit où elles sont ; le cran, lui, ne bouge pas (#1226).
+    The role's commands had just been written in the skills of the accepted tooling. The
+    reason says where they are; the tier itself does not move (#1226).
     """
-    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+    service, project = _songbook_service(tmp_path, workshop, agent_config, _FailingProvider())
 
-    servi = asyncio.run(service.proposer(projet))
+    served = asyncio.run(service.proposer(project))
 
-    execution = _execution(servi, "tests")
-    assert SKILLS_DU_CARNET["lancer-les-tests"] in execution["raison"]
+    execution = _execution(served, "tests")
+    assert SONGBOOK_SKILLS["lancer-les-tests"] in execution["raison"]
     assert "aucune n'a pu être lue" not in execution["raison"]
     assert "ne le borne pas à celles-là" in execution["raison"]
     assert (execution["cran"], execution["decideur"], execution["portee"]) == (
@@ -1066,123 +1063,123 @@ def test_la_raison_du_cran_nomme_les_skills_ou_l_outillage_a_ecrit_les_commandes
     )
 
 
-def test_le_cadre_demande_des_raisons_qui_ne_valent_que_pour_ce_projet() -> None:
-    """#1350 : « une phrase : pourquoi ce projet appelle ce rôle » laissait passer une raison
-    qui valait pour tout dépôt — le juge de S9 l'a lue comme telle."""
-    cadre = " ".join(CADRE_COMPOSITION.split())
-    assert "ce que ce rôle fera DANS CE projet" in cadre
-    assert "vaudrait pour n'importe quel dépôt" in cadre
+def test_the_instructions_ask_for_reasons_that_hold_only_for_this_project() -> None:
+    """#1350: « une phrase : pourquoi ce projet appelle ce rôle » let through a reason that
+    held for any repository — S9's judge read it as such."""
+    instructions = " ".join(COMPOSITION_INSTRUCTIONS.split())
+    assert "ce que ce rôle fera DANS CE projet" in instructions
+    assert "vaudrait pour n'importe quel dépôt" in instructions
 
 
-def test_un_modele_en_panne_fait_retomber_sur_les_regles_et_le_dit(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_failing_model_falls_back_on_the_rules_and_says_so(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """③ Une équipe entière perdue parce qu'un quota est épuisé serait pire qu'une
-    équipe par règles — pourvu qu'elle se dise telle, avec sa cause."""
-    service, projet = _service(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+    """③ A whole team lost because a quota is exhausted would be worse than a team by
+    rules — provided it says so, with its cause."""
+    service, project = _service(tmp_path, workshop, agent_config, _FailingProvider())
 
-    servi = asyncio.run(service.proposer(projet))
+    served = asyncio.run(service.proposer(project))
 
-    assert servi["composition"]["origine"] == ORIGINE_COMPOSITION_REGLES
-    assert "quota épuisé" in servi["composition"]["raison"]
-    assert [r["nom"] for r in servi["roles"]] == ["dev", "tests"]
+    assert served["composition"]["origine"] == COMPOSITION_ORIGIN_RULES
+    assert "quota épuisé" in served["composition"]["raison"]
+    assert [r["nom"] for r in served["roles"]] == ["dev", "tests"]
 
 
-def test_un_playbook_d_esquisse_qui_ne_s_ecrit_pas_reste_une_esquisse(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_sketch_playbook_that_fails_to_be_written_stays_a_sketch(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Le repli de #257 garde l'origine du repli : une esquisse ne devient pas un
-    « playbook du gabarit » parce que la rédaction a échoué."""
-    service, projet = _service(
-        tmp_path, atelier, gabarits, _FournisseurEcrit(_json(roles=[ROLE_MOBILE]))
+    """The #257 fallback keeps the fallback's origin: a sketch does not become a
+    « playbook du gabarit » because writing failed."""
+    service, project = _service(
+        tmp_path, workshop, agent_config, _ScriptedProvider(_json(roles=[MOBILE_ROLE]))
     )
 
-    (mobile,) = asyncio.run(service.proposer(projet))["roles"]
+    (mobile,) = asyncio.run(service.proposer(project))["roles"]
 
-    assert mobile["playbook_origine"] == ORIGINE_PLAYBOOK_ESQUISSE
+    assert mobile["playbook_origine"] == PLAYBOOK_ORIGIN_SKETCH
     assert "hors ligne" in mobile["playbook_raison"]
 
 
-def test_le_service_ajoute_le_role_demande_avec_son_playbook(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_the_service_adds_the_requested_role_with_its_playbook(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """④ Le critère du ticket, par le service : compris, ajouté, playbook écrit."""
-    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_SECURITE], reponse="J'ajoute la sécurité."))
-    generateur = _GenerateurEcrit()
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+    """④ The ticket's criterion, through the service: understood, added, playbook written."""
+    provider = _ScriptedProvider(_json(roles=[SECURITY_ROLE], reponse="J'ajoute la sécurité."))
+    generator = _ScriptedGenerator()
+    service, project = _service(tmp_path, workshop, agent_config, provider, generator)
 
-    servi = asyncio.run(
-        service.corriger(projet, "ajoute quelqu'un pour la sécurité", EQUIPE_MOBILE)
+    served = asyncio.run(
+        service.corriger(project, "ajoute quelqu'un pour la sécurité", MOBILE_TEAM)
     )
 
-    (securite,) = servi["ajouts"]
-    assert securite["role"] == "Sécurité applicative"
-    assert securite["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
-    assert "Sécurité applicative" in securite["playbook"]
-    assert servi["reponse"] == "J'ajoute la sécurité."
-    assert "ajoute quelqu'un pour la sécurité" in fournisseur.demandes[0][0]
+    (security,) = served["ajouts"]
+    assert security["role"] == "Sécurité applicative"
+    assert security["playbook_origine"] == PLAYBOOK_ORIGIN_GENERATED
+    assert "Sécurité applicative" in security["playbook"]
+    assert served["reponse"] == "J'ajoute la sécurité."
+    assert "ajoute quelqu'un pour la sécurité" in provider.requests[0][0]
 
 
-@pytest.mark.parametrize("demande", ["", "   ", "x" * (DEMANDE_MAX + 1)])
-def test_une_demande_vide_ou_trop_longue_est_refusee_avant_tout_appel(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents, demande: str
+@pytest.mark.parametrize("user_request", ["", "   ", "x" * (MAX_REQUEST + 1)])
+def test_an_empty_or_too_long_request_is_refused_before_any_call(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents, user_request: str
 ) -> None:
-    fournisseur = _FournisseurEcrit()
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur)
+    provider = _ScriptedProvider()
+    service, project = _service(tmp_path, workshop, agent_config, provider)
 
     with pytest.raises(ValueError):
-        asyncio.run(service.corriger(projet, demande, EQUIPE_MOBILE))
-    assert fournisseur.demandes == []
+        asyncio.run(service.corriger(project, user_request, MOBILE_TEAM))
+    assert provider.requests == []
 
 
 # --------------------------------------------------------------------------- #
-# ④ Par HTTP — l'appel exact de la carte d'équipe du fil (#1331 ; l'étape d'équipe
-# de #1159, qui le faisait avant elle, est retirée)
+# ④ Over HTTP — the exact call of the chat's team card (#1331; the team step of
+# #1159, which made it before it, is removed)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.fixture()
-def client_http(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
-) -> Iterator[tuple[TestClient, _FournisseurEcrit]]:
-    fournisseur = _FournisseurEcrit()
+def http_client(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
+) -> Iterator[tuple[TestClient, _ScriptedProvider]]:
+    provider = _ScriptedProvider()
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
-        agents_store=gabarits.agents,
-        surcharges=gabarits.surcharges,
-        playbooks=gabarits.playbooks,
-        permissions=gabarits.permissions,
-        mcp=gabarits.mcp,
-        capacites=gabarits.capacites,
-        generateur_agent=_GenerateurHorsLigne(),
-        compositeur_equipe=CompositeurEquipe(provider=fournisseur),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        agents_store=agent_config.agents,
+        surcharges=agent_config.surcharges,
+        playbooks=agent_config.playbooks,
+        permissions=agent_config.permissions,
+        mcp=agent_config.mcp,
+        capacites=agent_config.capacites,
+        generateur_agent=_OfflineGenerator(),
+        compositeur_equipe=CompositeurEquipe(provider=provider),
     )
     with TestClient(app) as client:
-        yield client, fournisseur
+        yield client, provider
 
 
-def _declarer_flutter(client: TestClient, atelier: Path) -> str:
-    racine = atelier / "pousse"
-    (racine / "lib").mkdir(parents=True)
-    (racine / "lib" / "main.dart").write_text("void main() {}\n", encoding="utf-8")
-    reponse = client.post(
-        "/api/projets", json={"nom": "pousse", "racine": str(racine), "origine": "existant"}
+def _declare_flutter(client: TestClient, workshop: Path) -> str:
+    root = workshop / "pousse"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib" / "main.dart").write_text("void main() {}\n", encoding="utf-8")
+    response = client.post(
+        "/api/projets", json={"nom": "pousse", "racine": str(root), "origine": "existant"}
     )
-    assert reponse.status_code == 201, reponse.text
-    return str(reponse.json()["id"])
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
 
 
-def test_la_route_de_correction_ajoute_le_role_demande(
-    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+def test_the_correction_route_adds_the_requested_role(
+    http_client: tuple[TestClient, _ScriptedProvider], workshop: Path
 ) -> None:
-    client, fournisseur = client_http
-    projet = _declarer_flutter(client, atelier)
-    fournisseur._reponses.append(_json(roles=[ROLE_SECURITE], reponse="J'ajoute la sécurité."))
+    client, provider = http_client
+    project = _declare_flutter(client, workshop)
+    provider._replies.append(_json(roles=[SECURITY_ROLE], reponse="J'ajoute la sécurité."))
 
-    reponse = client.post(
-        f"/api/projets/{projet}/equipe/correction",
+    response = client.post(
+        f"/api/projets/{project}/equipe/correction",
         json={
             "demande": "ajoute quelqu'un pour la sécurité",
             "equipe": [
@@ -1191,21 +1188,21 @@ def test_la_route_de_correction_ajoute_le_role_demande(
         },
     )
 
-    assert reponse.status_code == 200, reponse.text
-    servi = reponse.json()
-    assert [a["nom"] for a in servi["ajouts"]] == ["securite"]
-    assert servi["ajouts"][0]["playbook"].strip()
-    assert servi["cree"] is False
+    assert response.status_code == 200, response.text
+    served = response.json()
+    assert [a["nom"] for a in served["ajouts"]] == ["securite"]
+    assert served["ajouts"][0]["playbook"].strip()
+    assert served["cree"] is False
 
 
-def test_la_route_de_correction_retire_le_designer_et_change_les_instances(
-    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+def test_the_correction_route_removes_the_designer_and_changes_the_instances(
+    http_client: tuple[TestClient, _ScriptedProvider], workshop: Path
 ) -> None:
-    """Les deux autres gestes du critère de #1331, par l'appel que la carte fait :
-    l'équipe montrée (cases comprises), aucune réponse de questionnaire."""
-    client, fournisseur = client_http
-    projet = _declarer_flutter(client, atelier)
-    fournisseur._reponses.append(
+    """The two other actions of #1331's criterion, through the call the card makes: the
+    shown team (ticks included), no questionnaire answer."""
+    client, provider = http_client
+    project = _declare_flutter(client, workshop)
+    provider._replies.append(
         _json(
             retraits=["interface"],
             instances={"mobile": 2},
@@ -1213,8 +1210,8 @@ def test_la_route_de_correction_retire_le_designer_et_change_les_instances(
         )
     )
 
-    reponse = client.post(
-        f"/api/projets/{projet}/equipe/correction",
+    response = client.post(
+        f"/api/projets/{project}/equipe/correction",
         json={
             "demande": "retire le designer, et deux développeurs",
             "equipe": [
@@ -1225,44 +1222,44 @@ def test_la_route_de_correction_retire_le_designer_et_change_les_instances(
         },
     )
 
-    assert reponse.status_code == 200, reponse.text
-    servi = reponse.json()
-    assert servi["retraits"] == ["interface"]
-    assert servi["instances"] == {"mobile": 2}
-    assert servi["ajouts"] == []
-    assert servi["cree"] is False
-    # Le modèle a reçu l'équipe telle que la carte la montrait.
-    prompt = fournisseur.demandes[0][0]
+    assert response.status_code == 200, response.text
+    served = response.json()
+    assert served["retraits"] == ["interface"]
+    assert served["instances"] == {"mobile": 2}
+    assert served["ajouts"] == []
+    assert served["cree"] is False
+    # The model received the team as the card showed it.
+    prompt = provider.requests[0][0]
     assert "retire le designer, et deux développeurs" in prompt
     assert "Designer" in prompt
 
 
-def test_la_route_de_correction_refuse_une_demande_vide(
-    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+def test_the_correction_route_refuses_an_empty_request(
+    http_client: tuple[TestClient, _ScriptedProvider], workshop: Path
 ) -> None:
-    client, _ = client_http
-    projet = _declarer_flutter(client, atelier)
+    client, _ = http_client
+    project = _declare_flutter(client, workshop)
 
-    reponse = client.post(
-        f"/api/projets/{projet}/equipe/correction", json={"demande": " ", "equipe": []}
+    response = client.post(
+        f"/api/projets/{project}/equipe/correction", json={"demande": " ", "equipe": []}
     )
 
-    assert reponse.status_code == 422
+    assert response.status_code == 422
 
 
-def test_la_route_de_correction_retire_le_navigateur_a_un_role_montre(
-    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+def test_the_correction_route_takes_the_browser_from_a_shown_role(
+    http_client: tuple[TestClient, _ScriptedProvider], workshop: Path
 ) -> None:
-    """#1532 : « retire le navigateur au testeur », par l'appel que la carte fait — le
-    modèle sait qui l'a, puisque l'équipe montrée le dit."""
-    client, fournisseur = client_http
-    projet = _declarer_flutter(client, atelier)
-    fournisseur._reponses.append(
+    """#1532: « retire le navigateur au testeur », through the call the card makes — the
+    model knows who has it, since the shown team says so."""
+    client, provider = http_client
+    project = _declare_flutter(client, workshop)
+    provider._replies.append(
         _json(navigateur={"tests": False}, reponse="Le testeur n'a plus le navigateur.")
     )
 
-    reponse = client.post(
-        f"/api/projets/{projet}/equipe/correction",
+    response = client.post(
+        f"/api/projets/{project}/equipe/correction",
         json={
             "demande": "retire le navigateur au testeur",
             "equipe": [
@@ -1272,55 +1269,55 @@ def test_la_route_de_correction_retire_le_navigateur_a_un_role_montre(
         },
     )
 
-    assert reponse.status_code == 200, reponse.text
-    servi = reponse.json()
-    assert servi["navigateur"] == {"tests": False}
-    assert servi["retraits"] == []
-    assert "tests — QA (a le navigateur de Maestro)" in fournisseur.demandes[0][0]
+    assert response.status_code == 200, response.text
+    served = response.json()
+    assert served["navigateur"] == {"tests": False}
+    assert served["retraits"] == []
+    assert "tests — QA (a le navigateur de Maestro)" in provider.requests[0][0]
 
 
-def test_la_route_de_correction_rend_502_quand_le_modele_ne_repond_pas(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_the_correction_route_returns_502_when_the_model_does_not_answer(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Une correction ne se replie pas sur des règles : il n'y a pas de règle pour
-    « ajoute quelqu'un pour la sécurité ». Elle échoue franchement, et l'écran le dit."""
+    """A correction does not fall back on rules: there is no rule for « ajoute quelqu'un
+    pour la sécurité ». It fails plainly, and the screen says so."""
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
-        agents_store=gabarits.agents,
-        generateur_agent=_GenerateurHorsLigne(),
-        compositeur_equipe=CompositeurEquipe(provider=_FournisseurEnPanne()),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        agents_store=agent_config.agents,
+        generateur_agent=_OfflineGenerator(),
+        compositeur_equipe=CompositeurEquipe(provider=_FailingProvider()),
     )
     with TestClient(app) as client:
-        projet = _declarer_flutter(client, atelier)
-        reponse = client.post(
-            f"/api/projets/{projet}/equipe/correction",
+        project = _declare_flutter(client, workshop)
+        response = client.post(
+            f"/api/projets/{project}/equipe/correction",
             json={"demande": "ajoute quelqu'un pour la sécurité", "equipe": []},
         )
 
-    assert reponse.status_code == 502
-    assert "quota épuisé" in reponse.text
+    assert response.status_code == 502
+    assert "quota épuisé" in response.text
 
 
 # --------------------------------------------------------------------------- #
-# ⑦ Ce que la personne a fixé du projet, ses playbooks le suivent (#1521)
+# ⑦ What the person has set about the project, their playbooks follow (#1521)
 # --------------------------------------------------------------------------- #
 
-#: La réponse de l'herbier du bilan, telle que la personne l'a tapée : une restriction
-#: bornée au générateur, et pytest pour les tests.
-REPONSE_DE_L_HERBIER = (
+#: The herbarium's answer from the assessment, as the person typed it: a restriction
+#: bounded to the generator, and pytest for the tests.
+HERBARIUM_ANSWER = (
     "Python, avec la bibliothèque standard seulement pour le générateur. "
     "Les tests avec pytest."
 )
 
-ACQUIS_DE_L_HERBIER = (
+HERBARIUM_CHOICES = (
     Choix(
         "nature",
         "Un herbier de randonnées : une fiche Markdown par plante, un index par région généré",
         deduit=True,
     ),
-    Choix("langages", REPONSE_DE_L_HERBIER, libre=True),
+    Choix("langages", HERBARIUM_ANSWER, libre=True),
     Choix(
         "tester",
         ".venv/Scripts/python -m pytest",
@@ -1329,7 +1326,7 @@ ACQUIS_DE_L_HERBIER = (
     ),
 )
 
-ROLE_TESTEUR = {
+TESTER_ROLE = {
     "nom": "testeur",
     "role": "Testeur",
     "competences": ["tests", "pytest"],
@@ -1337,37 +1334,37 @@ ROLE_TESTEUR = {
     "gabarit": "qa",
 }
 
-#: Les deux playbooks du bilan, tels que la carte les montrait : chacun contredit
-#: « Les tests avec pytest », et la personne n'a nommé que le testeur.
-PLAYBOOK_TESTEUR = (
+#: The assessment's two playbooks, as the card showed them: each contradicts « Les tests
+#: avec pytest », and the person named only the tester.
+TESTER_PLAYBOOK = (
     "Tu écris les tests de l'herbier. Utilise `unittest` de la bibliothèque standard. "
     "N'introduis aucune dépendance externe : ni pytest ni bibliothèque tierce."
 )
-PLAYBOOK_DEV = (
+DEV_PLAYBOOK = (
     "Tu écris le générateur d'index. N'ajoute aucune dépendance tierce, même pour les "
     "tests. Utilise `unittest` sauf si le projet utilise déjà autre chose."
 )
-EQUIPE_DE_L_HERBIER = (
-    MembreActuel(nom="dev", role="Développeur", playbook=PLAYBOOK_DEV),
-    MembreActuel(nom="testeur", role="Testeur", playbook=PLAYBOOK_TESTEUR),
+HERBARIUM_TEAM = (
+    CurrentMember(name="dev", role="Développeur", playbook=DEV_PLAYBOOK),
+    CurrentMember(name="testeur", role="Testeur", playbook=TESTER_PLAYBOOK),
 )
-DEMANDE_PYTEST = "le testeur écrit ses tests avec pytest, comme je l'ai dit, pas avec unittest"
+PYTEST_REQUEST = "le testeur écrit ses tests avec pytest, comme je l'ai dit, pas avec unittest"
 
 
-def test_les_faits_du_projet_reprennent_les_reponses_telles_quelles() -> None:
-    """Une paraphrase étendrait la restriction : « seulement pour le générateur » se
-    perdrait. Les réponses passent mot pour mot, et ce qu'une commande fait aussi."""
-    faits = faits_du_projet(constats_depuis_choix(ACQUIS_DE_L_HERBIER), ACQUIS_DE_L_HERBIER)
+def test_the_project_facts_take_the_answers_as_they_are() -> None:
+    """A paraphrase would widen the restriction: « seulement pour le générateur » would be
+    lost. The answers go through word for word, and what a command does as well."""
+    facts = project_facts(constats_depuis_choix(HERBARIUM_CHOICES), HERBARIUM_CHOICES)
 
-    assert f"- langages : {REPONSE_DE_L_HERBIER}" in faits
+    assert f"- langages : {HERBARIUM_ANSWER}" in facts
     assert (
         "- tester : .venv/Scripts/python -m pytest — Vérifier que l'index nomme chaque fiche"
-        in faits
+        in facts
     )
 
 
-def test_sans_reponses_les_faits_sont_les_commandes_que_l_analyse_a_lues() -> None:
-    constats = Constats(
+def test_without_answers_the_facts_are_the_commands_the_analysis_read() -> None:
+    findings = Constats(
         commandes=(
             Commande(
                 usage="tests", commande="pytest -q", chemin="pyproject.toml", origine="declaree"
@@ -1375,102 +1372,107 @@ def test_sans_reponses_les_faits_sont_les_commandes_que_l_analyse_a_lues() -> No
         )
     )
 
-    assert faits_du_projet(constats) == "- commande de « tests » : `pytest -q` (pyproject.toml)"
-    assert faits_du_projet(Constats()) == ""
+    assert project_facts(findings) == "- commande de « tests » : `pytest -q` (pyproject.toml)"
+    assert project_facts(Constats()) == ""
 
 
-def test_le_playbook_de_chaque_role_recoit_ce_que_la_personne_a_dit_du_projet(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_each_role_s_playbook_receives_what_the_person_said_of_the_project(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Le défaut du bilan : le rédacteur ne recevait qu'« un projet écrit en Python », et
-    imposait `unittest` au testeur de qui avait répondu « Les tests avec pytest »."""
-    generateur = _GenerateurEcrit()
-    service, projet = _service(
-        tmp_path, atelier, gabarits, _FournisseurEcrit(_json(roles=[ROLE_TESTEUR])), generateur
+    """The assessment's defect: the writer received only « un projet écrit en Python », and
+    imposed `unittest` on the tester of someone who had answered « Les tests avec pytest »."""
+    generator = _ScriptedGenerator()
+    service, project = _service(
+        tmp_path,
+        workshop,
+        agent_config,
+        _ScriptedProvider(_json(roles=[TESTER_ROLE])),
+        generator,
     )
 
-    (testeur,) = asyncio.run(service.proposer(projet, ACQUIS_DE_L_HERBIER))["roles"]
+    (tester,) = asyncio.run(service.proposer(project, HERBARIUM_CHOICES))["roles"]
 
-    (faits,) = generateur.faits
-    assert REPONSE_DE_L_HERBIER in faits
-    assert testeur["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
-    # La raison dit ce qui a nourri le playbook : il se conteste sur une réponse.
-    assert "vos réponses, qu'il ne contredit pas" in testeur["playbook_raison"]
+    (facts,) = generator.facts
+    assert HERBARIUM_ANSWER in facts
+    assert tester["playbook_origine"] == PLAYBOOK_ORIGIN_GENERATED
+    # The reason says what fed the playbook: it can be contested on an answer.
+    assert "vos réponses, qu'il ne contredit pas" in tester["playbook_raison"]
 
 
-def test_le_redacteur_met_les_faits_dans_son_prompt_sous_un_cadre_qui_les_fait_tenir() -> None:
-    redacteur = _FournisseurEcrit(
+def test_the_writer_puts_the_facts_in_its_prompt_under_instructions_that_make_them_hold() -> None:
+    writer = _ScriptedProvider(
         "NOM: testeur\nROLE: Testeur\nCOMPETENCES: tests, pytest\nFOURNISSEUR:\nMODELE:\n"
         f"{MARQUEUR_PLAYBOOK}\nTu écris les tests avec pytest.\n"
     )
-    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+    generator = GenerateurDefinitionAgent(provider=writer, fournisseurs=lambda: ())
 
     asyncio.run(
-        generateur.proposer("Un agent « Testeur »", faits=f"- langages : {REPONSE_DE_L_HERBIER}")
+        generator.proposer("Un agent « Testeur »", faits=f"- langages : {HERBARIUM_ANSWER}")
     )
 
-    prompt, cadre = redacteur.demandes[0]
-    assert REPONSE_DE_L_HERBIER in prompt
-    plat = " ".join((cadre or "").split())
-    assert "n'y écris aucune règle qui contredise l'une de ses réponses" in plat
-    assert "ne prête pas à tout le projet une restriction qu'elle a bornée à une partie" in plat
+    prompt, instructions = writer.requests[0]
+    assert HERBARIUM_ANSWER in prompt
+    flat = " ".join((instructions or "").split())
+    assert "n'y écris aucune règle qui contredise l'une de ses réponses" in flat
+    assert "ne prête pas à tout le projet une restriction qu'elle a bornée à une partie" in flat
 
 
-def test_sans_faits_le_prompt_du_redacteur_est_celui_d_avant() -> None:
-    redacteur = _FournisseurEcrit(
+def test_without_facts_the_writer_prompt_is_unchanged() -> None:
+    writer = _ScriptedProvider(
         f"NOM: a\nROLE: A\nCOMPETENCES: a\nFOURNISSEUR:\nMODELE:\n{MARQUEUR_PLAYBOOK}\nTu fais A.\n"
     )
-    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+    generator = GenerateurDefinitionAgent(provider=writer, fournisseurs=lambda: ())
 
-    asyncio.run(generateur.proposer("Un agent « A »"))
+    asyncio.run(generator.proposer("Un agent « A »"))
 
-    assert "Ce que la personne a dit de son projet" not in redacteur.demandes[0][0]
+    assert "Ce que la personne a dit de son projet" not in writer.requests[0][0]
 
 
-def test_le_prompt_de_correction_porte_les_playbooks_que_la_carte_montre() -> None:
-    """Sans eux, Maestro affirmait ce qu'un agent ferait sans avoir lu son playbook."""
-    constats = constats_depuis_choix(ACQUIS_DE_L_HERBIER)
-    equipe = (*EQUIPE_DE_L_HERBIER, MembreActuel(nom="doc", role="Rédacteur"))
+def test_the_correction_prompt_carries_the_playbooks_the_card_shows() -> None:
+    """Without them, Maestro asserted what an agent would do without having read its
+    playbook."""
+    findings = constats_depuis_choix(HERBARIUM_CHOICES)
+    team = (*HERBARIUM_TEAM, CurrentMember(name="doc", role="Rédacteur"))
 
-    prompt = prompt_correction(
-        constats, recommandation_depuis_choix(ACQUIS_DE_L_HERBIER), (), DEMANDE_PYTEST, equipe
+    prompt = correction_prompt(
+        findings, recommandation_depuis_choix(HERBARIUM_CHOICES), (), PYTEST_REQUEST, team
     )
 
-    assert PLAYBOOK_TESTEUR in prompt and PLAYBOOK_DEV in prompt
-    # Un playbook absent se dit : le modèle sait qu'il ne sait pas ce qu'il prescrit.
+    assert TESTER_PLAYBOOK in prompt and DEV_PLAYBOOK in prompt
+    # A missing playbook is stated: the model knows it does not know what it prescribes.
     assert "### doc — Rédacteur\n\n(playbook non transmis" in prompt
 
 
-def test_le_cadre_demande_de_relire_chaque_playbook_et_n_affirmer_que_ce_qui_est_lu() -> None:
-    cadre = " ".join(CADRE_COMPOSITION.split())
-    assert "relis le playbook de CHAQUE rôle montré" in cadre
-    assert "celui qu'elle cite comme les autres" in cadre
-    assert "Ne dis jamais ce qu'un playbook prescrit, ni ce qu'un agent fera" in cadre
+def test_the_instructions_ask_to_reread_each_playbook_and_assert_only_what_is_read() -> None:
+    instructions = " ".join(COMPOSITION_INSTRUCTIONS.split())
+    assert "relis le playbook de CHAQUE rôle montré" in instructions
+    assert "celui qu'elle cite comme les autres" in instructions
+    assert "Ne dis jamais ce qu'un playbook prescrit, ni ce qu'un agent fera" in instructions
 
 
-def test_une_consigne_ne_vise_qu_un_role_montre_et_dit_quoi_suivre() -> None:
-    constats = _constats_mobile()
-    correction = corriger_equipe(
-        constats,
-        recommander(constats),
-        lire_reponse(
+def test_an_instruction_targets_only_a_shown_role_and_says_what_to_follow() -> None:
+    findings = _mobile_findings()
+    correction = correct_team(
+        findings,
+        recommander(findings),
+        read_response(
             _json(playbooks={"dev": " suivre  pytest ", "fantome": "pytest", "testeur": "  "})
         ),
-        equipe=EQUIPE_DE_L_HERBIER,
+        team=HERBARIUM_TEAM,
     )
 
-    assert correction.consignes == {"dev": "suivre pytest"}
-    # Le modèle n'a rien dit : la réponse par défaut nomme ce qui sera réécrit.
-    assert "playbook à réécrire pour suivre votre demande : dev" in correction.reponse
+    assert correction.instructions == {"dev": "suivre pytest"}
+    # The model said nothing: the default reply names what will be rewritten.
+    assert "playbook à réécrire pour suivre votre demande : dev" in correction.reply
 
 
-def test_une_convention_corrigee_en_mots_gagne_chaque_role_qui_la_contredit(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_convention_corrected_in_words_reaches_every_role_that_contradicts_it(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Le critère du ticket : la personne nomme le testeur, le développeur dit aussi
-    « même pour les tests… `unittest` » — les deux sont réécrits, du premier coup,
-    sans remplacer aucun rôle."""
-    fournisseur = _FournisseurEcrit(
+    """The ticket's criterion: the person names the tester, the developer also says
+    « même pour les tests… `unittest` » — both are rewritten, at the first attempt,
+    without replacing any role."""
+    provider = _ScriptedProvider(
         _json(
             playbooks={
                 "testeur": "écrire et lancer les tests avec pytest",
@@ -1480,120 +1482,120 @@ def test_une_convention_corrigee_en_mots_gagne_chaque_role_qui_la_contredit(
             reponse="Le testeur et le développeur suivent désormais pytest pour les tests.",
         )
     )
-    generateur = _GenerateurEcrit()
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+    generator = _ScriptedGenerator()
+    service, project = _service(tmp_path, workshop, agent_config, provider, generator)
 
-    servi = asyncio.run(
-        service.corriger(projet, DEMANDE_PYTEST, EQUIPE_DE_L_HERBIER, ACQUIS_DE_L_HERBIER)
+    served = asyncio.run(
+        service.corriger(project, PYTEST_REQUEST, HERBARIUM_TEAM, HERBARIUM_CHOICES)
     )
 
-    assert set(servi["playbooks"]) == {"dev", "testeur"}
-    assert servi["retraits"] == [] and servi["ajouts"] == []
-    testeur = servi["playbooks"]["testeur"]
-    assert testeur["playbook"].startswith(PLAYBOOK_TESTEUR)
-    assert "Réécrit : écrire et lancer les tests avec pytest" in testeur["playbook"]
-    assert testeur["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
-    assert DEMANDE_PYTEST in testeur["playbook_raison"]
-    # Le rédacteur a reçu le playbook montré et la phrase de la personne.
-    assert {(p, d) for p, d, _ in generateur.corrections} == {
-        (PLAYBOOK_TESTEUR, DEMANDE_PYTEST),
-        (PLAYBOOK_DEV, DEMANDE_PYTEST),
+    assert set(served["playbooks"]) == {"dev", "testeur"}
+    assert served["retraits"] == [] and served["ajouts"] == []
+    tester = served["playbooks"]["testeur"]
+    assert tester["playbook"].startswith(TESTER_PLAYBOOK)
+    assert "Réécrit : écrire et lancer les tests avec pytest" in tester["playbook"]
+    assert tester["playbook_origine"] == PLAYBOOK_ORIGIN_GENERATED
+    assert PYTEST_REQUEST in tester["playbook_raison"]
+    # The writer received the shown playbook and the person's sentence.
+    assert {(p, r) for p, r, _ in generator.corrections} == {
+        (TESTER_PLAYBOOK, PYTEST_REQUEST),
+        (DEV_PLAYBOOK, PYTEST_REQUEST),
     }
-    # Le modèle de correction a lu les playbooks avant de répondre.
-    assert PLAYBOOK_DEV in fournisseur.demandes[0][0]
+    # The correction model read the playbooks before answering.
+    assert DEV_PLAYBOOK in provider.requests[0][0]
 
 
-def test_un_playbook_qui_ne_se_reecrit_pas_reste_tel_quel_et_la_reponse_le_dit(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_playbook_that_is_not_rewritten_stays_as_is_and_the_reply_says_so(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """Jamais « c'est réglé » d'un rôle qui ne l'est pas : une réécriture qui échoue, ou
-    un playbook que la carte n'a pas transmis, se nomme dans la réponse."""
-    fournisseur = _FournisseurEcrit(
+    """Never « c'est réglé » of a role that is not: a rewrite that fails, or a playbook the
+    card did not send, is named in the reply."""
+    provider = _ScriptedProvider(
         _json(
             playbooks={"testeur": "pytest", "dev": "pytest", "doc": "pytest"},
             reponse="Les trois rôles suivent pytest.",
         )
     )
-    generateur = _GenerateurEcrit(en_panne=("générateur d'index",))
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
-    equipe = (*EQUIPE_DE_L_HERBIER, MembreActuel(nom="doc", role="Rédacteur"))
+    generator = _ScriptedGenerator(failing=("générateur d'index",))
+    service, project = _service(tmp_path, workshop, agent_config, provider, generator)
+    team = (*HERBARIUM_TEAM, CurrentMember(name="doc", role="Rédacteur"))
 
-    servi = asyncio.run(service.corriger(projet, DEMANDE_PYTEST, equipe))
+    served = asyncio.run(service.corriger(project, PYTEST_REQUEST, team))
 
-    assert set(servi["playbooks"]) == {"testeur"}
-    assert servi["reponse"].startswith("Les trois rôles suivent pytest.")
+    assert set(served["playbooks"]) == {"testeur"}
+    assert served["reponse"].startswith("Les trois rôles suivent pytest.")
     assert (
-        "le playbook de « dev » n'a pas pu être réécrit (quota épuisé (test))" in servi["reponse"]
+        "le playbook de « dev » n'a pas pu être réécrit (quota épuisé (test))" in served["reponse"]
     )
     assert (
         "le playbook de « doc » n'a pas pu être réécrit (son texte n'a pas été transmis"
-        in servi["reponse"]
+        in served["reponse"]
     )
-    assert "il reste tel qu'il était" in servi["reponse"]
+    assert "il reste tel qu'il était" in served["reponse"]
 
 
-def test_un_role_ajoute_par_la_demande_suit_ce_qu_elle_vient_de_fixer(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_a_role_added_by_the_request_follows_what_it_just_set(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_TESTEUR], reponse="J'ajoute un testeur."))
-    generateur = _GenerateurEcrit()
-    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+    provider = _ScriptedProvider(_json(roles=[TESTER_ROLE], reponse="J'ajoute un testeur."))
+    generator = _ScriptedGenerator()
+    service, project = _service(tmp_path, workshop, agent_config, provider, generator)
 
-    servi = asyncio.run(service.corriger(projet, "ajoute un testeur qui écrit en pytest", ()))
+    served = asyncio.run(service.corriger(project, "ajoute un testeur qui écrit en pytest", ()))
 
-    assert "ajoute un testeur qui écrit en pytest" in generateur.faits[0]
-    assert "votre demande, qu'il ne contredit pas" in servi["ajouts"][0]["playbook_raison"]
+    assert "ajoute un testeur qui écrit en pytest" in generator.facts[0]
+    assert "votre demande, qu'il ne contredit pas" in served["ajouts"][0]["playbook_raison"]
 
 
-def test_le_redacteur_reecrit_un_playbook_sur_la_demande_et_la_consigne() -> None:
-    redacteur = _FournisseurEcrit(
+def test_the_writer_rewrites_a_playbook_on_the_request_and_the_instruction() -> None:
+    writer = _ScriptedProvider(
         f"J'ai remplacé unittest par pytest.\n{MARQUEUR_PLAYBOOK}\n"
         "Tu écris les tests avec pytest.\n"
     )
-    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+    generator = GenerateurDefinitionAgent(provider=writer, fournisseurs=lambda: ())
 
-    reecrit = asyncio.run(
-        generateur.appliquer(PLAYBOOK_TESTEUR, demande=DEMANDE_PYTEST, consigne="pytest")
+    rewritten = asyncio.run(
+        generator.appliquer(TESTER_PLAYBOOK, demande=PYTEST_REQUEST, consigne="pytest")
     )
 
-    # L'annonce du modèle n'entre pas dans le prompt de l'agent.
-    assert reecrit == "Tu écris les tests avec pytest."
-    prompt, cadre = redacteur.demandes[0]
-    assert DEMANDE_PYTEST in prompt and PLAYBOOK_TESTEUR in prompt
+    # The model's announcement does not enter the agent's prompt.
+    assert rewritten == "Tu écris les tests avec pytest."
+    prompt, instructions = writer.requests[0]
+    assert PYTEST_REQUEST in prompt and TESTER_PLAYBOOK in prompt
     assert prompt.rstrip().endswith("selon le format demandé.")
-    assert "sans rien changer d'autre" in " ".join((cadre or "").split())
+    assert "sans rien changer d'autre" in " ".join((instructions or "").split())
 
 
-def test_la_route_de_correction_rend_les_playbooks_reecrits(
-    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+def test_the_correction_route_returns_the_rewritten_playbooks(
+    tmp_path: Path, workshop: Path, agent_config: ConfigurationAgents
 ) -> None:
-    """L'appel exact de la carte du fil : chaque membre porte son playbook."""
-    fournisseur = _FournisseurEcrit(
+    """The exact call of the chat's card: each member carries its playbook."""
+    provider = _ScriptedProvider(
         _json(playbooks={"testeur": "pytest", "dev": "pytest"}, reponse="Réécrits.")
     )
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
-        agents_store=gabarits.agents,
-        generateur_agent=_GenerateurEcrit(),
-        compositeur_equipe=CompositeurEquipe(provider=fournisseur),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        agents_store=agent_config.agents,
+        generateur_agent=_ScriptedGenerator(),
+        compositeur_equipe=CompositeurEquipe(provider=provider),
     )
     with TestClient(app) as client:
-        projet = _declarer_flutter(client, atelier)
-        reponse = client.post(
-            f"/api/projets/{projet}/equipe/correction",
+        project = _declare_flutter(client, workshop)
+        response = client.post(
+            f"/api/projets/{project}/equipe/correction",
             json={
-                "demande": DEMANDE_PYTEST,
+                "demande": PYTEST_REQUEST,
                 "equipe": [
-                    {"nom": "dev", "role": "Développeur", "playbook": PLAYBOOK_DEV},
-                    {"nom": "testeur", "role": "Testeur", "playbook": PLAYBOOK_TESTEUR},
+                    {"nom": "dev", "role": "Développeur", "playbook": DEV_PLAYBOOK},
+                    {"nom": "testeur", "role": "Testeur", "playbook": TESTER_PLAYBOOK},
                 ],
             },
         )
 
-    assert reponse.status_code == 200, reponse.text
-    servi = reponse.json()
-    assert set(servi["playbooks"]) == {"dev", "testeur"}
-    assert servi["playbooks"]["dev"]["playbook"].startswith(PLAYBOOK_DEV)
-    assert PLAYBOOK_TESTEUR in fournisseur.demandes[0][0]
+    assert response.status_code == 200, response.text
+    served = response.json()
+    assert set(served["playbooks"]) == {"dev", "testeur"}
+    assert served["playbooks"]["dev"]["playbook"].startswith(DEV_PLAYBOOK)
+    assert TESTER_PLAYBOOK in provider.requests[0][0]

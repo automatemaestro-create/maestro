@@ -10,9 +10,9 @@ que la personne ne sait pas faire. Maestro possède ses outils (docs/44) — ce 
 agent a besoin pour sa tâche ne dépend pas de ce geste.
 
 Ce module dit ce qu'est ce navigateur, et rien d'autre : **qui le reçoit** se décide
-à la composition de l'équipe (`maestro.equipe.composition` — le modèle juge, la
+à la composition de l'équipe (`maestro.team.composition` — le modèle juge, la
 personne corrige en mots), **ce que l'agent en sait** s'écrit dans son playbook à la
-création (`maestro.equipe.creation`), et **l'écriture** dans le pool du projet est
+création (`maestro.team.creation`), et **l'écriture** dans le pool du projet est
 celle de `maestro.controltower.equipe`.
 
 ## Un adaptateur, sous un nom qui est le nôtre
@@ -118,7 +118,7 @@ CE_QU_IL_FAIT: tuple[str, ...] = (
     "lire les erreurs de la console",
 )
 
-#: Ce que l'agent lit dans son playbook (`maestro.equipe.creation`) : chaque geste
+#: Ce que l'agent lit dans son playbook (`maestro.team.creation`) : chaque geste
 #: de `CE_QU_IL_FAIT`, avec les outils du serveur qui le font. C'est le seul endroit
 #: qui nomme les outils de l'adaptateur — le remplacer, c'est réécrire ces lignes.
 GESTES_DE_L_AGENT: tuple[str, ...] = (

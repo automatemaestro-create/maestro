@@ -57,8 +57,8 @@ from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION, _PROMPT_RE
 from maestro.controltower.outillage import _PROMPT_COMPREHENSION
 from maestro.controltower.pieces import _PROMPT_CORRECTION
 from maestro.controltower.recit import SYSTEME as _SYSTEME_RECIT
-from maestro.equipe.composition import CADRE_COMPOSITION
 from maestro.providers.base import ModelProvider
+from maestro.team.composition import COMPOSITION_INSTRUCTIONS
 
 #: Les prompts **conversationnels** de la Control Tower : ceux qui parlent à un humain sans
 #: passer par un playbook de rôle, donc sans socle pour leur porter le registre.
@@ -73,7 +73,7 @@ CONVERSATIONNELS = {
     "parole du fil sur un geste (#1262)": _PROMPT_REDACTION,
     # Les raisons des rôles et la réponse à une correction sont lues telles quelles
     # à l'étape d'équipe (#1159).
-    "composition d'équipe (#1159)": CADRE_COMPOSITION,
+    "composition d'équipe (#1159)": COMPOSITION_INSTRUCTIONS,
     # Ses intitulés, ses options et leurs raisons s'affichent tels quels sur la carte
     # de la question d'outillage : ils parlent à la personne.
     "compréhension d'un projet neuf (#1147)": _PROMPT_COMPREHENSION,

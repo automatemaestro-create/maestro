@@ -179,7 +179,10 @@ travail non commité compris :
   scripts/**, .claude/**, .github/**  les suites qui NOMMENT le fichier modifié
   tests/test_*.py     elles-mêmes
   conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
-  apps/web/**, docs/**, *.md   aucune suite pytest (web-build couvre le front)
+  apps/web/**, docs/**, *.md de la racine   les suites qui les LISENT : elles écrivent leur
+                      chemin, ou celui d'un dossier qui les contient, depuis la racine du dépôt,
+                      ou nomment le module de maestro/ qui les déclare ; personne → aucune
+                      suite (web-build couvre le front) (#1689)
   apps/desktop/**     les suites qui la NOMMENT, et aucune s'il n'y en a pas — jamais la suite
                       entière : le job desktop couvre ce qu'aucune suite ne regarde (#948)
 
@@ -611,6 +614,127 @@ suites_nommant_module() {
   ) | sort -u
 }
 
+#: L'expression par laquelle une suite atteint la racine du dépôt : son propre fichier, remonté de
+#: `tests/` (#1689).
+RACINE_PAR_FICHIER='Path\(__file__\)(\.resolve\(\))?\.(parents\[1\]|parent\.parent)'
+
+#: `noms_de_racine` — les noms que `tests/` lie à la racine du dépôt (#1689).
+#:
+#: Ils se lisent à leur DÉFINITION, où qu'elle vive sous `tests/` : une suite qui importe `RACINE`
+#: de `tests/harnais_forge.py` l'emploie sous le nom que le harnais lui a donné. Au 2026-11-17 :
+#: `RACINE`, `RACINE_DEPOT`, `ROOT` et `_RACINE`.
+noms_de_racine() {
+  (cd "$RACINE" && grep -ohE "^[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[[:space:]]*[A-Za-z_][][A-Za-z0-9_.]*)?[[:space:]]*=[[:space:]]*${RACINE_PAR_FICHIER}[[:space:]]*(#.*)?\$" tests/*.py 2>/dev/null) |
+    sed -E 's/^([A-Za-z_][A-Za-z0-9_]*).*/\1/' | sort -u
+}
+
+#: `lectures_du_depot` — ce que les suites lisent dans le dépôt, en TSV « <suite><TAB><chemin> »
+#: (#1689).
+#:
+#: Une suite LIT un chemin quand elle l'écrit depuis la racine du dépôt, en segments pathlib
+#: (`RACINE / "docs" / "10-workflow-git.md"`) ou d'un tenant (`RACINE / "docs/10-workflow-git.md"`).
+#: Le chemin lu est la partie littérale de la jointure : `RACINE / "docs"` lit le dossier, et
+#: `RACINE / "apps" / "web" / nom` lit sous `apps/web/`.
+#:
+#: Citer un nom ne suffit pas, et c'est ce qui sépare cette règle de celle du nom. Mesuré au
+#: 2026-11-17 sur `CLAUDE.md` : 28 suites le citent, et 10 l'écrivent depuis la racine. Ce sont
+#: elles qui le gardent ; les autres le nomment en passant ou écrivent le `CLAUDE.md` d'un projet
+#: jetable. La limite assumée : une suite qui joint la racine à un nom pris dans une liste
+#: (`RACINE / nom`) n'est pas vue. `test_migration` lit ainsi `CLAUDE.md` et `README.md`, et le
+#: pipeline de la PR, qui rejoue tout, la rattrape.
+lectures_du_depot() {
+  local noms racine suites=()
+  mapfile -t suites < <(suites_toutes)
+  [ "${#suites[@]}" -gt 0 ] || return 0
+  noms="$(noms_de_racine | paste -sd'|' -)"
+  racine="$RACINE_PAR_FICHIER${noms:+|$noms}"
+  (cd "$RACINE" && grep -oHE "(^|[^A-Za-z0-9_.])($racine)([[:space:]]*/[[:space:]]*[\"'][^\"']+[\"'])+" "${suites[@]}" 2>/dev/null) |
+    sed -E "s#^([^:]+):[^/]*/[[:space:]]*[\"']#\\1\\t#; s#[\"'][[:space:]]*/[[:space:]]*[\"']#/#g; s#[\"']\$##" |
+    sort -u
+}
+
+#: Ce que `lectures_du_depot` a rendu, calculé une fois par périmètre : un diff de vingt documents
+#: n'a pas à relire vingt fois les suites.
+LECTURES=""
+LECTURES_LUES=0
+
+#: `suites_lisant <chemin>` — les suites qui lisent ce chemin ou un dossier qui le contient, en TSV
+#: « <suite><TAB><chemin lu> » (#1689).
+suites_lisant() {
+  if [ "$LECTURES_LUES" = 0 ]; then
+    LECTURES="$(lectures_du_depot)"
+    LECTURES_LUES=1
+  fi
+  printf '%s\n' "$LECTURES" |
+    awk -F'\t' -v f="$1" 'NF == 2 && ($2 == f || index(f, $2 "/") == 1)'
+}
+
+#: `glob_vers_ere <motif>` — l'expression régulière d'un motif `glob` de Python : `*` et `?` ne
+#: franchissent pas un `/`, `**` le franchit.
+glob_vers_ere() {
+  printf '%s' "$1" | sed -e 's,[][^$.+(){}|\\],\\&,g' \
+    -e 's,\*\*/,<DS>,g' -e 's,\*\*,<D>,g' -e 's,\*,[^/]*,g' -e 's,?,[^/],g' \
+    -e 's,<DS>,(.*/)?,g' -e 's,<D>,.*,g'
+}
+
+#: `modules_declarant <chemin>` — les modules de `maestro/` qui déclarent ce chemin, en TSV
+#: « <module><TAB><motif> » (#1689).
+#:
+#: Un module déclare un chemin quand il l'écrit en littéral, ou un motif `glob` qui le désigne :
+#: `maestro/controltower/documentation.py` lit `docs/*.md` et `apps/web/README.md`. Seul compte un
+#: littéral qui porte son dossier. Un nom nu, `"CLAUDE.md"` ou `"README.md"`, désigne le fichier du
+#: projet sur lequel le module travaille, et jamais celui du dépôt. Au 2026-11-17, 8 modules en
+#: écrivent ainsi : l'outillage des projets, la purge, les reprises.
+modules_declarant() {
+  local chemin="$1" ligne module motif
+  case "$chemin" in */*) ;; *) return 0 ;; esac
+  (cd "$RACINE" && grep -rHoE --include='*.py' -- "[\"']$(echappe_ere "${chemin%%/*}")/[^\"'[:space:]]*[\"']" maestro 2>/dev/null) |
+    while IFS= read -r ligne; do
+      module="${ligne%%:*}"
+      motif="${ligne#*:}"
+      motif="${motif:1:${#motif}-2}"
+      printf '%s\n' "$chemin" | grep -qE -- "^$(glob_vers_ere "$motif")\$" &&
+        printf '%s\t%s\n' "$module" "$motif"
+    done | sort -u
+}
+
+# La règle de la LECTURE, appliquée à un fichier que pytest n'exécute pas : la prose de la racine,
+# `docs/**` et `apps/web/**` (#1689). Pose ses résultats dans CHOISIES / RAISONS_CHOIX, comme
+# `classe_par_nom`.
+#
+# Deux lectures, cumulées : les suites qui lisent le fichier (`suites_lisant`), et celles qui
+# nomment un module qui le déclare (`modules_declarant`). Elles gardent des choses différentes.
+# `docs/10-workflow-git.md` est lu par 12 suites qui en relisent des passages. Il est aussi déclaré
+# par le module dont `test_documentation` exige que chaque document dise son public (#1321).
+# S'arrêter à la première lecture laisserait la seconde au pipeline.
+#
+# Personne ne lit le fichier : il reste sans effet sur pytest, et c'est la raison qui le dit. On
+# ne s'élargit pas ici : la règle d'or vaut pour un fichier qu'on ne sait pas classer, et celui-ci
+# l'est.
+classe_par_lecture() { # <chemin> <raison quand personne ne le lit>
+  local chemin="$1" lus suite lu module motif nommant lu_par=0
+  lus="$(suites_lisant "$chemin")"
+  while IFS=$'\t' read -r suite lu; do
+    [ -n "$suite" ] || continue
+    CHOISIES="$CHOISIES$suite"$'\n'
+    if [ "$lu" = "$chemin" ]; then
+      ajoute_raison RAISONS_CHOIX "$lu"
+    else
+      ajoute_raison RAISONS_CHOIX "$lu/"
+    fi
+    lu_par=1
+  done <<<"$lus"
+  while IFS=$'\t' read -r module motif; do
+    [ -n "$module" ] || continue
+    nommant="$(suites_nommant_module "$module")"
+    [ -n "$nommant" ] || continue
+    CHOISIES="$CHOISIES$nommant"$'\n'
+    ajoute_raison RAISONS_CHOIX "$motif lu par $(module_de "$module")"
+    lu_par=1
+  done < <(modules_declarant "$chemin")
+  [ "$lu_par" = 1 ] || ajoute_raison RAISONS_SANS "$2"
+}
+
 #: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
 PERIMETRE_SUITES=""
 PERIMETRE_MOTIF=""
@@ -795,6 +919,8 @@ calcule_perimetre() {
   RAISONS_CHOIX=""
   RAISONS_SANS=""
   CHOISIES=""
+  LECTURES=""
+  LECTURES_LUES=0
 
   local modifies outillage applicatives fichier
   modifies="$(fichiers_modifies)"
@@ -833,9 +959,13 @@ calcule_perimetre() {
       maestro/*)
         classe_module "$fichier" "$applicatives"
         ;;
-      # Prose et front : aucune suite pytest ne les lit (web-build couvre apps/web).
-      docs/* | apps/web/*)
-        ajoute_raison RAISONS_SANS "${fichier%%/*}/ (sans effet sur pytest)"
+      # Prose et front : pytest ne les exécute pas, mais des suites les LISENT (#1689). Celles-là
+      # se jouent ; personne ne les lit, ils restent sans effet (web-build couvre apps/web).
+      docs/*)
+        classe_par_lecture "$fichier" "docs/ qu'aucune suite ne lit"
+        ;;
+      apps/web/*)
+        classe_par_lecture "$fichier" "apps/web/ qu'aucune suite ne lit (web-build couvre le front)"
         ;;
       # La COQUE DE BUREAU (#948). Ni l'un ni l'autre des deux voisins ci-dessus, et c'est tout
       # l'objet de ce cas : elle a un job CI à elle (`desktop`, qui vérifie son paquet et la
@@ -856,13 +986,13 @@ calcule_perimetre() {
         classe_par_nom "$fichier" "apps/desktop/ (couverte par le job desktop)"
         ;;
       # Les chemins IMBRIQUÉS passent par la règle du nom, y compris les .md :
-      # `.claude/commands/*.md` est lu par test_collaboration (#196). Seule la prose de la RACINE
-      # (README, CLAUDE.md…) est sans effet — d'où l'ordre de ces deux motifs.
+      # `.claude/commands/*.md` est lu par test_collaboration (#196). La prose de la RACINE
+      # (README, CLAUDE.md…) passe par celle de la lecture (#1689) — d'où l'ordre de ces deux motifs.
       */*)
         classe_par_nom "$fichier"
         ;;
       *.md)
-        ajoute_raison RAISONS_SANS "prose (sans effet sur pytest)"
+        classe_par_lecture "$fichier" "prose de la racine qu'aucune suite ne lit"
         ;;
       *)
         classe_par_nom "$fichier"

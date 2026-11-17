@@ -53,7 +53,6 @@ from maestro.engine.rattrapage import (
     PolitiqueRattrapage,
 )
 from maestro.engine.renfort import DecisionRenfort, DemandeRenfort
-from maestro.equipe import manque_au_plan
 from maestro.orchestrator import Orchestrator, RecoveryValidationError, Task
 from maestro.orchestrator.prompt import build_recovery_user_prompt
 from maestro.orchestrator.recovery import Attempt, TaskFailure, validate_recovery
@@ -73,6 +72,7 @@ from maestro.providers.base import (
     ServeurInjoignable,
 )
 from maestro.router.classifier import CLASSIFIER_CLOSEST_SYSTEM_PROMPT
+from maestro.team import plan_gap
 from maestro.telemetry import RunJournal
 
 #: La première ligne du playbook de rattrapage : c'est ainsi que le fournisseur
@@ -600,9 +600,9 @@ def test_un_role_absent_en_cours_de_run_se_propose_et_son_recrutement_reprend_la
 
     (demande,) = recruteur.demandes
     assert demande.tache == "Tâche t1"
-    assert demande.manque.manque.role == "Designer"
-    assert demande.manque.manque.gabarit == "interface"
-    assert demande.manque.taches == ("Tâche t1",)
+    assert demande.manque.gap.role == "Designer"
+    assert demande.manque.gap.role_template == "interface"
+    assert demande.manque.tasks == ("Tâche t1",)
     assert (demande.run_id, demande.projet_id, demande.objectif) == (
         journal.run_id,
         PROJET,
@@ -742,8 +742,8 @@ def test_un_blocage_qui_appelle_un_role_le_fait_recruter_et_la_tache_va_au_nouve
 
     (demande,) = recruteur.demandes
     # Le rôle nommé par le Chef de projet devient un poste que Maestro sait pourvoir.
-    assert demande.manque.manque.gabarit == "interface"
-    assert demande.manque.manque.role == "Designer"
+    assert demande.manque.gap.role_template == "interface"
+    assert demande.manque.gap.role == "Designer"
     assert demande.tache == "Tâche t1"
     t1, t2 = rapport.resultats
     assert t1.ok and t1.agent == "interface" and t1.sortie == "écran dessiné"
@@ -819,7 +819,7 @@ def test_le_prompt_montre_les_blocages_comme_une_donnee():
 
 
 def _demande_en_cours(attente_s: float = 30.0) -> DemandeRenfort:
-    manque = manque_au_plan(
+    manque = plan_gap(
         [Task.from_dict(_tache("t1", "Maquetter.", competences=("ui",)))],
         [AgentDefinition(nom="dev", role="Dev", competences=("backend",), playbook="…").to_agent()],
     )

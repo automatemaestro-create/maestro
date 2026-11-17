@@ -93,7 +93,6 @@ from maestro.controltower.pieces import (
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.recu_par_l_equipe import remplacees
 from maestro.engine.guardrails import DemandeValidation
-from maestro.equipe import TITRE_SKILLS
 from maestro.outillage import CHEMIN_MANIFESTE, Commande, Constats, Gestionnaire, recommander
 from maestro.outillage.clients import SOURCE_POSTE, Client
 from maestro.outillage.correction import (
@@ -130,6 +129,7 @@ from maestro.projets.modele import Perimetre
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
+from maestro.team import SKILLS_HEADING
 
 GIT = shutil.which("git")
 avec_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
@@ -2702,7 +2702,7 @@ def _playbook_d_avant(metier: str) -> str:
     que le skill de construction enveloppait au recrutement — l'état des équipes déjà
     créées, relevé sur `prj-b6726e5e` (parcours `verify` du bilan du 2026-10-14)."""
     return (
-        f"{metier}\n\n{TITRE_SKILLS}\n\n"
+        f"{metier}\n\n{SKILLS_HEADING}\n\n"
         "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton rôle "
         "branche. Sers-t'en plutôt que de réinventer la commande.\n\n"
         f"- **construire-le-projet** — `{SKILL_CONSTRUIRE}` (il enveloppe : `{ANCIENNE}`)\n"

@@ -11,7 +11,7 @@ Retour d'expérience du 2026-09-22, projet neuf, équipe proposée par Maestro e
 validée telle quelle : **14 demandes de validation `Bash`, 14 approbations**. Les
 commandes étaient `mkdir .maestro/…`, `python app.py`, `pytest`, `python
 --version`, et le ménage des caches que ses propres exécutions venaient de
-produire. Aucune ne sortait du dossier du projet. `maestro.equipe.proposition`
+produire. Aucune ne sortait du dossier du projet. `maestro.team.proposal`
 proposait `Bash: ask, humain` dès qu'aucune commande du rôle n'avait été lue dans
 le projet — c'est-à-dire **toujours** sur un projet neuf —, si bien qu'un agent
 recruté pour écrire du code devait faire approuver le fait de le lancer.

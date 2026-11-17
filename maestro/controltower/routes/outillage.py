@@ -370,7 +370,7 @@ async def creer_equipe(
     proposition appellerait à nouveau un modèle et rendrait un *autre*
     playbook, c'est-à-dire un agent que personne n'a validé. Et la
     traduction « autorisations proposées → politique » reste unique
-    (`RolePropose.politique()`), si bien que le cran `auto` qu'on a lu avec
+    (`ProposedRole.policy()`), si bien que le cran `auto` qu'on a lu avec
     sa raison est le cran qui est écrit : *c'est l'utilisateur qui le décide,
     à froid* (#716, docs/37 §4.3).
 
