@@ -9,11 +9,14 @@ machine. The verification plays under the bound of the machine's agents
 run so (#1515), and not at all where the agents are bounded and the machine cannot
 bound the verification.
 
+Under that bound, `LOCALAPPDATA` leads to a cache of the project, kept from one
+verification to the next of the same project and never reached by another (#1709).
+
 Two halves. The first runs everywhere, with a doubled player: which bound each
-setting gives, what is played under it, what is not played and why. The second runs
-only on Windows, where the mechanism exists, and plays real commands: a script that
-writes in a profile outside the copy, and a command that writes only in its copy
-and its workbench.
+setting gives, what is played under it, which `LOCALAPPDATA` it receives, what is not
+played and why. The second runs only on Windows, where the mechanism exists, and plays
+real commands: a script that writes in a profile outside the copy, a command that writes
+only in its copy and its workbench, and one that fills its project's cache.
 """
 
 from __future__ import annotations
@@ -33,10 +36,11 @@ from maestro.outillage.verification import (
     ECHOUEE,
     VERIFIEE,
     CommandeEcrite,
+    Delais,
     Verificateur,
 )
 from maestro.projets.modele import Perimetre
-from maestro.sandbox import low_integrity, low_session
+from maestro.sandbox import low_integrity, low_session, verification_cache
 from maestro.sandbox import verification as execution
 
 WINDOWS = sys.platform == "win32"
@@ -147,24 +151,25 @@ def test_under_low_integrity_everything_played_in_the_copy_is_lowered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The command and the probe of a program both run lowered, in the copy that was lowered."""
-    lowered: list[Path] = []
-    left: list[Path] = []
+    lowered: list[tuple[Path, Path | None]] = []
+    left: list[tuple[Path, Path | None]] = []
     workbench = tmp_path / "etabli"
     workbench.mkdir()
     lowering = execution.Abaissement(("low-bash", "-c"), low_session.LowSession(workbench))
 
     @contextmanager
-    def lower(copy: Path) -> Iterator[execution.Abaissement]:
-        lowered.append(Path(copy))
+    def lower(copy: Path, *, projet: Path | None = None) -> Iterator[execution.Abaissement]:
+        lowered.append((Path(copy), projet))
         yield lowering
-        left.append(Path(copy))
+        left.append((Path(copy), projet))
 
     monkeypatch.setattr(execution, "borne_du_poste", lambda: execution.BORNE_INTEGRITE_BASSE)
     monkeypatch.setattr(execution, "abaissement", lower)
     player = _Player()
+    root = _doubled_project(tmp_path)
 
     verdicts = Verificateur(joueur=player, interprete=FAKE_BASH).verifier_commandes(
-        _doubled_project(tmp_path), COMMANDS, perimetre=Perimetre()
+        root, COMMANDS, perimetre=Perimetre()
     )
 
     assert [v.etat for v in verdicts] == [VERIFIEE, A_VERIFIER]
@@ -172,8 +177,9 @@ def test_under_low_integrity_everything_played_in_the_copy_is_lowered(
     for _, cwd, options in player.played:
         assert options["interprete"] == ("low-bash", "-c")
         assert options["abaissement"] is lowering
-        assert cwd == lowered[0]
+        assert cwd == lowered[0][0]
     assert lowered == left, "the lowering is prepared once, and leaves with the copy"
+    assert lowered[0][1] == root, "the cache is the project's, the tree the copy reproduces"
 
 
 def test_where_the_agents_run_at_the_person_s_level_the_verification_does_too(
@@ -181,7 +187,7 @@ def test_where_the_agents_run_at_the_person_s_level_the_verification_does_too(
 ) -> None:
     monkeypatch.setattr(execution, "borne_du_poste", lambda: execution.BORNE_HOTE)
 
-    def refuse(copy: Path) -> Iterator[execution.Abaissement]:
+    def refuse(copy: Path, **kwargs: Any) -> Iterator[execution.Abaissement]:
         raise AssertionError("nothing is lowered where the agents are not")
 
     monkeypatch.setattr(execution, "abaissement", refuse)
@@ -193,6 +199,97 @@ def test_where_the_agents_run_at_the_person_s_level_the_verification_does_too(
 
     assert player.played and all("abaissement" not in opts for _, _, opts in player.played)
     assert all(opts["interprete"] == FAKE_BASH for _, _, opts in player.played)
+
+
+# --- What survives the workbench: the project's LOCALAPPDATA (#1709) ------------------------
+
+
+class _Prepared:
+    """A doubled `low_session.prepare`: the workbench is real, nothing is labelled."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.received: list[Path | None] = []
+        self.workbenches: list[Path] = []
+
+    def __call__(self, workspace: Path, **options: Any) -> low_session.LowSession:
+        local = options.get("local_appdata")
+        self.received.append(local)
+        workbench = self.tmp_path / f"etabli-{len(self.workbenches)}"
+        (workbench / "appdata" / "roaming").mkdir(parents=True)
+        self.workbenches.append(workbench)
+        env = {"APPDATA": str(workbench / "appdata" / "roaming")}
+        if local is not None:
+            env["LOCALAPPDATA"] = str(local)
+        return low_session.LowSession(workbench, env, bash=Path("low-bash"))
+
+
+@pytest.fixture
+def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Prepared:
+    double = _Prepared(tmp_path)
+    monkeypatch.setattr(low_session, "prepare", double)
+    monkeypatch.setattr(low_session, "maestro_secrets", lambda: ())
+    monkeypatch.setattr(low_session, "maestro_variables", lambda: frozenset())
+    return double
+
+
+def test_the_next_verification_of_a_project_receives_the_local_appdata_the_first_kept(
+    tmp_path: Path, prepared: _Prepared
+) -> None:
+    """The defect of #1709: each verification started again from an empty LOCALAPPDATA."""
+    root = _doubled_project(tmp_path)
+
+    with execution.abaissement(tmp_path / "copie-1", projet=root) as first:
+        local = Path(first.session.env["LOCALAPPDATA"])
+        (local / "pip-cache").write_text("downloaded once", encoding="utf-8")
+    with execution.abaissement(tmp_path / "copie-2", projet=root) as second:
+        assert Path(second.session.env["LOCALAPPDATA"]) == local
+
+    assert prepared.received == [local, local]
+    assert (local / "pip-cache").read_text(encoding="utf-8") == "downloaded once"
+    assert not any(workbench.exists() for workbench in prepared.workbenches), (
+        "APPDATA and the rest of the workbench still leave with the verification"
+    )
+    assert not str(local).startswith(str(prepared.workbenches[0]))
+
+
+def test_no_project_reaches_the_local_appdata_of_another(
+    tmp_path: Path, prepared: _Prepared
+) -> None:
+    first = _project(tmp_path / "a", {})
+    second = _project(tmp_path / "b", {})
+
+    with (
+        execution.abaissement(tmp_path / "copie-a", projet=first) as mine,
+        execution.abaissement(tmp_path / "copie-b", projet=second) as theirs,
+    ):
+        assert mine.session.env["LOCALAPPDATA"] != theirs.session.env["LOCALAPPDATA"]
+
+
+def test_two_overlapping_verifications_of_one_project_never_share_its_local_appdata(
+    tmp_path: Path, prepared: _Prepared
+) -> None:
+    """The slot serialises only services: the second plays from its own workbench, never waits."""
+    root = _doubled_project(tmp_path)
+
+    with execution.abaissement(tmp_path / "copie-1", projet=root) as first:
+        with execution.abaissement(tmp_path / "copie-2", projet=root) as second:
+            assert "LOCALAPPDATA" not in second.session.env
+        assert "LOCALAPPDATA" in first.session.env
+    assert prepared.received[0] is not None and prepared.received[1] is None
+
+
+def test_without_a_project_the_lowering_keeps_its_local_appdata_in_the_workbench(
+    tmp_path: Path, prepared: _Prepared
+) -> None:
+    with execution.abaissement(tmp_path / "copie"):
+        pass
+    assert prepared.received == [None]
+
+
+def test_the_delays_do_not_move_to_make_room_for_cold_caches() -> None:
+    """#1709: the caches survive so that the verification fits its delays, never the reverse."""
+    assert Delais() == Delais(commande_s=300.0, total_s=900.0, demarrage_s=15.0, sonde_s=10.0)
 
 
 # --- What is not played, and why ------------------------------------------------------------
@@ -343,7 +440,7 @@ def test_a_lowered_command_receives_its_workbench_and_none_of_maestro_s_names(
     command = CommandeEcrite(
         "tester",
         'printf "%s|%s|%s|%s" "${MAESTRO_WITNESS_1691-none}" "${WITNESS_1691-none}" '
-        '"${INHERITED_1691-none}" "$LOCALAPPDATA"',
+        '"${INHERITED_1691-none}" "$APPDATA"',
     )
 
     (verdict,) = Verificateur().verifier_commandes(
@@ -351,7 +448,52 @@ def test_a_lowered_command_receives_its_workbench_and_none_of_maestro_s_names(
     )
 
     assert verdict.etat == VERIFIEE, verdict
-    maestro, withheld, inherited, local = verdict.sortie.split("|")
+    maestro, withheld, inherited, roaming = verdict.sortie.split("|")
     assert (maestro, withheld, inherited) == ("none", "none", "seen")
-    assert low_session.WORKBENCH_PREFIX in local, local
-    assert not Path(local).exists(), "the workbench leaves with the verification"
+    assert low_session.WORKBENCH_PREFIX in roaming, roaming
+    assert not Path(roaming).exists(), "the workbench leaves with the verification"
+
+
+@pytest.mark.skipif(not WINDOWS, reason="the low integrity level exists only on Windows")
+@pytest.mark.skipif(BASH is None, reason="no bash on this machine")
+@pytest.mark.skipif(low_session.git_installation() is None, reason="Git for Windows is needed")
+@pytest.mark.integrite_basse
+@pytest.mark.commandes_jouees
+@pytest.mark.parametrize("versioned", [False, True], ids=["copy", "fresh-clone"])
+def test_what_a_lowered_command_caches_is_found_by_its_project_s_next_verification_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_tools: Path, versioned: bool
+) -> None:
+    """#1709, for real: the cache is written at low integrity, kept, and never crosses projects.
+
+    The command plays what a package manager does: it looks for its cache in
+    `LOCALAPPDATA`, says whether it found it, and fills it. The second verification of the
+    project finds it; the verification of another project does not. Neither writes outside
+    its copy, its workbench and its project's cache.
+    """
+    monkeypatch.setattr(low_session, "outils_du_poste", lambda: git_tools)
+    monkeypatch.setattr(low_session, "maestro_secrets", lambda: ())
+    caches = tmp_path / "caches"
+    monkeypatch.setattr(
+        "maestro.sandbox.verification_cache.caches_de_verification", lambda: caches
+    )
+    cache_like = (
+        'store="$LOCALAPPDATA/witness-cache"\n'
+        'if [ -f "$store/package" ]; then echo found; else echo cold; fi\n'
+        'mkdir -p "$store" && echo downloaded > "$store/package"\n'
+    )
+    first = _project(tmp_path / "a", {"install.sh": cache_like})
+    other = _project(tmp_path / "b", {"install.sh": cache_like})
+    if versioned:
+        _version(first)
+        _version(other)
+    command = (CommandeEcrite("installer", "bash scripts/install.sh", "scripts/install.sh"),)
+
+    def verify(root: Path) -> str:
+        (verdict,) = Verificateur().verifier_commandes(root, command, perimetre=Perimetre())
+        assert verdict.etat == VERIFIEE, verdict
+        return verdict.sortie.strip()
+
+    assert [verify(first), verify(first), verify(other)] == ["cold", "found", "cold"]
+    assert sorted(p.name for p in caches.iterdir()) == sorted(
+        verification_cache.project_key(root) for root in (first, other)
+    )

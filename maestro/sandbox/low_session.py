@@ -16,7 +16,11 @@ decides, for one session, what is labelled and what the agent's environment says
   `TEMP`, `TMP` and `TMPDIR` lead to its `tmp`, so a `mktemp -d` gives a folder the
   scope recognises (`maestro.portee.etabli_de`); `APPDATA` and `LOCALAPPDATA` lead
   to its `appdata`, so what a tool writes in the profile — a lock, a cache — lands
-  there. It leaves with the session (`LowSession.close`).
+  there. It leaves with the session (`LowSession.close`);
+- the `LOCALAPPDATA` a caller keeps from one session to the next, when it hands one
+  (`local_appdata`): the tooling verification keeps one per project, so that what its
+  tools cache survives (`maestro.sandbox.verification_cache`, #1709). It does not leave
+  with the session. `APPDATA`, where settings live, stays in the workbench.
 
 **Git for Windows, copied** once per installed version under the machine's tools
 (`maestro.emplacements.outils_du_poste`), and put first on the `PATH`. Its runtime
@@ -120,15 +124,18 @@ def prepare(
     workspace: Path,
     *,
     cli_folder: Path | None = None,
+    local_appdata: Path | None = None,
     closed: Iterable[Path] = (),
     withheld: Iterable[str] = (),
     environ: Mapping[str, str] | None = None,
 ) -> LowSession:
     """Labels what the agent writes, closes what it must not read, opens its workbench.
 
-    `cli_folder` is the CLI's own folder, created when missing. `closed` names what
-    Maestro owns and the agent must not read; what does not exist is skipped.
-    `withheld` names the variables the launcher keeps from the CLI.
+    `cli_folder` is the CLI's own folder, created when missing. `local_appdata` is the
+    `LOCALAPPDATA` the caller keeps beyond the session, created when missing and labelled
+    low like `cli_folder`; without it, `LOCALAPPDATA` leads into the workbench and leaves
+    with it. `closed` names what Maestro owns and the agent must not read; what does not
+    exist is skipped. `withheld` names the variables the launcher keeps from the CLI.
     `environ` is the environment the session starts from (default: this process's),
     whose `PATH` the Git copy is put in front of. Raises `LowIntegrityError` when
     the system refuses a label: a session that would run lowered without the
@@ -136,9 +143,10 @@ def prepare(
     """
     base = os.environ if environ is None else environ
     folders = [workspace, *git_folders(workspace)]
-    if cli_folder is not None:
-        cli_folder.mkdir(parents=True, exist_ok=True)
-        folders.append(cli_folder)
+    for kept in (cli_folder, local_appdata):
+        if kept is not None:
+            kept.mkdir(parents=True, exist_ok=True)
+            folders.append(kept)
     for folder in folders:
         low_integrity.label_low(folder)
     for path in closed:
@@ -157,7 +165,7 @@ def prepare(
             "TMP": str(temporary),
             "TMPDIR": str(temporary),
             "APPDATA": str(roaming),
-            "LOCALAPPDATA": str(local),
+            "LOCALAPPDATA": str(local if local_appdata is None else local_appdata),
             RUNTIME_APART: "1",
         }
         copy = git_copy()

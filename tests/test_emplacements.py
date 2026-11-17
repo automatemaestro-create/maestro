@@ -35,6 +35,7 @@ from maestro.controltower.persistence import chemin_sqlite
 from maestro.emplacements import (
     NOM_JETABLE,
     TEMOIN_PID,
+    caches_de_verification,
     jetable,
     occupant,
     racine_ateliers,
@@ -316,6 +317,12 @@ def test_le_jeton_et_le_journal_vivent_sous_la_racine_de_letat(maison: Path) -> 
     reglages = replace(load_settings(), api_jeton_fichier="", sqlite_fichier="")
     assert chemin_du_jeton(reglages).parent == racine_etat()
     assert chemin_sqlite(reglages).parent == racine_etat()
+
+
+def test_les_caches_de_la_verification_vivent_sous_la_racine_de_letat(maison: Path) -> None:
+    """#1709 : un dossier par projet vérifié, que `held` ouvre sous cette racine-ci."""
+    assert caches_de_verification() == racine_etat() / "verification-caches"
+    assert not caches_de_verification().exists(), "lue, jamais créée"
 
 
 def test_le_repertoire_des_projets_propose_est_la_racine_des_projets(maison: Path) -> None:

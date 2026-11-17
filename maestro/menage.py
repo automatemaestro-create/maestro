@@ -19,8 +19,8 @@ par élément, avec sa taille, son **propriétaire** quand on le connaît, et so
 
 - `~/Maestro/` — les projets de l'utilisateur : montrés, **jamais** retirés ;
 - `~/.maestro/` — l'état du poste : ce que le produit y déclare (jeton de l'API, journaux
-  locaux, ateliers, profils de navigateur) est à sa place ; tout autre élément est **non
-  déclaré** ;
+  locaux, ateliers, caches de la vérification de l'outillage, profils de navigateur) est à
+  sa place ; tout autre élément est **non déclaré** ;
 - `<temp>/maestro/` — le jetable : chaque dossier avec son occupant, vivant ou non, et le
   verdict du ramassage (`maestro.sandbox.ramassage`), qui le retirera seul ;
 - **hors racine** — les `~/maestro-*` du profil et les `maestro-*` des anciennes adresses
@@ -95,6 +95,7 @@ from maestro.controltower.hote_detache import PREFIXE_ATELIER
 from maestro.controltower.persistence import SUFFIXE_SAUVEGARDE, SUFFIXE_SQLITE
 from maestro.emplacements import (
     NOM_ATELIERS,
+    NOM_CACHES_DE_VERIFICATION,
     NOM_CLI_CLAUDE,
     NOM_CONFIGURATION,
     NOM_ETAT,
@@ -528,6 +529,10 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
         ),
         NOM_LANCEUR: "journaux et session du lanceur installé (maestro.lanceur.emplacement)",
         NOM_REPRISE: "copie d'une installation antérieure (maestro.lanceur.reprise)",
+        NOM_CACHES_DE_VERIFICATION: (
+            "caches de la vérification de l'outillage, un par projet, gardés par rétention "
+            "(maestro.sandbox.verification_cache)"
+        ),
     }
     entrees = []
     for chemin in _enfants(racine):

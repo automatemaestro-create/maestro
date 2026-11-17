@@ -386,7 +386,7 @@ résout le chemin sans lire `HOME`. Chaque commande joue donc sous la borne des 
 
 | Régime des agents | La vérification |
 |---|---|
-| `integrite-basse` | Abaissée, sous l'établi d'une session (la copie étiquetée basse, la copie de Git, `TEMP` et `APPDATA` redirigés, l'espace de noms de Maestro et ce que ses `.env` déclarent retenus) |
+| `integrite-basse` | Abaissée, sous l'établi d'une session (la copie étiquetée basse, la copie de Git, `TEMP` et `APPDATA` redirigés vers l'établi, `LOCALAPPDATA` vers le cache du projet, l'espace de noms de Maestro et ce que ses `.env` déclarent retenus) |
 | `conteneur`, sous Windows | Abaissée de même : elle joue sur le poste, et c'est la borne que le poste a |
 | `conteneur`, ailleurs | Pas jouée, et sa raison le dit : rien ne joue plus large que les agents |
 | `hote` | Au niveau de la personne, comme ses agents |
@@ -395,11 +395,46 @@ Une borne que le système refuse (une étiquette, l'absence de Git for Windows) 
 « à vérifier » avec sa raison. Elle n'est jamais rejouée au niveau de la personne. Ce que la borne ne
 couvre pas est ce qu'elle ne couvre pas pour un agent, listé ci-dessous.
 
-Sur le dépôt de Maestro, cloné à part puis vérifié sur le poste de référence (2026-11-17), l'étape
-`shell` de `setup.sh` voit son écriture du profil refusée, et le profil garde son empreinte. Mais
-la commande ne rend pas la main dans ses 300 s, et reste « à vérifier ». L'établi naît vide (un
-cache par session, ci-dessous) : Node, puis `pip install` de toutes les dépendances, se
-téléchargent avant même `npm ci`.
+**Un cache par projet pour la vérification** (#1709). L'établi part avec la vérification. Si
+`LOCALAPPDATA` y menait, ce que les outils y rangent (le cache de npm, par exemple) partirait avec
+lui, et chaque vérification retéléchargerait tout. La vérification reçoit donc, à la place, le
+`LOCALAPPDATA` de **son projet**, gardé sous `~/.maestro/verification-caches/`
+(`maestro/sandbox/verification_cache.py`) :
+- **un dossier par projet, jamais partagé** : ce qu'une vérification y laisse, la suivante le relit,
+  et peut l'exécuter. Partagé, il ferait passer dans le projet B ce que la vérification du projet A
+  y a laissé. Par projet, il n'ouvre aucun canal nouveau : les agents d'un projet peuvent déjà
+  déposer dans son arbre ce que la vérification suivante copie. La personne l'a tranché le
+  2026-11-17 ;
+- **le même projet** est reconnu à son **dépôt Git** quand l'arbre vérifié est un dépôt ou un
+  worktree (Git le nomme), sinon à sa racine. Une génération écrit l'outillage dans un worktree
+  neuf à chaque fois : c'est le dépôt qui lui fait retrouver le cache de la racine. Une racine qui
+  vit dans le dépôt d'un autre n'est pas ce dépôt, et n'en partage pas le cache ;
+- **une vérification à la fois** tient le cache de son projet, par un verrou que le système rend à
+  la mort de son détenteur. Deux vérifications du même projet peuvent se chevaucher, puisque le
+  créneau ne sérialise que les services. La seconde joue alors avec le `LOCALAPPDATA` vide de son
+  établi : plus lente, jamais fausse. Ce que ce dossier contient est inconnu de Maestro, et le trier
+  par outil reviendrait à reconnaître un outil par son nom ([docs/44](./44-decision-maestro-possede-ses-contrats.md)) ;
+  attendre, c'était entamer des délais qui ne bougent pas ;
+- **une rétention** : chaque ouverture retire les caches qu'aucune vérification n'a rouverts depuis
+  quatorze jours, et n'en garde pas plus de huit, les plus récents. Ce sont des décisions, pas des
+  mesures. Un cache qu'une autre vérification tient n'est jamais retiré.
+  `python -m maestro.menage` montre le dossier.
+
+`APPDATA`, où vivent les réglages (`pip.ini`, `.npmrc`), reste à l'établi et part avec lui. Le cache
+n'épargne que ce qu'un outil range **là où la variable le mène** : npm suit `LOCALAPPDATA`, et son
+`npm-cache` y survit. pip, lui, demande le dossier à Windows, qui lui rend le `AppData\Local` de la
+personne : un processus bas n'y écrit pas, et pip joue sans cache, donc `pip install` retélécharge
+tout à chaque vérification (mesuré le 2026-11-17). `setup.sh` télécharge Node par `curl` dans
+`.tools/node/` de la copie, et un clone neuf le retélécharge, comme il recrée son `.venv` et ses
+`node_modules`.
+
+Sur le dépôt de Maestro, cloné à part puis vérifié deux fois de suite sur le poste de référence
+(2026-11-17, #1709), l'étape `shell` de `setup.sh` voit son écriture du profil refusée, et le
+profil garde son empreinte. Chaque passage rend un verdict joué, « échouée » sur cette seule étape :
+268 s à froid, puis 232 s avec le cache du projet (253 Mo, celui de npm). Le cache fait gagner une
+demi-minute. La marge qui reste sous les 300 s est mince, parce que Node, le `.venv` et ses
+dépendances pip se retéléchargent à chaque passage. Un passage à froid joué pendant la vérification
+d'une autre session n'a pas rendu la main dans les 300 s, et est resté « à vérifier ».
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
@@ -418,7 +453,10 @@ téléchargent avant même `npm ci`.
 - une commande de vérification dont le script ajoute une ligne à un profil hors de la copie est
   jouée et échoue sur l'écriture refusée, dans une copie comme dans un clone neuf. Le profil garde
   son contenu et sa date, sans restauration. La commande voisine, qui n'écrit que dans sa copie et
-  son établi, est vérifiée ; elle ne reçoit ni `MAESTRO_*` ni ce qui est retenu.
+  son établi, est vérifiée ; elle ne reçoit ni `MAESTRO_*` ni ce qui est retenu ;
+- une commande de vérification qui remplit son cache sous `LOCALAPPDATA`, comme un gestionnaire de
+  paquets, l'écrit à l'intégrité basse. La vérification suivante du même projet le trouve, celle
+  d'un autre projet non, dans une copie comme dans un clone neuf.
 
 **Ce que l'isolation ne couvre pas.** L'agent en est informé sous « La machine »
 (`maestro.machine.LIGNE_INTEGRITE_BASSE`), et voici la liste :
@@ -433,8 +471,16 @@ téléchargent avant même `npm ci`.
   Maestro, un Redis ou le port de débogage d'un navigateur ;
 - **l'environnement** : l'agent ne reçoit que les variables nommées (§8), mais celles-là, il les
   lit. Une clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
-- **un cache par session** : ce qu'un outil range dans le profil (le cache de `npx`, par
-  exemple) part avec l'établi, et se retélécharge à la session suivante ;
+- **un cache par session pour un agent** : ce qu'un outil range dans le profil (le cache de `npx`,
+  par exemple) part avec l'établi de sa session, et se retélécharge à la suivante ;
+- **le cache d'un projet que la vérification garde** (#1709), deux risques acceptés avec la
+  décision du 2026-11-17 :
+  - un processus bas d'un **autre projet** peut écrire dans ce dossier, puisqu'il est étiqueté bas,
+    et la vérification suivante du projet relit ce qu'il y a laissé, qu'une commande peut
+    exécuter. « Par projet » garantit que Maestro ne fait pas passer un projet dans l'autre, pas
+    qu'un agent hostile d'un autre projet ne puisse pas y écrire ;
+  - ce qu'une commande y laisse **persiste** jusqu'à la rétention, cache ou état d'un outil, et
+    tout agent du poste peut le lire ;
 - **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
   niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
   pas ;

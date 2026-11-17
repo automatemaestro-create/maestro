@@ -127,9 +127,11 @@ docs/17 §7). Une commande de vérification joue sous **la borne des agents du p
 - là où ils tournent à l'intégrité basse, et sous Windows en conteneur (la
   vérification joue sur le poste, et c'est la borne qu'il a), elle naît abaissée dans
   son arbre, sous l'établi d'une session de #1515 (`abaissement`). Sa copie reçoit
-  l'étiquette basse. `TEMP` et `APPDATA` mènent à l'établi, et son bash est celui de
-  la copie de Git. Ni l'espace de noms de Maestro ni ce que ses `.env` déclarent ne lui
-  parviennent. Le profil, le dossier personnel et `HKCU` lui sont refusés ;
+  l'étiquette basse. `TEMP` et `APPDATA` mènent à l'établi, `LOCALAPPDATA` au cache
+  de son projet, qui survit d'une vérification à l'autre (#1709,
+  `maestro.sandbox.verification_cache`), et son bash est celui de la copie de Git. Ni
+  l'espace de noms de Maestro ni ce que ses `.env` déclarent ne lui parviennent. Le
+  profil, le dossier personnel et `HKCU` lui sont refusés ;
 - là où ils tournent au niveau de la personne (`hote`, le défaut hors de Windows), elle
   y joue aussi : Maestro ne fait pas seul ce qu'un agent n'aurait pas eu le droit de
   faire seul, et il n'en fait pas moins ;
@@ -251,14 +253,14 @@ import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 from maestro.emplacements import jetable, racine_jetable
 from maestro.fichiers import retirer_arbre
-from maestro.sandbox import low_integrity, low_session
+from maestro.sandbox import low_integrity, low_session, verification_cache
 from maestro.sandbox.arbre import Arbre
 from maestro.sandbox.ports import ESSAIS_PORT, port_libre, tirages
 
@@ -1250,31 +1252,39 @@ class Abaissement:
 
 
 @contextmanager
-def abaissement(copie: Path) -> Iterator[Abaissement]:
+def abaissement(copie: Path, *, projet: Path | None = None) -> Iterator[Abaissement]:
     """L'intégrité basse autour de `copie`, le temps du bloc (#1691).
 
     La copie reçoit l'étiquette basse, ce que Maestro ferme à la lecture est fermé
     (`low_session.maestro_secrets`), et l'établi naît. Il est retiré en sortie, quoi
     qu'il arrive, avec ce que les commandes y ont laissé. Lève `BorneIndisponible` si le
     système refuse une étape, ou si le poste n'a pas de Git for Windows à copier.
+
+    `projet` est l'arbre que `copie` reproduit (#1709) : `LOCALAPPDATA` mène alors au cache
+    de son projet, tenu le temps du bloc et gardé au-delà (`verification_cache.held`), et
+    ce que ses outils y rangent survit à l'établi. Un cache qu'une autre vérification du
+    même projet tient, ou qui ne s'ouvre pas, laisse `LOCALAPPDATA` à l'établi.
     """
-    try:
-        session = low_session.prepare(
-            copie,
-            closed=low_session.maestro_secrets(),
-            withheld=low_session.maestro_variables(),
-        )
-    except OSError as exc:
-        raise BorneIndisponible(_refus(exc)) from exc
-    try:
-        if session.bash is None:
-            raise BorneIndisponible(
-                "Git for Windows est introuvable sur ce poste, et seul le bash de sa copie "
-                "démarre à l'intégrité basse"
+    cache = verification_cache.held(projet) if projet is not None else nullcontext(None)
+    with cache as local:
+        try:
+            session = low_session.prepare(
+                copie,
+                local_appdata=local,
+                closed=low_session.maestro_secrets(),
+                withheld=low_session.maestro_variables(),
             )
-        yield Abaissement((str(session.bash), "-c"), session)
-    finally:
-        session.close()
+        except OSError as exc:
+            raise BorneIndisponible(_refus(exc)) from exc
+        try:
+            if session.bash is None:
+                raise BorneIndisponible(
+                    "Git for Windows est introuvable sur ce poste, et seul le bash de sa "
+                    "copie démarre à l'intégrité basse"
+                )
+            yield Abaissement((str(session.bash), "-c"), session)
+        finally:
+            session.close()
 
 
 def _refus(exc: OSError) -> str:

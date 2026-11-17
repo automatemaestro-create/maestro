@@ -183,6 +183,7 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | intégrité basse | `low_integrity` | le niveau de Windows où naît le CLI d'un agent : il ne voit aucun processus de la personne et n'écrit que ce qui porte une étiquette basse |
 | étiquette (d'intégrité) | `integrity_label` | ce qu'un dossier porte pour être écrit à l'intégrité basse, ou fermé à sa lecture |
 | établi | `workbench` | là où un agent essaie hors de son projet : ce que crée `mktemp -d`, que la portée reconnaît. À l'intégrité basse, chaque session a le sien, où mènent son temporaire et son `APPDATA`, et il est retiré avec elle |
+| cache de vérification | `verification_cache` | le `LOCALAPPDATA` que la vérification de l'outillage d'un projet garde d'un passage à l'autre, à l'intégrité basse : un par projet, jamais partagé, gardé par rétention |
 | espace de travail | `workspace` | le dossier jetable d'une tâche |
 | socle (d'environnement) | `base_names` | les variables du poste que toute session d'agent reçoit : chemins, profil, temporaire, langue, réseau |
 | variable nommée, retenue | `named`, `withheld` | une variable du poste qu'une session d'agent reçoit parce que quelqu'un l'a nommée ; celle que personne n'a nommée est retenue |
