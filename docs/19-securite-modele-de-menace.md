@@ -46,6 +46,7 @@ L'opérateur humain et le poste lui-même sont réputés de confiance (POC).
 | Menace | Vecteur | Contre-mesure | Lot |
 |---|---|---|---|
 | Évasion du workspace : lecture/écriture de fichiers de l'hôte | `Bash`, code produit, serveur MCP stdio | Mode isolé : CLI et tout ce qu'il lance dans un conteneur durci jetable — seul le workspace de la tâche est monté, racine en lecture seule, non-root, `--cap-drop ALL`, `no-new-privileges` | #108 |
+| Arrêt d'un processus de la personne, écriture hors du projet | un script que la portée ne lit pas (`bash nettoyer.sh` qui contient `taskkill //IM python.exe //F`) | **Intégrité basse**, le défaut sous Windows : le CLI de l'agent et tout ce qu'il lance tournent abaissés. Ils ne voient aucun processus de la personne, n'écrivent que l'espace de travail, son dépôt Git, l'établi et le dossier du CLI, et ne lisent pas ce qui est à Maestro. *Ce que cela ne couvre pas* — **§2.4**, [docs/17 §7](./17-isolation-execution.md) | #1515 |
 | Épuisement des ressources du poste | boucle, compilation, fork bomb | Plafonds du conteneur : 256 pids, 2 Go, 2 CPU ; time-out par tâche (#64). ⚠ Le **plafond de tours ne compte plus** parmi les parades : #494 lui a retiré son défaut, aucun agent n'est plus borné sauf `plafond_tours` posé explicitement. Ce qui reste opposable à une boucle est donc ce que le conteneur borne — et, hors mode isolé, seuls le time-out par tâche et un plafond de dépense armé au lancement | #108 |
 | Vol de secrets d'un autre agent | agent compromis résolvant `${VAR}` d'autrui | Coffre **par agent** : la résolution MCP ne lit que le coffre de l'agent exécutant ; secret absent = serveur indisponible (échec propre), même si la variable existe dans le process | #109 |
 | Fuite de secret en sortie | agent citant son token dans un livrable, trace, rapport | Registre de rédaction : toute valeur **servie** est masquée (`[secret masqué]`) à la consignation — le journal alimentant Langfuse, le pont Control Tower et les rapports, le masquage suit partout | #109 (socle #8) |
@@ -314,52 +315,49 @@ donc du moins fiable qui soit : c'est exactement pourquoi la garde se juge sur l
 la provenance. Gardé par [`tests/test_coque_bureau.py`](../tests/test_coque_bureau.py), qui vérifie
 l'ouvreur employé **et** l'ordre des gardes, et prouve son motif sur un échantillon fautif.
 
-#### L'isolation d'exécution en distribution bureau : le défaut est le mode non isolé
+#### L'isolation d'exécution en distribution bureau : le défaut est l'intégrité basse
 
-> ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518) :
-> le remède que ce paragraphe nomme, « activer l'isolation sur un poste qui peut la porter », devient
-> le **défaut**.
-> - Le mécanisme natif est choisi sur pièces par #1514 : l'**intégrité basse**
->   ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). #1515 le pose par défaut, sans
->   exiger Docker.
-> - **Il ferme** l'arrêt d'un processus hors de l'arbre (la famille de #1502, scripts compris) et
->   l'écriture hors du projet et de l'établi.
-> - **Il ne couvre pas** :
->   - la lecture des secrets, tant que #1515 n'a pas posé l'étiquette `NO_READ_UP` qui la ferme ;
->   - deux projets étiquetés bas en même temps, qui s'écrivent l'un l'autre ;
->   - le réseau, bouclage compris ;
->   - l'environnement passé à l'agent.
-> - **Décidé, pas encore livré** : ce qui suit décrit l'état présent jusqu'à #1515, qui le réécrira.
+Une application qu'on double-clique ne peut pas exiger Docker sur le poste
+([docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md)). Elle n'a pas besoin de lui pour
+borner un agent : sous Windows, le défaut est l'**intégrité basse**
+([docs/17 §7](./17-isolation-execution.md), #1515), mécanisme que #1514 a choisi sur pièces
+([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). L'installeur pose
+`MAESTRO_ISOLATION=integrite-basse` en toutes lettres. Le mode isolé
+([docs/17](./17-isolation-execution.md)) reste une option plus forte pour les postes équipés, et le
+contrat du conteneur ([docs/17 §3](./17-isolation-execution.md)) ne bouge pas : la coque n'y touche
+pas.
 
-[docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md) l'avait écrit au cadrage, et **rien
-ici ne le change** : une application qu'on double-clique ne peut pas exiger Docker sur le poste.
-En distribution bureau, `MAESTRO_ISOLATION` reste **non posé** par défaut, le mode isolé
-([docs/17](./17-isolation-execution.md)) demeure une option pour postes équipés, et le contrat du
-conteneur ([docs/17 §3](./17-isolation-execution.md)) ne bouge pas d'une ligne — la coque ne le
-touche pas.
+La fenêtre ouvre le produit à quelqu'un qui n'a pas de terminal, le persona de docs/24. La
+question « qu'est-ce qui protège le poste quand le conteneur n'est pas là ? » reçoit donc une
+réponse en trois couches :
 
-Ce qui change, c'est **qui est devant l'écran**. Ne pas avoir Docker se constatait jusqu'ici sur
-un poste de développement, par quelqu'un qui avait lancé la stack à la main et lu l'avertissement.
-La fenêtre ouvre le produit à quelqu'un qui n'a pas de terminal — le persona de docs/24 —, et la
-question « qu'est-ce qui protège le poste quand le conteneur n'est pas là ? » cesse d'être
-théorique. La réponse, en toutes lettres :
+1. **Le périmètre du projet** (docs/24 §4.6, et §2.1 ci-dessus pour le détail) : racine
+   canonicalisée et racines interdites (EF-38), exclusions du périmètre, frontière d'écriture de
+   `maestro.sandbox.en_place` sur un projet non versionné, travail hors de la racine et fusion sous
+   accord humain sur un projet versionné (EF-36, EF-37). Ces gardes confrontent les **outils de
+   fichiers** de l'agent, jamais ce qu'un `Bash` fait ([docs/17 §4](./17-isolation-execution.md),
+   encart #839).
+2. **La portée et la politique d'outils** (#110) : elles lisent le texte d'une commande, et
+   rendent à une personne ce qui sort du projet, détruit ou arrête des processus par leur nom.
+3. **Le poste**, sur ce que le texte ne dit pas, un script par exemple. Le CLI de l'agent et tout
+   ce qu'il lance tournent abaissés :
+   - ils ne voient ni n'arrêtent aucun processus de la personne ou de Maestro ;
+   - ils n'écrivent que dans l'espace de travail, son dépôt Git, l'établi et le dossier du CLI de
+     Maestro ;
+   - ils ne lisent ni le jeton de l'API, ni le coffre, ni les `.env` que Maestro charge. Les
+     variables que ces `.env` déclarent leur sont retenues aussi, hors l'espace du fournisseur.
 
-**Le filet du mode bureau est le périmètre du projet, pas le conteneur** (docs/24 §4.6, et §2.1
-ci-dessus pour le détail) : racine canonicalisée et racines interdites (EF-38), exclusions du
-périmètre, frontière d'écriture de `maestro.sandbox.en_place` sur un projet non versionné, travail
-hors de la racine et fusion sous accord humain sur un projet versionné (EF-36, EF-37).
+**Ce que le poste ne couvre pas**, et que le régime assume :
+- l'agent **lit** ce que la personne lit, hors ce qui est à Maestro. Le profil de la personne
+  n'est pas touché ;
+- deux agents abaissés en même temps écrivent l'un chez l'autre, et l'un peut arrêter les
+  processus de l'autre ;
+- le **réseau**, bouclage compris ;
+- l'**environnement** de la personne, hors ce que Maestro retient ;
+- les vérifications que Maestro joue lui-même, au niveau de la personne.
 
-Et le **prix** de cette réponse, qui ne se lit nulle part d'un seul tenant : ces gardes vivent
-**sur l'hôte**, où elles ne confrontent que les **outils de fichiers** de l'agent — jamais ce
-qu'un `Bash` fait ([docs/17 §4](./17-isolation-execution.md), encart #839). En mode isolé les
-exclusions deviennent une clôture dure, parce que c'est le conteneur qui les porte ; hors mode
-isolé — donc **par défaut en distribution bureau** — un `Bash` permis n'est borné que par la
-**politique d'outils par agent** (#110) et par le time-out de la tâche (#64).
-
-Il n'y a pas de troisième filet à inventer ici, et en suggérer un serait pire que de se taire :
-refermer cela, c'est activer l'isolation sur un poste qui peut la porter, ou refuser `Bash` à
-l'agent, ou ne pas lancer d'agent sur un poste où l'on n'accepte ni l'un ni l'autre. Ce document
-ne dit pas que le régime est confortable ; il dit que **c'est le régime**.
+Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
+n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.
 
 #### Ce que le modèle attend du mode local durci (#638) *(livré — voir §2.5)*
 
@@ -441,12 +439,14 @@ couche, jamais dans une branche de code parallèle.
 ## 3. Activation (récapitulatif)
 
 Chaque mécanisme est **opt-in** et détaillé dans sa page ; l'ensemble tient
-dans le `.env` et les dépôts `core/` — **sauf le mode local durci, qui est le
-seul à être actif sans rien écrire**, et qui se désarme au lieu de s'armer :
+dans le `.env` et les dépôts `core/` — **sauf le mode local durci et, sous
+Windows, l'intégrité basse, qui sont actifs sans rien écrire**, et qui se
+désarment au lieu de s'armer :
 
 | Mécanisme | Activation | Défaut |
 |---|---|---|
-| Mode isolé (#108) | `MAESTRO_ISOLATION=conteneur` (+ image construite : `docker build -t maestro-sandbox:latest infra/sandbox`) — [docs/17 §4](./17-isolation-execution.md) | exécution sur l'hôte |
+| **Intégrité basse (#1515)** | **rien à écrire** sous Windows, où c'est le défaut ; l'installeur pose `MAESTRO_ISOLATION=integrite-basse`. `MAESTRO_ISOLATION=hote` la retire — [docs/17 §7](./17-isolation-execution.md) | **active** sous Windows, sans objet ailleurs |
+| Mode isolé (#108) | `MAESTRO_ISOLATION=conteneur` (+ image construite : `docker build -t maestro-sandbox:latest infra/sandbox`) — [docs/17 §4](./17-isolation-execution.md) | intégrité basse sous Windows, exécution sur l'hôte ailleurs |
 | Coffre par agent (#109) | écrire le **premier** `core/secrets/<agent>.json` (bascule pour **tous** les agents) — [docs/18 §3](./18-secrets-par-agent.md) | environnement du process |
 | Permissions (#110, #580) | écrire `core/permissions/<agent>.json` (`{"allow": [...], "ask": {"<outil>": "<décideur>"}, "deny": [...]}`) — **ou l'onglet MCP & permissions de la fiche agent** depuis #262, qui écrit le même fichier (`PUT /api/permissions/<agent>`, mêmes règles de validation) — [README](../core/permissions/README.md) | tout permis (outils du profil) |
 | **Mode local durci (#638)** | **rien à écrire** : jeton engendré au premier démarrage (`~/.maestro/jeton-api`), origines limitées à celle du front. `MAESTRO_API_AUTH=ouvert` le **désarme**, `MAESTRO_API_ORIGINES` règle les origines — **§2.5**, [docs/05 §6.21](./05-interface-control-tower.md) | **actif** (`jeton`) |
@@ -534,8 +534,11 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   faut au minimum l'API du fournisseur) ; le filtrage fin reste une évolution
   (docs/17 §5). La politique #110 borne les *outils*, pas les destinations
   réseau d'un `Bash` permis ;
-- **le mode non isolé reste le défaut** : sans `MAESTRO_ISOLATION`, l'isolation
-  se limite au workspace jetable et à la restriction d'outils ;
+- **l'intégrité basse borne l'écriture et l'arrêt, pas la lecture** : un agent abaissé lit ce que
+  la personne lit, hors ce qui est à Maestro, joint le réseau et le bouclage, et partage les
+  dossiers étiquetés bas avec les autres agents du poste (§2.4, docs/17 §7). Ailleurs que sous
+  Windows, sans `MAESTRO_ISOLATION=conteneur`, l'isolation se limite au workspace et à la
+  restriction d'outils ;
 - **coffre en clair sur disque** (fichier local hors Git) — Vault/SOPS en V1
   sans changer le contrat (docs/18 §4) ; les clés fournisseur restent portées
   par la config du process, pas par le coffre ;
@@ -550,9 +553,9 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   `maestro/sandbox/` changent ;
 - **la coque de bureau n'est pas isolée, et ne peut pas l'être** (§2.4) : son
   processus principal lance la stack avec les droits de l'utilisateur, parce que
-  c'est lui qui porte la frontière de la fenêtre. En distribution bureau le défaut
-  reste le **mode non isolé**, le filet est le **périmètre du projet**, et un
-  `Bash` permis n'y est borné que par la politique d'outils (#110) ;
+  c'est lui qui porte la frontière de la fenêtre. Les agents, eux, tournent à
+  l'**intégrité basse** (docs/17 §7) : ce qu'un `Bash` permis fait est borné par
+  la politique d'outils (#110) et par le poste ;
 - **le pont de la fenêtre n'authentifie pas son appelant** (§2.4) : ses deux canaux
   IPC servent tout ce qui s'exécute dans la page. Ce qui rend cela tenable est une
   hypothèse à quatre termes — une fenêtre, une origine, pas de `<webview>`, pas

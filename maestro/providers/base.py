@@ -628,6 +628,16 @@ class ModelProvider(ABC):
         """
         return True
 
+    @property
+    def integrite_basse(self) -> bool:
+        """Les commandes de l'agent tournent-elles à l'intégrité basse (#1515) ?
+
+        C'est ce qui fait dire à l'agent, sous « La machine », ce que le poste borne
+        (`maestro.machine.LIGNE_INTEGRITE_BASSE`). Faux par défaut : un fournisseur
+        qui ne lance aucune commande sur le poste n'a rien à abaisser.
+        """
+        return False
+
     #: Les façons d'atteindre ce fournisseur depuis le poste (#1609), déclarées
     #: sur la classe comme la gamme : le catalogue les lit sans rien construire.
     ACCES: ClassVar[tuple[AccesFournisseur, ...]] = ()

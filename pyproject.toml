@@ -125,6 +125,10 @@ maestro-sandbox-shim = "maestro.sandbox.shim:main"
 # tâche. Invoqué par le fournisseur, pas à la main ; absent, la session tourne sans
 # confinement et le journal du run le dit.
 maestro-confinement = "maestro.sandbox.confinement:main"
+# Connexion de Maestro à Claude (ticket #1515) : la connexion du CLI, dans le dossier
+# que toutes les sessions de Maestro utilisent (`~/.maestro/claude`). `--etat` dit
+# seulement si Maestro est connecté. Un geste de la personne, une fois par poste.
+maestro-connexion = "maestro.providers.claude_login:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

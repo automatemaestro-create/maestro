@@ -172,6 +172,9 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | régime (d'exécution) | `mode` | comment une tâche s'exécute : en place, isolée, en conteneur |
 | en place | `in_place` | un projet non versionné rempli dans sa racine |
 | confinement | `containment` | ce qu'un agent lance ne survit pas à sa tâche |
+| intégrité basse | `low_integrity` | le niveau de Windows où naît le CLI d'un agent : il ne voit aucun processus de la personne et n'écrit que ce qui porte une étiquette basse |
+| étiquette (d'intégrité) | `integrity_label` | ce qu'un dossier porte pour être écrit à l'intégrité basse, ou fermé à sa lecture |
+| établi | `workbench` | là où un agent essaie hors de son projet : ce que crée `mktemp -d`, que la portée reconnaît. À l'intégrité basse, chaque session a le sien, où mènent son temporaire et son `APPDATA`, et il est retiré avec elle |
 | espace de travail | `workspace` | le dossier jetable d'une tâche |
 | secret, coffre | `secret`, `vault` | une valeur sensible et son stockage chiffré |
 | rédaction (masquer) | `redaction` | les secrets masqués avant journalisation |

@@ -289,6 +289,10 @@ CLE_CLI_REEL = "MAESTRO_TESTS_CLI_REEL"
 #: ferme la résolution sur le `PATH` s'efface alors.
 MARQUEUR_CLIENTS_DU_POSTE = "clients_du_poste"
 
+#: Le marqueur d'un test qui fait VRAIMENT naître un processus à l'intégrité basse ou pose une
+#: étiquette (#1515) — la garde qui rend le mécanisme absent s'efface alors.
+MARQUEUR_INTEGRITE_BASSE = "integrite_basse"
+
 
 class FournisseurDuPosteRefuse(RuntimeError):
     """Levée par la garde à la place de la lecture des réglages du poste par la fabrique (#782).
@@ -355,6 +359,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{MARQUEUR_CLIENTS_DU_POSTE}: ce test lit VOLONTAIREMENT les clients d'agents installés "
         "sur le poste (#1295) — la garde de tests/conftest.py qui ferme le `PATH` s'efface.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_INTEGRITE_BASSE}: ce test abaisse VOLONTAIREMENT un processus ou pose une "
+        "étiquette d'intégrité (#1515) — la garde de tests/conftest.py qui rend le mécanisme "
+        "absent s'efface.",
     )
     # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
     if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
@@ -684,6 +694,24 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if item.get_closest_marker(MARQUEUR_CLI_REEL) is not None:
             item.add_marker(saut)
+
+
+@pytest.fixture(autouse=True)
+def _pas_d_integrite_basse_d_office(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rend l'intégrité basse absente du poste, sauf pour un test qui la veut (#1515).
+
+    Sous Windows, c'est le défaut de `MAESTRO_ISOLATION` (`maestro.sandbox.container.
+    mode_isolation`) : sans cette garde, tout test qui construit un fournisseur depuis des
+    réglages ferait naître ses doubles de CLI abaissés, poserait des étiquettes sur ses
+    dossiers et copierait Git sous le `~/.maestro/` du poste — un verdict que la CI Linux,
+    où le mécanisme n'existe pas, ne rendrait jamais. Le défaut y retombe sur `hote`, comme
+    en CI. Le marqueur `integrite_basse` efface la garde pour le test qui exerce le mécanisme.
+    """
+    if request.node.get_closest_marker(MARQUEUR_INTEGRITE_BASSE) is not None:
+        return
+    monkeypatch.setattr("maestro.sandbox.low_integrity.available", lambda: False)
 
 
 @pytest.fixture(autouse=True)

@@ -9,9 +9,10 @@ répond tient en trois lignes, et ce module en est la seule source :
 - `~/Maestro/` (`racine_projets`) — les projets de l'utilisateur, proposés par
   défaut (#1022). Jamais ramassée.
 - `~/.maestro/` (`racine_etat`) — l'état du poste : jeton de l'API, journal
-  SQLite, profil de navigateur, et sous `ateliers/` (`racine_ateliers`, #1457)
-  les ateliers des passages (exercices, banc comparatif) et de la relecture
-  visuelle. Seuls ces
+  SQLite, profil de navigateur, dossier du CLI des sessions (`dossier_du_cli_claude`),
+  outils copiés pour les agents (`outils_du_poste`, #1515), et sous `ateliers/`
+  (`racine_ateliers`, #1457) les ateliers des passages (exercices, banc comparatif)
+  et de la relecture visuelle. Seuls ces
   ateliers sont vidés, et par **rétention** — leurs derniers passages restent,
   ce sont les pièces d'un rouge (`maestro.scenarios.projets.retenir`).
 - `<temp>/maestro/` (`racine_jetable`) — le jetable : ateliers d'hôte, espaces
@@ -97,6 +98,18 @@ NOM_REPRISE = "reprise"
 
 #: Le nom du fichier de réglages, dans le produit comme dans la configuration du poste.
 NOM_ENV = ".env"
+
+#: Le dossier de l'état du poste où le CLI Claude des sessions de Maestro tient sa
+#: connexion, ses transcriptions et ce qu'il écrit d'autre (`CLAUDE_CONFIG_DIR`, #1515) :
+#: un dossier à Maestro, et non `~/.claude` de la personne, parce que le CLI d'un agent
+#: à l'intégrité basse n'écrit pas dans le profil, et que la reprise d'une session
+#: (#1513) relit ce qu'il y a écrit.
+NOM_CLI_CLAUDE = "claude"
+
+#: Le dossier de l'état du poste où vivent les outils qu'un agent reçoit en copie — Git
+#: for Windows, dont le runtime ne démarre pas à l'intégrité basse sous son propre
+#: chemin (`maestro.sandbox.low_session`, #1515).
+NOM_OUTILS = "outils"
 
 #: Le dossier du code qui porte la configuration **livrée** : les défauts suivis par le
 #: dépôt, que le paquet embarque tels quels (`core/mcp/*.json`, `core/permissions/*.json`).
@@ -243,6 +256,16 @@ def journaux_du_lanceur() -> Path:
 def reprise_du_poste() -> Path:
     """`~/.maestro/reprise` — ce que l'installeur a sauvé d'une version antérieure. Non créé."""
     return racine_etat() / NOM_REPRISE
+
+
+def dossier_du_cli_claude() -> Path:
+    """`~/.maestro/claude` — le dossier du CLI Claude des sessions de Maestro. Non créé."""
+    return racine_etat() / NOM_CLI_CLAUDE
+
+
+def outils_du_poste() -> Path:
+    """`~/.maestro/outils` — les outils qu'un agent reçoit en copie. Non créé."""
+    return racine_etat() / NOM_OUTILS
 
 
 # ── Le répertoire temporaire ──────────────────────────────────────────────────

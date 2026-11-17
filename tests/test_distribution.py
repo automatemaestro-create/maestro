@@ -201,9 +201,11 @@ def test_les_reglages_de_la_distribution_sont_le_mode_local_installe(
     assembleur: ModuleType,
 ) -> None:
     """Mode local (#639), et le produit se sait installé (#1620) : c'est le paquet qui le
-    dit, jamais un chemin deviné ni la coque."""
+    dit, jamais un chemin deviné ni la coque. L'isolation aussi est un réglage qu'il pose
+    (#1515, ENF-12) : l'intégrité basse, en toutes lettres plutôt que par le défaut."""
     from maestro.emplacements import VALEUR_INSTALLATION, VARIABLE_INSTALLATION, installation
     from maestro.installation import forme_du_produit
+    from maestro.sandbox.container import MODE_INTEGRITE_BASSE
 
     reglages = dict(
         ligne.split("=", 1)
@@ -213,6 +215,7 @@ def test_les_reglages_de_la_distribution_sont_le_mode_local_installe(
     assert reglages == {
         "MAESTRO_PERSISTANCE": SUPPORT_SQLITE,
         VARIABLE_INSTALLATION: VALEUR_INSTALLATION,
+        "MAESTRO_ISOLATION": MODE_INTEGRITE_BASSE,
     }
     assert installation(reglages) is True
     # Et le même réglage le présente installé (#1633) : `GET /api/installation` ne devine rien.

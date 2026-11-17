@@ -67,6 +67,7 @@ from maestro.config import ConfigError, Settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.emplacements import dossier_du_cli_claude
 from maestro.familles_claude import familles_claude
 from maestro.installation import cli_claude_resolu
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
@@ -121,8 +122,9 @@ from maestro.providers.base import (
     attache_stderr,
     motif_du_statut_http,
 )
+from maestro.sandbox import low_session
 from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
-from maestro.sandbox.container import IsolationConfig
+from maestro.sandbox.container import MODE_INTEGRITE_BASSE, IsolationConfig, mode_isolation
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
 from maestro.sandbox.ramassage import dossier_neutre
 
@@ -146,6 +148,12 @@ _LOG = logging.getLogger(__name__)
 #: `is_error=True` de sous-type `error_max_turns`, que le SDK relève en exception
 #: « Claude Code returned an error result: error_max_turns ».
 _MARQUEUR_MAX_TURNS = "error_max_turns"
+
+#: L'espace de noms par lequel on configure le CLI du fournisseur et sa connexion au
+#: modèle (clé, jeton, point d'accès, dossier). Un CLI abaissé le reçoit des `.env` de
+#: Maestro quand ils le déclarent ; le reste de ce qu'ils déclarent lui est retenu
+#: (#1515).
+ESPACE_DU_CLI = ("ANTHROPIC_", "CLAUDE_")
 
 #: États d'un serveur MCP qui valent échec définitif (statut `get_mcp_status`) :
 #: démarrage/connexion en échec, authentification requise, serveur désactivé.
@@ -434,8 +442,18 @@ class ClaudeProvider(ModelProvider):
         *,
         isolation: IsolationConfig | None = None,
         arbitrage: BornesArbitrage | None = None,
+        integrite_basse: bool = False,
+        dossier_cli: Path | None = None,
     ) -> None:
         self._credentials = credentials
+        # L'intégrité basse (#1515) : sur l'hôte, le CLI d'une session outillée naît
+        # abaissé, et ce qu'il écrit reçoit son étiquette (`maestro.sandbox.low_session`).
+        # Sans effet en mode isolé, où le conteneur est la frontière.
+        self._integrite_basse = integrite_basse and isolation is None
+        # Le dossier du CLI de **toutes** les sessions (#1515, `CLAUDE_CONFIG_DIR`) :
+        # connexion, transcriptions — que la reprise d'une session relit (#1513) —,
+        # et le reste de ce que le CLI écrit. None : le CLI garde le sien.
+        self._dossier_cli = dossier_cli
         # Mode isolé (#108) : quand il est actif, `run_agent` lance le CLI dans un
         # conteneur durci via le shim (`cli_path`). None : exécution sur l'hôte
         # (comportement historique, défaut).
@@ -461,6 +479,11 @@ class ClaudeProvider(ModelProvider):
     def commandes_sur_le_poste(self) -> bool:
         """Faux en mode isolé (#108) : l'agent travaille dans le conteneur, pas ici (#1403)."""
         return self._isolation is None
+
+    @property
+    def integrite_basse(self) -> bool:
+        """Vrai quand le CLI des sessions outillées naît à l'intégrité basse (#1515)."""
+        return self._integrite_basse
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ClaudeProvider:
@@ -490,6 +513,8 @@ class ClaudeProvider(ModelProvider):
             ),
             isolation=IsolationConfig.from_settings(settings),
             arbitrage=BornesArbitrage.from_settings(settings),
+            integrite_basse=mode_isolation(settings) == MODE_INTEGRITE_BASSE,
+            dossier_cli=dossier_du_cli_claude(),
         )
 
     def supports(self, model: str) -> bool:
@@ -513,22 +538,57 @@ class ClaudeProvider(ModelProvider):
 
         Neutralise (chaîne vide == non défini) les credentials concurrents de rang
         supérieur pour garantir le mode choisi malgré un environnement ambiant.
+
+        Le dossier du CLI (`CLAUDE_CONFIG_DIR`, #1515) en fait partie : c'est là que
+        le CLI trouve la connexion de Maestro, la même pour toutes ses sessions. Le
+        conteneur n'en reçoit rien (`maestro.sandbox.container.ENV_TRANSMISES`).
         """
         creds = self._credentials
+        env: dict[str, str] = {}
+        if self._dossier_cli is not None:
+            env["CLAUDE_CONFIG_DIR"] = str(self._dossier_cli)
         if creds.auth_mode is AuthMode.API_KEY:
             # On vise le rang 3 : neutraliser le bearer (rang 2), seul concurrent
             # supérieur plausiblement présent dans l'environnement.
-            return {
+            return env | {
                 "ANTHROPIC_AUTH_TOKEN": "",
                 "ANTHROPIC_API_KEY": creds.api_key or "",
             }
         # SUBSCRIPTION : neutraliser bearer (rang 2) et clé API (rang 3) pour laisser
         # le CLI retomber sur l'abonnement Claude Code (rang 6) — ou sur un token
         # OAuth explicite (rang 5, CI) s'il est fourni.
-        env = {"ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""}
+        env |= {"ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""}
         if creds.oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = creds.oauth_token
         return env
+
+    def _session_basse(self, workspace: Path) -> low_session.LowSession | None:
+        """Ce que reçoit une session à l'intégrité basse — None quand elle n'en est pas une.
+
+        Une étiquette que le système refuse lève `LowIntegrityError` : la session
+        échoue avec sa cause plutôt que de tourner au niveau de la personne.
+
+        Les variables que les `.env` de Maestro déclarent sont retenues, sauf celles
+        de l'espace du fournisseur (`ESPACE_DU_CLI`) : c'est par elles que le CLI joint
+        le modèle.
+        """
+        if not self._integrite_basse:
+            return None
+        retenues = {
+            nom
+            for nom in low_session.maestro_variables()
+            if not nom.upper().startswith(ESPACE_DU_CLI)
+        }
+        session = low_session.prepare(
+            workspace,
+            cli_folder=self._dossier_cli,
+            closed=low_session.maestro_secrets(),
+            withheld=retenues,
+        )
+        if session.bash is not None:
+            # Le Git Bash que le CLI lance : la copie, seule à démarrer abaissée.
+            session.env["CLAUDE_CODE_GIT_BASH_PATH"] = str(session.bash)
+        return session
 
     async def generate(
         self,
@@ -945,7 +1005,11 @@ class ClaudeProvider(ModelProvider):
         else:
             # Hors du conteneur jetable, plus rien n'emporte ce que la session
             # lance en arrière-plan : le lanceur du confinement s'en charge (#1279).
-            confinement = SessionConfinee.preparer(_commande_du_cli())
+            # À l'intégrité basse (#1515), il fait naître le CLI abaissé, et ce que
+            # l'agent écrit reçoit d'abord son étiquette.
+            confinement = SessionConfinee.preparer(
+                _commande_du_cli(), basse=self._session_basse(workspace)
+            )
             cli_path = confinement.lanceur
             env |= confinement.env
         # La frontière d'écriture du régime en place (#839) : armée si et

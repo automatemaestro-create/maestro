@@ -84,6 +84,21 @@ from maestro.sandbox import verification as execution
 #: Le titre de la section, dans le message de la tâche.
 TITRE_MACHINE = "## La machine"
 
+#: Ce que le poste borne quand les commandes de l'agent tournent à l'intégrité basse
+#: (#1515, docs/17 §7) — et ce qu'il ne borne pas, nommé plutôt que découvert. La
+#: portée garde l'arbitrage : un acte qu'elle renvoie à une personne y revient, que le
+#: poste l'eût refusé ou non.
+LIGNE_INTEGRITE_BASSE = (
+    "- **Ce que le poste borne** : tes commandes tournent à l'intégrité basse de Windows. "
+    "Elles écrivent dans ton espace de travail, son dépôt Git et ton établi, et nulle part "
+    "ailleurs : le profil de la personne, ses autres dossiers et le registre leur sont "
+    "refusés. Elles ne voient ni n'arrêtent aucun processus de la personne ni de Maestro — "
+    "`taskkill //IM` ne les trouve pas —, seulement ce que ta tâche a lancé. Ce qui n'est "
+    "pas borné : tu lis ce que la personne lit, hors ce qui est à Maestro ; tu joins ce qui "
+    "écoute sur la machine, `127.0.0.1` compris ; et un autre agent du poste écrit là où "
+    "tu écris."
+)
+
 #: Ce qu'un programme est sur le poste, tel que le constat le dit.
 PRESENT = "present"
 ABSENT = "absent"
@@ -156,7 +171,7 @@ class Machine:
     windows: bool = False
     processus_maestro: str = ""
 
-    def consigne(self, *, port_d_essai: int | None = None) -> str:
+    def consigne(self, *, port_d_essai: int | None = None, integrite_basse: bool = False) -> str:
         """La section « La machine » du message de la tâche.
 
         Toujours rendue : le système et le temporaire sont toujours connus. Les
@@ -168,6 +183,12 @@ class Machine:
         tâche, il ne fait pas partie du constat du run, et sa ligne vient en dernier.
         Une ressource donnée, pas une borne : la ligne dit ce qu'il garantit, et ce
         qu'un autre port ne garantit pas. None : aucune ligne, la section d'avant.
+
+        `integrite_basse` (#1515) : les commandes de l'agent tournent à l'intégrité
+        basse (`maestro.sandbox.low_session`). Le temporaire est alors son établi,
+        propre à la session — son chemin n'est pas celui que Maestro a constaté —, et
+        une ligne dit ce que le poste borne et ce qu'il ne borne pas : l'agent n'a
+        pas à découvrir un refus pour apprendre où il peut écrire.
         """
         lignes = [
             TITRE_MACHINE,
@@ -178,7 +199,7 @@ class Machine:
             "",
             f"- **Système** : {self.systeme}",
             f"- **Shell** : {self._shell()}",
-            f"- **Répertoire temporaire** : {self._temporaire()}",
+            f"- **Répertoire temporaire** : {self._temporaire(integrite_basse)}",
         ]
         if self.programmes:
             lignes += [
@@ -187,6 +208,8 @@ class Machine:
             ]
         if self.processus_maestro:
             lignes.append(self._maestro())
+        if integrite_basse:
+            lignes.append(LIGNE_INTEGRITE_BASSE)
         if port_d_essai is not None:
             lignes.append(
                 f"- **Ton port d'essai** : `{port_d_essai}`. Maestro le réserve à ta tâche "
@@ -225,7 +248,12 @@ class Machine:
             "revient à une personne."
         )
 
-    def _temporaire(self) -> str:
+    def _temporaire(self, integrite_basse: bool = False) -> str:
+        if integrite_basse:
+            return (
+                "ton établi, que bash appelle `/tmp` : un dossier à toi seul, qui part avec "
+                "ta tâche — ce qui doit rester va dans ton espace de travail"
+            )
         if self.windows:
             return f"`{self.temporaire}`, que bash appelle `/tmp`"
         return f"`{self.temporaire}`"
