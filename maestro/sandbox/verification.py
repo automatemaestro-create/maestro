@@ -115,6 +115,31 @@ qui jouerait la commande dans une autre machine. Sans bash, rien n'est joué, et
 verdict le dit (`None`) : une commande qu'on n'a pas pu jouer n'est pas une
 commande qui a échoué.
 
+## Ce qu'elle écrirait hors de sa copie est borné par le poste (#1691)
+
+La copie protège la racine, pas le poste. Une commande d'outillage lance des scripts
+que la portée ne lit pas : le `setup.sh` de Maestro pose une fonction dans le profil
+PowerShell de la personne, dont Windows résout le chemin sans lire `HOME`. Ce qui borne
+une telle écriture est le poste, et Maestro y a déjà la borne de ses agents (#1515,
+docs/17 §7). Une commande de vérification joue sous **la borne des agents du poste**
+(`borne_du_poste`) :
+
+- là où ils tournent à l'intégrité basse, et sous Windows en conteneur (la
+  vérification joue sur le poste, et c'est la borne qu'il a), elle naît abaissée dans
+  son arbre, sous l'établi d'une session de #1515 (`abaissement`). Sa copie reçoit
+  l'étiquette basse. `TEMP` et `APPDATA` mènent à l'établi, et son bash est celui de
+  la copie de Git. Ni l'espace de noms de Maestro ni ce que ses `.env` déclarent ne lui
+  parviennent. Le profil, le dossier personnel et `HKCU` lui sont refusés ;
+- là où ils tournent au niveau de la personne (`hote`, le défaut hors de Windows), elle
+  y joue aussi : Maestro ne fait pas seul ce qu'un agent n'aurait pas eu le droit de
+  faire seul, et il n'en fait pas moins ;
+- là où ils sont bornés et que le poste ne l'est pas (le conteneur hors de Windows),
+  elle n'est **pas jouée** (`BorneIndisponible`). Une borne que le système refuse non
+  plus : une commande ne joue jamais au niveau de la personne en se croyant bornée.
+
+Ce que la borne ne couvre pas, comme pour un agent : la lecture (hors ce que #1515
+ferme), ce qui porte une étiquette basse, et le réseau.
+
 ## Arrêter à temps, et arrêter tout
 
 Une commande a un délai ; au-delà, elle est arrêtée **avec sa descendance** — la
@@ -233,6 +258,7 @@ from typing import IO
 
 from maestro.emplacements import jetable, racine_jetable
 from maestro.fichiers import retirer_arbre
+from maestro.sandbox import low_integrity, low_session
 from maestro.sandbox.arbre import Arbre
 from maestro.sandbox.ports import ESSAIS_PORT, port_libre, tirages
 
@@ -1165,6 +1191,99 @@ def interprete() -> tuple[str, ...] | None:
     return (trouve, "-c") if trouve else None
 
 
+#: La vérification joue à l'intégrité basse (#1691) : ce qu'elle écrirait hors de sa copie
+#: et de son établi est refusé par le poste.
+BORNE_INTEGRITE_BASSE = "integrite-basse"
+
+#: La vérification joue au niveau de la personne, comme les agents du poste (`hote`).
+BORNE_HOTE = "hote"
+
+
+class BorneIndisponible(Exception):
+    """Le poste ne borne pas ce qu'une commande de vérification écrirait hors de sa copie (#1691).
+
+    Le message dit pourquoi, sans aucun chemin qui changerait d'un passage à l'autre : il
+    entre dans la raison d'un verdict, donc dans le texte d'`AGENTS.md`.
+    """
+
+
+def borne_du_poste() -> str:
+    """La borne sous laquelle Maestro joue une commande de vérification sur ce poste (#1691).
+
+    Celle des agents du poste (`maestro.sandbox.container.mode_isolation`), relue à
+    chaque appel comme l'interpréteur : `BORNE_INTEGRITE_BASSE` là où le poste abaisse
+    (l'intégrité basse, et le conteneur sous Windows), `BORNE_HOTE` là où les agents
+    tournent au niveau de la personne. Lève `BorneIndisponible` quand les agents sont
+    bornés et que le poste ne peut pas borner la vérification (le conteneur hors de
+    Windows), ou quand le réglage ne se lit pas.
+    """
+    # Importés ici : le module des conteneurs tire les projets, que la vérification n'a pas
+    # à charger pour jouer une commande.
+    from maestro.config import ConfigError, load_settings
+    from maestro.sandbox.container import MODE_HOTE, mode_isolation
+
+    try:
+        mode = mode_isolation(load_settings())
+    except ConfigError as exc:
+        raise BorneIndisponible(str(exc)) from exc
+    if mode == MODE_HOTE:
+        return BORNE_HOTE
+    if low_integrity.available():
+        return BORNE_INTEGRITE_BASSE
+    raise BorneIndisponible(
+        "les agents de ce poste tournent dans un conteneur, et la vérification, qui joue sur "
+        "le poste, n'y aurait aucune borne"
+    )
+
+
+@dataclass(frozen=True)
+class Abaissement:
+    """Ce qu'une commande de vérification reçoit pour jouer à l'intégrité basse (#1691).
+
+    `session` est l'établi d'une session de #1515 (`maestro.sandbox.low_session`) : ses
+    variables, et les noms qu'il retient. `interprete` est le bash de la copie de Git,
+    le seul qui démarre abaissé : celui d'origine meurt (docs/17 §7).
+    """
+
+    interprete: tuple[str, ...]
+    session: low_session.LowSession
+
+
+@contextmanager
+def abaissement(copie: Path) -> Iterator[Abaissement]:
+    """L'intégrité basse autour de `copie`, le temps du bloc (#1691).
+
+    La copie reçoit l'étiquette basse, ce que Maestro ferme à la lecture est fermé
+    (`low_session.maestro_secrets`), et l'établi naît. Il est retiré en sortie, quoi
+    qu'il arrive, avec ce que les commandes y ont laissé. Lève `BorneIndisponible` si le
+    système refuse une étape, ou si le poste n'a pas de Git for Windows à copier.
+    """
+    try:
+        session = low_session.prepare(
+            copie,
+            closed=low_session.maestro_secrets(),
+            withheld=low_session.maestro_variables(),
+        )
+    except OSError as exc:
+        raise BorneIndisponible(_refus(exc)) from exc
+    try:
+        if session.bash is None:
+            raise BorneIndisponible(
+                "Git for Windows est introuvable sur ce poste, et seul le bash de sa copie "
+                "démarre à l'intégrité basse"
+            )
+        yield Abaissement((str(session.bash), "-c"), session)
+    finally:
+        session.close()
+
+
+def _refus(exc: OSError) -> str:
+    """Le refus du système, dit sans chemin : un code ne change pas d'un passage à l'autre."""
+    code = getattr(exc, "winerror", None) or exc.errno
+    suffixe = f" (erreur {code})" if code else ""
+    return f"le système a refusé de préparer l'intégrité basse{suffixe}"
+
+
 def jouer(
     commande: str,
     cwd: Path,
@@ -1173,6 +1292,7 @@ def jouer(
     delai_s: float,
     caracteres_sortie: int = CARACTERES_SORTIE,
     environnement: Mapping[str, str] | None = None,
+    abaissement: Abaissement | None = None,
 ) -> Execution:
     """Joue `commande` dans `cwd` par `interprete`, et l'arrête au bout de `delai_s`.
 
@@ -1182,11 +1302,20 @@ def jouer(
     verdict est pris sur **la fin du processus**, pas sur celle de sa sortie ; puis
     tout l'arbre est arrêté — au délai, ou parce que la commande a laissé derrière
     elle un démon qui tient la sortie (voir l'en-tête).
-    Lève `OSError` si l'interpréteur ne se lance pas — c'est à l'appelant d'en faire
-    un verdict.
+
+    `abaissement` (#1691) fait naître l'arbre à l'intégrité basse, sous l'établi qu'il
+    porte. `interprete` est alors le sien (`Abaissement.interprete`).
+
+    Lève `OSError` si l'interpréteur ne se lance pas, abaissé ou non : c'est à
+    l'appelant d'en faire un verdict.
     """
     debut = time.monotonic()
-    arbre = Arbre.lancer([*interprete, commande], cwd=cwd, env=_environnement(environnement))
+    arbre = Arbre.lancer(
+        [*interprete, commande],
+        cwd=cwd,
+        env=_environnement(environnement, abaissement),
+        integrite_basse=abaissement is not None,
+    )
     tampon = bytearray()
     assert arbre.process.stdout is not None
     lecteur = threading.Thread(
@@ -1329,9 +1458,19 @@ def _arreter(arbre: Arbre) -> None:
     arbre.survivants(membres, delai_s=_DELAI_VIDANGE_S)
 
 
-def _environnement(ajoute: Mapping[str, str] | None) -> dict[str, str]:
-    """L'environnement d'une commande jouée : celui du process, `ENVIRONNEMENT_AJOUTE`, `ajoute`."""
-    return {**os.environ, **ENVIRONNEMENT_AJOUTE, **(ajoute or {})}
+def _environnement(
+    ajoute: Mapping[str, str] | None, abaissement: Abaissement | None = None
+) -> dict[str, str]:
+    """L'environnement d'une commande jouée : celui du process, `ENVIRONNEMENT_AJOUTE`, `ajoute`.
+
+    Abaissée (#1691), elle ne reçoit ni l'espace de noms de Maestro ni ce que ses `.env`
+    déclarent, et les variables de son établi passent devant (`TEMP`, `APPDATA`, `PATH`).
+    """
+    base: Mapping[str, str] = os.environ
+    if abaissement is not None:
+        session = abaissement.session
+        base = {**low_session.withhold(os.environ, session.withheld), **session.env}
+    return {**base, **ENVIRONNEMENT_AJOUTE, **(ajoute or {})}
 
 
 def _texte(tampon: bytearray) -> str:

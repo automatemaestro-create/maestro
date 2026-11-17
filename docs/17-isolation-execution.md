@@ -356,8 +356,33 @@ toutes celles que ces fichiers déclarent (un jeton de forge, un jeton Slack, la
 Seul l'espace du fournisseur (`ANTHROPIC_*`, `CLAUDE_*`) passe, parce que c'est par lui que le CLI
 joint le modèle.
 
-**Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py`, sous Windows, marqueur
-`integrite_basse`) :
+**La vérification de l'outillage joue sous la même borne** (#1691). Maestro joue lui-même les
+commandes qu'un outillage écrit, avant de les écrire, dans une copie du projet ou un clone neuf de sa
+branche ([docs/38 §4.1](./38-decision-outillage-universel-du-projet.md)). La copie protège la racine,
+pas le poste : le `setup.sh` de Maestro pose une fonction dans le profil PowerShell, dont Windows
+résout le chemin sans lire `HOME`. Chaque commande joue donc sous la borne des agents du poste
+(`maestro.sandbox.verification.borne_du_poste`) :
+
+| Régime des agents | La vérification |
+|---|---|
+| `integrite-basse` | Abaissée, sous l'établi d'une session (la copie étiquetée basse, la copie de Git, `TEMP` et `APPDATA` redirigés, l'espace de noms de Maestro et ce que ses `.env` déclarent retenus) |
+| `conteneur`, sous Windows | Abaissée de même : elle joue sur le poste, et c'est la borne que le poste a |
+| `conteneur`, ailleurs | Pas jouée, et sa raison le dit : rien ne joue plus large que les agents |
+| `hote` | Au niveau de la personne, comme ses agents |
+
+Une borne que le système refuse (une étiquette, l'absence de Git for Windows) rend la commande
+« à vérifier » avec sa raison. Elle n'est jamais rejouée au niveau de la personne. Ce que la borne ne
+couvre pas est ce qu'elle ne couvre pas pour un agent, listé ci-dessous.
+
+Sur le dépôt de Maestro, cloné à part puis vérifié sur le poste de référence (2026-11-17), l'étape
+`shell` de `setup.sh` voit son écriture du profil refusée, et le profil garde son empreinte. Mais
+la commande ne rend pas la main dans ses 300 s, et reste « à vérifier ». L'établi naît vide (un
+cache par session, ci-dessous) : Node, puis `pip install` de toutes les dépendances, se
+téléchargent avant même `npm ci`. Et `npm ci` de `apps/web` échoue de lui-même en une minute, parce
+que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash du Git d'origine.
+
+**Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
+`tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
 - `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
   l'agent ne le trouve pas, et le témoin vit ;
 - la commande de #1502 (`taskkill //IM python.exe //F`), lancée directement ou par un script :
@@ -366,7 +391,11 @@ joint le modèle.
 - écrire dans l'espace, l'établi et le dossier du CLI réussit ; écrire à côté échoue, et lire un
   fichier fermé échoue aussi ;
 - le lanceur abaisse le CLI et lui retire les variables `MAESTRO_*` et celles qu'il doit retenir.
-  Le reste de l'environnement passe.
+  Le reste de l'environnement passe ;
+- une commande de vérification dont le script ajoute une ligne à un profil hors de la copie est
+  jouée et échoue sur l'écriture refusée, dans une copie comme dans un clone neuf. Le profil garde
+  son contenu et sa date, sans restauration. La commande voisine, qui n'écrit que dans sa copie et
+  son établi, est vérifiée ; elle ne reçoit ni `MAESTRO_*` ni ce qui est retenu.
 
 **Ce que l'isolation ne couvre pas.** L'agent en est informé sous « La machine »
 (`maestro.machine.LIGNE_INTEGRITE_BASSE`), et voici la liste :
@@ -383,9 +412,13 @@ joint le modèle.
   clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
 - **un cache par session** : ce qu'un outil range dans le profil (le cache de `npx`, par
   exemple) part avec l'établi, et se retélécharge à la session suivante ;
-- **les vérifications** que Maestro joue lui-même (`maestro/sandbox/verification.py`) : elles
-  tournent au niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la
-  portée ne juge pas ;
+- **un outil que la personne a réglé sur le Git d'origine** : la copie de Git passe en tête du
+  `PATH`, mais un chemin écrit en toutes lettres dans un réglage mène au Git d'origine, dont le
+  runtime meurt à l'intégrité basse (`0xC0000022`). C'est le cas du `script-shell` de npm réglé
+  sur `C:\Program Files\Git\bin\bash.exe` : tout script `postinstall` meurt, et `npm ci` échoue ;
+- **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
+  niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
+  pas ;
 - **les autres systèmes** : ailleurs que sous Windows, rien n'est abaissé. Le défaut y est `hote`,
   et le conteneur reste l'option qui isole.
 
