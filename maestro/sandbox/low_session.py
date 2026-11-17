@@ -26,6 +26,14 @@ path it creates its own. The whole installation is copied, `mingw64` included, s
 that the `git` the agent runs, and the `sh` its hooks run, are the copy's. The copy
 carries no label: the agent cannot change its own tools.
 
+**The agent's runtimes keep their named objects apart** (#1708). A path written in
+full in a setting (the `script-shell` of npm, an editor, an ssh command) bypasses the
+`PATH` and leads to the original installation. The environment therefore carries the
+variable the Cygwin runtime reads (`RUNTIME_APART`), so that every runtime the agent
+starts, whatever path led to it, opens a directory of named objects of its own and never
+the person's. No tool and no setting is recognised: what is acted on is the runtime
+that would die.
+
 **Closed to the agent's reading** (`refuse_read_up`): what belongs to Maestro and
 would let an agent act as Maestro — the API token, the secrets vault, the `.env`
 files Maestro loads. Their values are in Maestro's environment too, so the names
@@ -61,6 +69,13 @@ GIT_COPY_PREFIX = "git-"
 _BASH = Path("bin") / "bash.exe"
 _RUNTIME = Path("usr") / "bin" / "msys-2.0.dll"
 _GIT = Path("mingw64") / "bin" / "git.exe"
+
+#: The variable the Cygwin runtime (MSYS2's, hence Git for Windows') reads to keep the
+#: named objects of a process apart from its installation's, under a directory suffixed
+#: by the runtime's build date (`get_shared_parent_dir` in its `shared.cc`). A low process
+#: may not create objects in the directory the person's processes opened: with it, a
+#: runtime the agent reaches by any path lives in a directory of its own (#1708).
+RUNTIME_APART = "CYGWIN_TESTING"
 
 #: How long Git may take to name a workspace's Git directory.
 _GIT_TIMEOUT_S = 15.0
@@ -143,6 +158,7 @@ def prepare(
             "TMPDIR": str(temporary),
             "APPDATA": str(roaming),
             "LOCALAPPDATA": str(local),
+            RUNTIME_APART: "1",
         }
         copy = git_copy()
         bash: Path | None = None
@@ -321,6 +337,7 @@ def maestro_variables(files: Iterable[Path] | None = None) -> frozenset[str]:
 __all__ = [
     "GIT_COPY_PREFIX",
     "MAESTRO_PREFIX",
+    "RUNTIME_APART",
     "WORKBENCH_PREFIX",
     "LowSession",
     "git_copy",

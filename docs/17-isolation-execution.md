@@ -348,6 +348,20 @@ mourrait dès qu'un hook appelle `sh`. La copie ne porte aucune étiquette, si b
 peut pas modifier ses propres outils. La copie d'une version antérieure est retirée dès qu'aucun
 processus ne la tient plus.
 
+**Un chemin écrit en toutes lettres mène aussi à un runtime qui vit** (#1708). Un réglage de la
+personne peut nommer le Git d'origine sans passer par le `PATH` : le `script-shell` de npm réglé
+sur `C:\Program Files\Git\bin\bash.exe`, un éditeur, une commande ssh. L'environnement de l'agent
+porte donc la variable `CYGWIN_TESTING` (`low_session.RUNTIME_APART`). Le runtime Cygwin, celui
+de MSYS2 et de Git for Windows, la lit : il range alors ses objets nommés dans un répertoire à
+part, suffixé par sa date de construction. Quel que soit le chemin qui y mène, un runtime que
+l'agent fait naître ne crée donc ni ne rejoint jamais le répertoire de la personne. Maestro ne
+reconnaît ni l'outil, ni le réglage, ni l'endroit où ce réglage vit. Un MSYS2 que la copie ne
+couvre pas en profite aussi.
+
+Le runtime destine cette variable à ses propres tests, et sa documentation ne la décrit pas. Sa
+seule autre conséquence est de tolérer qu'un parent porte une autre version du runtime. Si une
+version future la retirait, les tests réels ci-dessous échoueraient sur le poste.
+
 **Ce que Maestro ferme à la lecture.** Une étiquette moyenne « pas de lecture vers le haut »
 (`NO_READ_UP`) rend illisible à l'agent ce qui lui permettrait d'agir en Maestro :
 - le jeton de l'API ;
@@ -385,8 +399,7 @@ Sur le dépôt de Maestro, cloné à part puis vérifié sur le poste de référ
 `shell` de `setup.sh` voit son écriture du profil refusée, et le profil garde son empreinte. Mais
 la commande ne rend pas la main dans ses 300 s, et reste « à vérifier ». L'établi naît vide (un
 cache par session, ci-dessous) : Node, puis `pip install` de toutes les dépendances, se
-téléchargent avant même `npm ci`. Et `npm ci` de `apps/web` échoue de lui-même en une minute, parce
-que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash du Git d'origine.
+téléchargent avant même `npm ci`.
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
@@ -397,6 +410,9 @@ que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash 
   sur le même poste : l'enfant tourne bien à l'intégrité basse, et le témoin a survécu ;
 - écrire dans l'espace, l'établi et le dossier du CLI réussit ; écrire à côté échoue, et lire un
   fichier fermé échoue aussi ;
+- un runtime du Git d'origine tourne au niveau de la personne, et l'agent lance le bash de ce Git
+  par son chemin complet : le bash répond. Un `npm install` dont le `script-shell` est réglé sur ce
+  bash joue son `postinstall` ;
 - le lanceur abaisse le CLI et lui retire les variables `MAESTRO_*` et celles qu'il doit retenir.
   Le reste passe au filtre des variables nommées (§8) ;
 - une commande de vérification dont le script ajoute une ligne à un profil hors de la copie est
@@ -419,10 +435,6 @@ que le `script-shell` que la personne a réglé dans son `~/.npmrc` est le bash 
   lit. Une clé du fournisseur passée au CLI lui est lisible, comme dans le conteneur ;
 - **un cache par session** : ce qu'un outil range dans le profil (le cache de `npx`, par
   exemple) part avec l'établi, et se retélécharge à la session suivante ;
-- **un outil que la personne a réglé sur le Git d'origine** : la copie de Git passe en tête du
-  `PATH`, mais un chemin écrit en toutes lettres dans un réglage mène au Git d'origine, dont le
-  runtime meurt à l'intégrité basse (`0xC0000022`). C'est le cas du `script-shell` de npm réglé
-  sur `C:\Program Files\Git\bin\bash.exe` : tout script `postinstall` meurt, et `npm ci` échoue ;
 - **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
   niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
   pas ;
