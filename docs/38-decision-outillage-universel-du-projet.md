@@ -439,9 +439,15 @@ comme `bash scripts/ci/local.sh` et son diff avec `origin/main`, y trouve son d�
 la copie de travail clonée. Le clone n'a aucune dépendance : la commande d'installation que l'outillage
 écrit s'y joue d'abord, même quand une seule autre commande est jouée (le skill de tests, une correction
 essayée). Un clone impossible ne retombe jamais sur la copie, où cette commande ne trouverait aucun
-dépôt : rien n'est joué, et le verdict le dit. Un projet non versionné garde sa copie. ⚠ Ce que
-l'installation écrit hors du clone (le profil, le dossier personnel) n'y est pas encore borné. C'est
-#1691, qui attend l'intégrité basse de #1515. Elle ne garde que les
+dépôt : rien n'est joué, et le verdict le dit. Un projet non versionné garde sa copie. Ce que
+l'installation écrirait **hors de la copie** (le profil, le dossier personnel, `HKCU`) est borné par
+le poste (#1691) : chaque commande joue sous la borne des agents du poste. Là où ils tournent à
+l'intégrité basse (le défaut sous Windows, [docs/17 §7](./17-isolation-execution.md)), elle y joue
+aussi, et l'écriture lui est refusée : vérifier le `setup.sh` de Maestro laisse le profil PowerShell
+de la personne intact. Son verdict, lui, dépend de ce que l'établi, qui naît vide, laisse le temps de
+télécharger dans le délai (docs/17 §7). Là où les agents sont bornés et que le poste ne peut pas
+borner la vérification (un conteneur hors de Windows), elle n'est pas jouée, et sa raison le dit. Là
+où ils tournent au niveau de la personne (`hote`), elle y joue aussi. `verifications` ne garde que les
 commandes que l'outillage **écrit encore** (#1381) : une commande remplacée — corrigée par la personne,
 proposée par Maestro après un run — garde son verdict tant qu'un fichier de Maestro la porte, et le
 perd quand plus aucun ne l'écrit. Vu sur S9 : le verdict « à vérifier » d'une commande remplacée y

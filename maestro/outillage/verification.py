@@ -46,7 +46,13 @@ docs/38 §4.1) et dans le **rapport** montré à la personne, commande par comma
 - **sous des délais** (`Delais`) : par commande, pour l'ensemble, et une fenêtre
   d'observation pour un démarrage. Ce sont des garde-fous — une vérification ne
   doit pas tenir la génération une heure —, pas des verdicts : un délai atteint
-  rend `a-verifier`, jamais `echouee`.
+  rend `a-verifier`, jamais `echouee` ;
+- **sous la borne des agents du poste** (#1691, `maestro.sandbox.verification`, qui
+  en donne les cas) : la copie protège la racine, pas le profil de la personne, où un
+  script d'installation écrit sans que son texte le dise. Là où les agents tournent à
+  l'intégrité basse, chaque commande y joue aussi, et ce qu'elle écrirait hors de sa
+  copie est refusé par le poste. Là où ils sont bornés et que le poste ne peut pas
+  borner la vérification, rien n'est joué, et la raison le dit.
 
 ⚠ **L'analyse n'exécute toujours rien** (docs/38, promesse n° 2 de #1030) : ce
 module n'est appelé qu'à l'écriture (`maestro.outillage.ecriture`), après le geste
@@ -79,6 +85,7 @@ de dossier (`Verificateur.sonder`).
 
 from __future__ import annotations
 
+import functools
 import re
 import shlex
 import time
@@ -489,6 +496,11 @@ class Verificateur:
         `installation` d'abord, demandée ou non. Un clone impossible n'est jamais remplacé
         par la copie, où une commande qui lit l'historique ne trouverait aucun dépôt : rien
         n'est joué, et chaque verdict le dit.
+
+        Tout ce qui se joue dans la copie, sondes comprises, joue sous **la borne du
+        poste** (`execution.borne_du_poste`, #1691) : à l'intégrité basse là où les agents
+        y tournent. Une borne que le poste ne tient pas n'est jamais remplacée par le
+        niveau de la personne : rien n'est joué, et chaque verdict le dit.
         """
         joueur = self.joueur if self.joueur is not None else execution.jouer
         verdicts: dict[str, Verification] = {}
@@ -510,7 +522,12 @@ class Verificateur:
             else:
                 prealable = installation
         try:
-            with _espace_de_jeu(racine, perimetre, versionne=versionne) as copie:
+            # La borne se lit avant la copie : sans elle, rien ne se copie pour rien.
+            borne = execution.borne_du_poste()
+            with (
+                _espace_de_jeu(racine, perimetre, versionne=versionne) as copie,
+                _sous_la_borne(copie, borne, joueur, interprete) as (joueur, interprete),
+            ):
                 portee = PorteeProjet(racine=copie)
                 debut = time.monotonic()
                 if prealable is not None:
@@ -526,12 +543,12 @@ class Verificateur:
                         verdicts[commande.commande] = self._une(
                             commande, copie, portee, joueur, interprete, debut
                         )
-        except execution.CopieImpossible as exc:
-            raison = f"la copie de vérification n'a pas pu être faite — {exc}"
-            for commande, pas_encore in commandes:
-                verdicts.setdefault(commande.commande, _a_verifier(commande, pas_encore or raison))
-        except execution.CloneImpossible as exc:
-            raison = f"le clone neuf de vérification n'a pas pu être fait — {exc}"
+        except (
+            execution.CopieImpossible,
+            execution.CloneImpossible,
+            execution.BorneIndisponible,
+        ) as exc:
+            raison = _sans_espace_de_jeu(exc)
             for commande, pas_encore in commandes:
                 verdicts.setdefault(commande.commande, _a_verifier(commande, pas_encore or raison))
         return verdicts
@@ -640,6 +657,39 @@ def _espace_de_jeu(racine: Path, perimetre: Perimetre, *, versionne: bool) -> It
         racine, exclus=motifs_compiles(perimetre.exclus), hors=(DOSSIER_ATELIER,)
     ) as copie:
         yield copie
+
+
+def _sans_espace_de_jeu(exc: Exception) -> str:
+    """Pourquoi rien n'a été joué : pas de copie, pas de clone, ou pas de borne (#1691).
+
+    Neutre en nombre, comme toutes les raisons : l'écran dit une fois celle que plusieurs
+    commandes partagent.
+    """
+    if isinstance(exc, execution.CopieImpossible):
+        return f"la copie de vérification n'a pas pu être faite — {exc}"
+    if isinstance(exc, execution.CloneImpossible):
+        return f"le clone neuf de vérification n'a pas pu être fait — {exc}"
+    return (
+        "pas jouée — le poste ne borne pas ce qu'une commande écrirait hors de la copie de "
+        f"vérification : {exc}"
+    )
+
+
+@contextmanager
+def _sous_la_borne(
+    copie: Path, borne: str, joueur: Joueur, interprete: tuple[str, ...]
+) -> Iterator[tuple[Joueur, tuple[str, ...]]]:
+    """Le joueur et l'interpréteur des commandes jouées dans `copie`, sous `borne` (#1691).
+
+    À l'intégrité basse, chaque commande reçoit l'abaissement de la copie et le bash qui
+    démarre abaissé ; ailleurs, rien ne change. L'abaissement se prépare une fois pour
+    toute la vérification, et part avec elle.
+    """
+    if borne != execution.BORNE_INTEGRITE_BASSE:
+        yield joueur, interprete
+        return
+    with execution.abaissement(copie) as abaisse:
+        yield functools.partial(joueur, abaissement=abaisse), abaisse.interprete
 
 
 def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -> bool:

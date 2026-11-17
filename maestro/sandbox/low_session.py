@@ -65,6 +65,10 @@ _GIT = Path("mingw64") / "bin" / "git.exe"
 #: How long Git may take to name a workspace's Git directory.
 _GIT_TIMEOUT_S = 15.0
 
+#: Maestro's namespace, withheld from a lowered process: the API token, the vault key,
+#: the settings. What remains is the person's environment.
+MAESTRO_PREFIX = "MAESTRO_"
+
 
 @dataclass
 class LowSession:
@@ -80,6 +84,21 @@ class LowSession:
     def close(self) -> None:
         """Removes the workbench — what the agent left there leaves with the session."""
         retirer_arbre(self.workbench)
+
+
+def withhold(environ: Mapping[str, str], withheld: Iterable[str] = ()) -> dict[str, str]:
+    """`environ` without Maestro's namespace and without the `withheld` names.
+
+    Case is ignored, as Windows ignores it. This is what a lowered process inherits
+    of the environment it starts from: closing Maestro's files to its reading would
+    close nothing if their values reached it through the environment.
+    """
+    names = {name.upper() for name in withheld}
+    return {
+        name: value
+        for name, value in environ.items()
+        if not name.upper().startswith(MAESTRO_PREFIX) and name.upper() not in names
+    }
 
 
 def prepare(
@@ -301,6 +320,7 @@ def maestro_variables(files: Iterable[Path] | None = None) -> frozenset[str]:
 
 __all__ = [
     "GIT_COPY_PREFIX",
+    "MAESTRO_PREFIX",
     "WORKBENCH_PREFIX",
     "LowSession",
     "git_copy",
@@ -310,4 +330,5 @@ __all__ = [
     "maestro_secrets",
     "maestro_variables",
     "prepare",
+    "withhold",
 ]
