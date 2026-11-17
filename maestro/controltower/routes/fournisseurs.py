@@ -1,6 +1,7 @@
 """Les routes des fournisseurs de modèle : leur catalogue et le fournisseur par défaut.
 
-Le fournisseur par défaut se lit, s'éprouve, s'enregistre et s'efface, ses clés comprises."""
+Le fournisseur par défaut se lit, s'éprouve, s'enregistre et s'efface, ses clés comprises. Un accès
+qui sait ouvrir sa connexion la fait ouvrir par l'API, et l'écran en suit l'issue (#1704)."""
 
 from __future__ import annotations
 
@@ -10,8 +11,9 @@ from fastapi import APIRouter, HTTPException
 
 from maestro.controltower.fournisseur_defaut import ChoixRefuse, EpreuveEchouee
 from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
+from maestro.controltower.provider_login import LoginRefused
 from maestro.controltower.routes.contexte import Ctx
-from maestro.controltower.routes.requetes import FournisseurDefautRequete
+from maestro.controltower.routes.requetes import ConnexionRequete, FournisseurDefautRequete
 
 router = APIRouter()
 
@@ -121,3 +123,43 @@ async def retirer_cle_fournisseur(ctx: Ctx, variable: str) -> dict[str, Any]:
         return fournisseur_defaut.retirer_cle(variable)
     except ChoixRefuse as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+
+@router.post("/api/fournisseurs/login")
+async def ouvrir_connexion(ctx: Ctx, corps: ConnexionRequete) -> dict[str, Any]:
+    """Ouvre la connexion d'un accès, celle qu'un verdict `authentification` appelle (#1704).
+
+    L'API lance la connexion que l'accès déclare (`ouvrir_connexion`), ouvre la
+    page d'autorisation dans le navigateur du poste et répond dès qu'elle est
+    ouverte : `login.state` vaut `pending`, et `login.url` est cette page, que
+    l'écran rouvre au besoin. Une connexion encore en attente est annulée : il
+    n'y en a qu'une à la fois. 422 quand l'accès est inconnu ou n'a pas de
+    connexion à ouvrir.
+    """
+    connexion_fournisseur = ctx.connexion_fournisseur
+    try:
+        return await connexion_fournisseur.start(corps.fournisseur, corps.acces)
+    except LoginRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+
+@router.get("/api/fournisseurs/login")
+async def etat_connexion(ctx: Ctx) -> dict[str, Any]:
+    """Où en est la connexion ouverte (#1704) : `pending`, puis son issue.
+
+    `connected`, `failed` (avec `detail`, un fait typé : un code de sortie) ou
+    `cancelled`. `login` vaut null quand aucune connexion n'a été ouverte depuis
+    le démarrage de l'API.
+    """
+    connexion_fournisseur = ctx.connexion_fournisseur
+    return await connexion_fournisseur.state()
+
+
+
+@router.delete("/api/fournisseurs/login")
+async def annuler_connexion(ctx: Ctx) -> dict[str, Any]:
+    """Annule la connexion en attente (#1704) ; une connexion terminée garde son issue."""
+    connexion_fournisseur = ctx.connexion_fournisseur
+    return await connexion_fournisseur.cancel()

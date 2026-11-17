@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.config import Settings
     from maestro.detail_tache import EtapeTache
     from maestro.projets.modele import Projet
+    from maestro.providers.login import Login
     from maestro.sandbox.confinement import ReleveConfinement
 
 #: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
@@ -454,7 +455,10 @@ class AccesFournisseur:
     `cle_requise` est vrai quand l'accès ne marche pas sans clé. `connexion` rend
     la commande qu'une personne lance pour connecter cet accès sur ce poste, quand
     il en demande une. Elle est résolue quand l'accès est servi, parce qu'une
-    installation la pose hors du `PATH` (#1515).
+    installation la pose hors du `PATH` (#1515). `ouvrir_connexion` fabrique la
+    même connexion, que l'API ouvre elle-même pour l'écran (#1704,
+    `maestro.providers.login`) : servi, l'accès dit seulement qu'il la sait ouvrir
+    (`opens_login`).
     """
 
     id: str
@@ -466,6 +470,7 @@ class AccesFournisseur:
     adresse_defaut: str | None = None
     temoins: tuple[str, ...] = ()
     connexion: Callable[[], str] | None = None
+    ouvrir_connexion: Callable[[], Login] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """L'accès en dict JSON-sérialisable : des noms de variables, jamais une valeur secrète."""
@@ -478,6 +483,7 @@ class AccesFournisseur:
             "adresse_defaut": self.adresse_defaut,
             "temoins": list(self.temoins),
             "connexion": self.connexion() if self.connexion is not None else None,
+            "opens_login": self.ouvrir_connexion is not None,
         }
 
 

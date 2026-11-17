@@ -40,14 +40,17 @@
  * reconnaît à sa classe, `ErreurApi.injoignable`, jamais au texte du navigateur.
  */
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones";
+import { IconeAlerte, IconeCoche, IconeLienExterne, IconeStatutAFaire } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import { RefusMotive, refusDepuis } from "@/components/projets/ExplorateurDossiers";
 import {
+  annulerConnexion,
+  chargerConnexion,
   chargerFournisseurDefaut,
   chargerFournisseurs,
+  ouvrirConnexion,
   effacerFournisseurDefaut,
   enregistrerFournisseurDefaut,
   eprouverFournisseurDefaut,
@@ -66,6 +69,7 @@ import {
 } from "@/lib/fournisseurParDefaut";
 import type {
   CatalogueFournisseurs,
+  ConnexionAcces,
   ConstatPoste,
   DemandeFournisseurDefaut,
   Epreuve,
@@ -89,6 +93,8 @@ const EPREUVE_SANS_API =
   "L'API n'a pas répondu : l'épreuve n'a pas pu se faire. Vérifiez que maestro-api tourne, puis éprouvez de nouveau.";
 const ENREGISTREMENT_SANS_API =
   "L'API n'a pas répondu : rien n'a été enregistré. Vérifiez que maestro-api tourne, puis réessayez.";
+const CONNEXION_SANS_API =
+  "L'API n'a pas répondu : la connexion n'a pas pu s'ouvrir. Vérifiez que maestro-api tourne, puis réessayez.";
 const RETRAIT_SANS_API =
   "L'API n'a pas répondu : le choix enregistré reste en place. Vérifiez que maestro-api tourne, puis réessayez.";
 
@@ -126,6 +132,77 @@ export function FournisseurParDefaut({
   // elle cesse de valoir dès que la saisie change.
   const [epreuveSansApi, setEpreuveSansApi] = useState<string | null>(null);
   const [refusRetrait, setRefusRetrait] = useState<string | null>(null);
+  // La connexion d'un accès, ouverte par l'API (#1704), et la saisie qu'elle
+  // éprouvera d'office quand elle aboutit.
+  const [connexion, setConnexion] = useState<ConnexionAcces | null>(null);
+  const [actionConnexion, setActionConnexion] = useState<ActionConnexion | null>(null);
+  const [refusConnexion, setRefusConnexion] = useState<string | null>(null);
+  const aEprouverApresConnexion = useRef<{
+    demande: DemandeFournisseurDefaut;
+    empreinte: string;
+  } | null>(null);
+
+  const eprouverDemande = useCallback(
+    async (demande: DemandeFournisseurDefaut, empreinte: string) => {
+      setAction("epreuve");
+      setAnnonce(null);
+      setRefus(null);
+      setEpreuveSansApi(null);
+      try {
+        const resultat = await eprouverFournisseurDefaut(demande);
+        setVerdict({ empreinte, epreuve: resultat.epreuve, modele: resultat.modele });
+      } catch (e) {
+        if (sansReponse(e)) {
+          // L'épreuve n'a pas eu lieu : elle se dit à la place du verdict, et un
+          // verdict d'avant ne laisse pas « Enregistrer » ouvert sur une API muette.
+          setVerdict(null);
+          setEpreuveSansApi(empreinte);
+        } else {
+          setRefus(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        setAction(null);
+        // Un verdict neuf solde l'issue d'une connexion finie : seule une
+        // connexion qui attend encore la personne survit à l'épreuve.
+        setConnexion((avant) => (avant?.state === "pending" ? avant : null));
+      }
+    },
+    [],
+  );
+
+  // Une connexion en attente se suit sur l'API jusqu'à son issue. Une API qui ne
+  // sert plus de connexion (redémarrée) l'a perdue : c'est une annulation.
+  const enAttente = connexion?.state === "pending";
+  useEffect(() => {
+    if (!enAttente) return;
+    const minuterie = setInterval(() => {
+      void (async () => {
+        try {
+          const lue = await chargerConnexion();
+          setConnexion((avant) =>
+            lue ?? (avant === null ? null : { ...avant, state: "cancelled", url: null }),
+          );
+        } catch {
+          // Une lecture manquée se rattrape à la suivante.
+        }
+      })();
+    }, 1000);
+    return () => clearInterval(minuterie);
+  }, [enAttente]);
+
+  // Connectée : l'épreuve de la saisie se relance d'elle-même, sans « j'ai fini ».
+  const connectee = connexion?.state === "connected";
+  useEffect(() => {
+    if (!connectee) return;
+    // La saisie se prend au moment de partir : un effet rejoué (mode strict) ne
+    // perd pas l'épreuve qu'un premier passage aurait programmée puis annulée.
+    const tick = setTimeout(() => {
+      const suite = aEprouverApresConnexion.current;
+      aEprouverApresConnexion.current = null;
+      if (suite !== null) void eprouverDemande(suite.demande, suite.empreinte);
+    }, 0);
+    return () => clearTimeout(tick);
+  }, [connectee, eprouverDemande]);
 
   // Chargement différé d'un tick (même mécanique que la section) : l'effet
   // lui-même ne déclenche aucun setState synchrone.
@@ -248,24 +325,32 @@ export function FournisseurParDefaut({
 
   const eprouver = async () => {
     if (demande === null || empreinte === null) return;
-    setAction("epreuve");
-    setAnnonce(null);
-    setRefus(null);
-    setEpreuveSansApi(null);
+    await eprouverDemande(demande, empreinte);
+  };
+
+  const connecter = async () => {
+    if (choisie === null || demande === null || empreinte === null) return;
+    aEprouverApresConnexion.current = { demande, empreinte };
+    setActionConnexion("ouverture");
+    setRefusConnexion(null);
     try {
-      const resultat = await eprouverFournisseurDefaut(demande);
-      setVerdict({ empreinte, epreuve: resultat.epreuve, modele: resultat.modele });
+      setConnexion(await ouvrirConnexion(choisie.fournisseur.nom, choisie.acces.id));
     } catch (e) {
-      if (sansReponse(e)) {
-        // L'épreuve n'a pas eu lieu : elle se dit à la place du verdict, et un
-        // verdict d'avant ne laisse pas « Enregistrer » ouvert sur une API muette.
-        setVerdict(null);
-        setEpreuveSansApi(empreinte);
-      } else {
-        setRefus(e instanceof Error ? e.message : String(e));
-      }
+      setRefusConnexion(refusEnMots(e, CONNEXION_SANS_API));
     } finally {
-      setAction(null);
+      setActionConnexion(null);
+    }
+  };
+
+  const annulerLaConnexion = async () => {
+    setActionConnexion("annulation");
+    setRefusConnexion(null);
+    try {
+      setConnexion(await annulerConnexion());
+    } catch (e) {
+      setRefusConnexion(refusEnMots(e, CONNEXION_SANS_API));
+    } finally {
+      setActionConnexion(null);
     }
   };
 
@@ -357,6 +442,17 @@ export function FournisseurParDefaut({
           refus={refus}
           onEprouver={() => void eprouver()}
           onEnregistrer={() => void enregistrer()}
+          connexion={
+            connexion !== null &&
+            connexion.provider === option.fournisseur.nom &&
+            connexion.access === option.acces.id
+              ? connexion
+              : null
+          }
+          actionConnexion={actionConnexion}
+          refusConnexion={refusConnexion}
+          onConnecter={() => void connecter()}
+          onAnnulerConnexion={() => void annulerLaConnexion()}
         />
       )}
     </CarteAcces>
@@ -750,6 +846,11 @@ function Saisie({
   onEprouver,
   onEnregistrer,
   enEtape,
+  connexion,
+  actionConnexion,
+  refusConnexion,
+  onConnecter,
+  onAnnulerConnexion,
 }: {
   option: OptionAcces;
   etat: EtatFournisseurDefaut;
@@ -769,6 +870,11 @@ function Saisie({
   onEprouver: () => void;
   onEnregistrer: () => void;
   enEtape: boolean;
+  connexion: ConnexionAcces | null;
+  actionConnexion: ActionConnexion | null;
+  refusConnexion: string | null;
+  onConnecter: () => void;
+  onAnnulerConnexion: () => void;
 }) {
   const { fournisseur, acces } = option;
   const base = `defaut-${fournisseur.nom}-${acces.id}`;
@@ -896,6 +1002,15 @@ function Saisie({
             option={option}
             saisieEnregistree={saisieEnregistree}
             vientDEtreEnregistree={annonce !== null}
+            connexion={
+              <BlocConnexion
+                connexion={connexion}
+                action={actionConnexion}
+                refus={refusConnexion}
+                onConnecter={onConnecter}
+                onAnnuler={onAnnulerConnexion}
+              />
+            }
           />
         </div>
         <div className="min-w-0 self-stretch">
@@ -939,6 +1054,7 @@ function VerdictEpreuve({
   saisieEnregistree,
   vientDEtreEnregistree,
   enEtape,
+  connexion,
 }: {
   verdict: Verdict | null;
   sansApi: boolean;
@@ -951,6 +1067,8 @@ function VerdictEpreuve({
    * établit et ce qui est enregistré : seul un verdict rendu se dit ici.
    */
   enEtape: boolean;
+  /** Ce qui connecte l'accès, quand l'épreuve dit qu'il ne l'est pas et que l'API sait le faire. */
+  connexion: ReactNode;
 }) {
   if (sansApi) {
     return <RenduDuVerdict ok={false} modele="" phrase={EPREUVE_SANS_API} precision="" />;
@@ -974,12 +1092,129 @@ function VerdictEpreuve({
   }
   const { epreuve } = verdict;
   return (
-    <RenduDuVerdict
-      ok={epreuve.ok}
-      modele={verdict.modele}
-      phrase={phraseDuVerdict(epreuve, option.acces)}
-      precision={epreuve.ok ? "" : epreuve.precision}
-    />
+    <>
+      <RenduDuVerdict
+        ok={epreuve.ok}
+        modele={verdict.modele}
+        phrase={phraseDuVerdict(epreuve, option.acces)}
+        precision={epreuve.ok ? "" : epreuve.precision}
+      />
+      {epreuve.motif === "authentification" && option.acces.opens_login && connexion}
+    </>
+  );
+}
+
+/** Le geste en vol sur une connexion. */
+type ActionConnexion = "ouverture" | "annulation";
+
+/**
+ * Connecter l'accès sans terminal (#1704) : le geste sous le verdict qui l'appelle,
+ * précédé de ce qui va se passer ; en attente, une ligne qui tourne à sa place, avec
+ * son recours (rouvrir la page, annuler) ; une issue manquée se dit en mots, au-dessus
+ * du geste suivant. Le bloc est une région vivante : ce qui change s'annonce.
+ */
+function BlocConnexion({
+  connexion,
+  action,
+  refus,
+  onConnecter,
+  onAnnuler,
+}: {
+  connexion: ConnexionAcces | null;
+  action: ActionConnexion | null;
+  refus: string | null;
+  onConnecter: () => void;
+  onAnnuler: () => void;
+}) {
+  if (connexion?.state === "pending" || connexion?.state === "connected") {
+    return (
+      <div aria-live="polite" className="mt-1 flex flex-col gap-1">
+        {/* L'anneau se cale sur la première ligne du message, même quand il se plie. */}
+        <p className="flex items-start gap-2 text-corps">
+          <span
+            aria-hidden="true"
+            className="mt-1 size-3 shrink-0 animate-spin rounded-pastille border-2 border-current border-t-transparent motion-reduce:animate-none"
+          />
+          <span className="min-w-0">
+            {connexion.state === "connected"
+              ? "Connecté. Maestro éprouve l'accès…"
+              : "En attente de votre autorisation dans le navigateur…"}
+          </span>
+        </p>
+        {connexion.state === "pending" && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-5">
+            {connexion.url !== null && (
+              // L'icône suit le dernier mot du lien : un lien qui se plie la garde collée.
+              <a
+                href={connexion.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group min-h-6 py-0.5 text-annexe font-medium text-accent-texte"
+              >
+                <span className="underline underline-offset-2 group-hover:no-underline">
+                  Rouvrir la page de connexion
+                </span>
+                <IconeLienExterne
+                  aria-hidden="true"
+                  className="ml-1 inline size-3 align-[-0.125em]"
+                />
+              </a>
+            )}
+            {/* Le texte d'« Annuler » part du même bord que le lien, à la ligne comme à côté. */}
+            <Bouton
+              variante="discret"
+              taille="petite"
+              className="-ml-2.5"
+              onClick={onAnnuler}
+              occupe={action === "annulation"}
+            >
+              Annuler
+            </Bouton>
+          </div>
+        )}
+        {refus !== null && <Refus texte={refus} />}
+      </div>
+    );
+  }
+  // Une issue manquée se dit au-dessus du geste suivant, quelle qu'elle soit : la plus
+  // récente l'emporte — une ouverture que l'API n'a pas reçue, sinon l'issue de la
+  // dernière connexion.
+  const issue =
+    refus ??
+    (connexion?.state === "failed"
+      ? "La connexion n'a pas abouti."
+      : connexion?.state === "cancelled"
+        ? "La connexion a été annulée."
+        : null);
+  const releve = refus === null && issue !== null ? (connexion?.detail ?? "") : "";
+  return (
+    <div aria-live="polite" className="mt-1 flex flex-col items-start gap-2">
+      {issue !== null && (
+        <div className="flex flex-col gap-1">
+          <p
+            role={refus !== null ? "alert" : undefined}
+            className="flex gap-1.5 text-corps text-alerte-texte"
+          >
+            <IconeAlerte aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{issue}</span>
+          </p>
+          {releve !== "" && (
+            // Un fait typé, en chasse fixe et sur sa ligne, comme le relevé de l'épreuve.
+            <p className="text-annexe text-texte-secondaire">
+              Relevé de la connexion : <span className="font-mono">{releve}</span>
+            </p>
+          )}
+        </div>
+      )}
+      <p className="text-annexe text-texte-secondaire">
+        Une page de connexion à Claude s&apos;ouvre dans votre navigateur : autorisez-y
+        Maestro. L&apos;accès est ensuite éprouvé de lui-même ; il ne restera qu&apos;à
+        l&apos;enregistrer.
+      </p>
+      <Bouton onClick={onConnecter} occupe={action === "ouverture"}>
+        {issue === null ? "Connecter Maestro" : "Réessayer"}
+      </Bouton>
+    </div>
   );
 }
 

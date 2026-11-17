@@ -23,6 +23,7 @@ import type {
   AgentCatalogueDetail,
   AnalyticsCouts,
   CatalogueFournisseurs,
+  ConnexionAcces,
   DemandeFournisseurDefaut,
   Epreuve,
   EtatAccueil,
@@ -954,6 +955,41 @@ export function effacerFournisseurDefaut(): Promise<EtatFournisseurDefaut> {
     "retrait refusé",
     "DELETE",
   );
+}
+
+/**
+ * Ouvre la connexion d'un accès (`POST /api/fournisseurs/login`, #1704) : l'API
+ * la lance, ouvre la page d'autorisation dans le navigateur du poste, et rend
+ * la connexion en attente avec cette page. Une connexion encore en attente est
+ * annulée : il n'y en a qu'une à la fois.
+ */
+export async function ouvrirConnexion(
+  fournisseur: string,
+  acces: string,
+): Promise<ConnexionAcces> {
+  const corps = await envoyerJsonEtLire<{ login: ConnexionAcces }>(
+    "/api/fournisseurs/login",
+    { fournisseur, acces },
+    "connexion refusée",
+  );
+  return corps.login;
+}
+
+/** Où en est la connexion ouverte (`GET /api/fournisseurs/login`) — null si aucune. */
+export async function chargerConnexion(): Promise<ConnexionAcces | null> {
+  const corps = await chargerJson<{ login: ConnexionAcces | null }>("/api/fournisseurs/login");
+  return corps.login;
+}
+
+/** Annule la connexion en attente (`DELETE /api/fournisseurs/login`). */
+export async function annulerConnexion(): Promise<ConnexionAcces | null> {
+  const corps = await envoyerJsonEtLire<{ login: ConnexionAcces | null }>(
+    "/api/fournisseurs/login",
+    undefined,
+    "annulation refusée",
+    "DELETE",
+  );
+  return corps.login;
 }
 
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */

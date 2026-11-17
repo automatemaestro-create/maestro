@@ -43,9 +43,11 @@ import type {
   AreteGraphe,
   BilanRun,
   CatalogueFournisseurs,
+  ConnexionAcces,
   ConstatPoste,
   DemandeFournisseurDefaut,
   Epreuve,
+  EtatConnexion,
   EtatAccueil,
   EtatInstallation,
   EtatFournisseurDefaut,
@@ -540,6 +542,7 @@ export const ACCES_CLAUDE: AccesFournisseur[] = [
     adresse_defaut: null,
     temoins: ["cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"],
     connexion: '"C:\\Program Files\\Maestro\\python\\maestro-connexion.exe"',
+    opens_login: true,
   },
   {
     id: "cle",
@@ -550,6 +553,7 @@ export const ACCES_CLAUDE: AccesFournisseur[] = [
     adresse_defaut: null,
     temoins: ["cle:ANTHROPIC_API_KEY"],
     connexion: null,
+    opens_login: false,
   },
 ];
 
@@ -563,6 +567,7 @@ export const ACCES_OPENAI: AccesFournisseur[] = [
     adresse_defaut: "http://localhost:11434/v1",
     temoins: ["serveur:ollama", "serveur:openai-configure"],
     connexion: null,
+    opens_login: false,
   },
   {
     id: "cle",
@@ -573,6 +578,7 @@ export const ACCES_OPENAI: AccesFournisseur[] = [
     adresse_defaut: "https://api.openai.com/v1",
     temoins: ["cle:OPENAI_API_KEY"],
     connexion: null,
+    opens_login: false,
   },
 ];
 
@@ -649,6 +655,56 @@ export function poserFournisseurDefaut(
   coupureFournisseurDefaut = null;
   demandesEprouvees.length = 0;
   demandesEnregistrees.length = 0;
+  connexionCourante = null;
+  connexionsOuvertes.length = 0;
+}
+
+// --- La connexion d'un accès, ouverte par l'API (#1704) ---------------------
+
+/** La page d'autorisation que la double rend, comme l'API rend celle du CLI. */
+export const PAGE_CONNEXION = "https://claude.example/oauth/authorize?redirect_uri=localhost";
+
+let connexionCourante: ConnexionAcces | null = null;
+
+/** Les connexions que l'écran a ouvertes, dans l'ordre : `[fournisseur, accès]`. */
+export const connexionsOuvertes: [string, string][] = [];
+
+/** La double de `POST /api/fournisseurs/login` : une connexion en attente, sa page rendue. */
+export function ouvertureConnexionFactice(fournisseur: string, acces: string): ConnexionAcces {
+  if (coupureFournisseurDefaut !== null) throw coupureFournisseurDefaut;
+  connexionsOuvertes.push([fournisseur, acces]);
+  connexionCourante = {
+    provider: fournisseur,
+    access: acces,
+    state: "pending",
+    url: PAGE_CONNEXION,
+    detail: "",
+  };
+  return connexionCourante;
+}
+
+/** La double de `GET /api/fournisseurs/login` : la connexion en cours, ou `null`. */
+export function connexionDuPoste(): ConnexionAcces | null {
+  return connexionCourante;
+}
+
+/** La double de `DELETE /api/fournisseurs/login` : une connexion en attente est annulée. */
+export function annulationConnexionFactice(): ConnexionAcces | null {
+  if (connexionCourante?.state === "pending") {
+    connexionCourante = { ...connexionCourante, state: "cancelled", url: null };
+  }
+  return connexionCourante;
+}
+
+/**
+ * L'issue que la connexion en cours prend — ce que la personne a fait dans son
+ * navigateur ; `null` : l'API ne sert plus de connexion (redémarrée).
+ */
+export function poserIssueConnexion(etat: EtatConnexion | null, detail = ""): void {
+  connexionCourante =
+    etat === null || connexionCourante === null
+      ? null
+      : { ...connexionCourante, state: etat, url: etat === "pending" ? PAGE_CONNEXION : null, detail };
 }
 
 /**

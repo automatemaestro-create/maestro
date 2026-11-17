@@ -9,8 +9,15 @@ login of the person's own CLI: Maestro is connected once, by this command, which
 runs the CLI's own login in that folder. A `CLAUDE_CODE_OAUTH_TOKEN` or an API key
 in the settings needs no login at all.
 
+The screen connects Maestro the same way, without a terminal (#1704):
+`ClaudeLogin` runs that login for the API. The CLI opens the authorization page
+through the command `BROWSER` names, a public convention, and listens for the
+page's callback on the workstation; Maestro points `BROWSER` at its relay
+(`maestro.browser_relay`), receives the page's address, opens it itself and serves
+it to the screen. The login's outcome is its exit code, confirmed by `auth status`.
+
 Only the CLI's public commands are run (`auth login`, `auth status`); nothing the
-CLI writes in its folder is ever read here.
+CLI writes in its folder, and nothing it prints, is ever read here.
 
     maestro-connexion           # opens the CLI's login, in Maestro's folder
     maestro-connexion --etat    # says whether Maestro is connected
@@ -19,22 +26,40 @@ CLI writes in its folder is ever read here.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+import time
+import webbrowser
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from maestro.emplacements import dossier_du_cli_claude
+from maestro.browser_relay import relay_command
+from maestro.emplacements import dossier_du_cli_claude, jetable
 from maestro.installation import cli_claude_resolu
+from maestro.providers.login import LoginState
 
 #: The command's name, as `pyproject.toml` declares it.
 COMMAND = "maestro-connexion"
 
 #: How long `auth status` may take to answer.
 _STATUS_TIMEOUT_S = 30.0
+
+#: How long the CLI may take to hand over its authorization page. Past it, the
+#: login is ended: a login without a page leaves the person nothing to do.
+URL_TIMEOUT_S = 30.0
+
+#: How often a starting login looks for the page's address.
+_POLL_S = 0.1
+
+#: The prefix of the folder where the relay leaves the page's address.
+WORKSHOP_PREFIX = "maestro-connexion-"
+
+#: No console window for the CLI the API runs: the person sees the browser, nothing else.
+_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 
 def command() -> str:
@@ -93,6 +118,151 @@ def logged_in(folder: Path | None = None) -> bool | None:
         return None
     value = answer.get("loggedIn") if isinstance(answer, dict) else None
     return value if isinstance(value, bool) else None
+
+
+class ClaudeLogin:
+    """The CLI's login in Maestro's folder, run by the API for the screen (#1704).
+
+    `start` runs `auth login` with `BROWSER` pointed at Maestro's relay, waits for
+    the authorization page's address, opens it in the person's browser and returns
+    `pending` with it. The CLI then waits for the page's callback on the
+    workstation; `state` reads its exit code: `0` is confirmed by `auth status`
+    (`connected`, or `failed` when the folder is still not connected), anything
+    else is `failed` with the code. `cancel` ends the CLI.
+
+    The CLI's input, output and errors go nowhere: nothing it prints is read.
+    `command` is what runs the CLI, the resolved CLI by default.
+    """
+
+    def __init__(
+        self,
+        folder: Path | None = None,
+        *,
+        command: Sequence[str] | None = None,
+        open_browser: Callable[[str], object] | None = None,
+        check_login: Callable[[Path], bool | None] | None = None,
+        url_timeout_s: float = URL_TIMEOUT_S,
+    ) -> None:
+        self._folder = dossier_du_cli_claude() if folder is None else folder
+        self._command = None if command is None else list(command)
+        self._open_browser = webbrowser.open if open_browser is None else open_browser
+        self._check_login = logged_in if check_login is None else check_login
+        self._url_timeout_s = url_timeout_s
+        self._process: subprocess.Popen[bytes] | None = None
+        self._workshop: Path | None = None
+        self._url: str | None = None
+        self._final: LoginState | None = None
+
+    async def start(self) -> LoginState:
+        """Runs the login and returns once its page is open, or the login ended."""
+        if self._process is not None or self._final is not None:
+            return self.state()
+        command = self._cli_command()
+        if command is None:
+            return self._end(LoginState("failed", detail="CLI Claude introuvable"))
+        try:
+            self._folder.mkdir(parents=True, exist_ok=True)
+            self._workshop = jetable(WORKSHOP_PREFIX)
+            target = self._workshop / "url"
+            env = {**cli_environment(self._folder), "BROWSER": relay_command(target)}
+            process = subprocess.Popen(  # noqa: S603 - argv built from the resolved CLI
+                [*command, "auth", "login"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                creationflags=_NO_WINDOW,
+            )
+        except OSError as exc:
+            return self._end(LoginState("failed", detail=type(exc).__name__))
+        self._process = process
+        if not await self._wait_for_page(process, target):
+            return self._end(LoginState("failed", detail="aucune page de connexion rendue"))
+        if self._url is not None:
+            try:
+                self._open_browser(self._url)
+            except Exception:  # noqa: BLE001 — the screen still offers the page as a link
+                pass
+        return self.state()
+
+    def _cli_command(self) -> list[str] | None:
+        if self._command is not None:
+            return self._command
+        cli = cli_claude_resolu()[1]
+        return None if cli is None else [str(cli)]
+
+    async def _wait_for_page(self, process: subprocess.Popen[bytes], target: Path) -> bool:
+        """Waits for the page's address, or the CLI's end; `False` once it took too long."""
+        deadline = time.monotonic() + self._url_timeout_s
+        while self._url is None and process.poll() is None:
+            if time.monotonic() >= deadline:
+                self._stop()
+                return False
+            self._url = _read_url(target)
+            if self._url is None:
+                await asyncio.sleep(_POLL_S)
+        return True
+
+    def state(self) -> LoginState:
+        """`pending` while the CLI waits; its outcome once it has ended."""
+        if self._final is not None:
+            return self._final
+        if self._process is None:
+            return LoginState("pending")
+        code = self._process.poll()
+        if code is None:
+            return LoginState("pending", url=self._url)
+        if code != 0:
+            return self._end(LoginState("failed", detail=exit_detail(code)))
+        if self._check_login(self._folder) is False:
+            return self._end(LoginState("failed", detail="auth status : non connecté"))
+        return self._end(LoginState("connected"))
+
+    def cancel(self) -> LoginState:
+        """Ends a pending login. A login that already ended keeps its outcome."""
+        if self._final is not None:
+            return self._final
+        if self._process is not None and self._process.poll() is not None:
+            return self.state()
+        self._stop()
+        return self._end(LoginState("cancelled"))
+
+    def _stop(self) -> None:
+        if self._process is None or self._process.poll() is not None:
+            return
+        self._process.kill()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - a kill the system delays
+            pass
+
+    def _end(self, outcome: LoginState) -> LoginState:
+        self._final = outcome
+        if self._workshop is not None:
+            shutil.rmtree(self._workshop, ignore_errors=True)
+            self._workshop = None
+        return outcome
+
+
+def exit_detail(code: int) -> str:
+    """The exit code as the person reads it in the screen's statement.
+
+    Windows hands over a process's code unsigned: a process ended from outside
+    returns `0xFFFFFFFF`, a system failure an `NTSTATUS` such as `0xC0000142`.
+    Those are written in hexadecimal, as Windows names them.
+    """
+    if code > 0x7FFFFFFF:
+        return f"code de sortie 0x{code:08X}"
+    return f"code de sortie {code}"
+
+
+def _read_url(target: Path) -> str | None:
+    """The page's address the relay left, once written whole."""
+    try:
+        url = target.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return url if url.startswith(("https://", "http://")) else None
 
 
 def main(argv: Sequence[str] | None = None) -> int:

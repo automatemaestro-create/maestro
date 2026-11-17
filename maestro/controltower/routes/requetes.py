@@ -457,6 +457,13 @@ class FournisseurDefautRequete(BaseModel):
         )
 
 
+class ConnexionRequete(BaseModel):
+    """Corps de l'ouverture d'une connexion (#1704) : l'accès à connecter."""
+
+    fournisseur: str
+    acces: str
+
+
 
 class ChatEnvoiRequete(BaseModel):
     """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent.

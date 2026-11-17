@@ -277,6 +277,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | motif (de chemin) | `pattern` | une forme de chemin qu'un périmètre inclut ou exclut |
 | fournisseur | `provider` | l'adaptateur d'un modèle |
 | fournisseur par défaut | `default_provider` | celui du poste, choisi dans les Paramètres |
+| connexion (d'un accès) | `login` | relier Maestro à un compte du fournisseur (l'abonnement Claude), ouverte par l'API et suivie jusqu'à son issue |
+| relais (du navigateur) | `browser_relay` | la commande que Maestro donne au CLI pour recevoir l'adresse de la page d'autorisation, au lieu de l'ouvrir |
 | famille (de modèles) | `model_family` | Opus, Sonnet, Haiku… et la dernière version de chacune |
 | bibliothèque MCP | `mcp_library` | les serveurs MCP qu'on peut admettre |
 | registre (officiel) | `registry` | le registre MCP officiel |

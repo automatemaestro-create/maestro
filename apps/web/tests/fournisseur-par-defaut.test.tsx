@@ -13,7 +13,9 @@
  * ④ **une clé ne se réaffiche jamais** ;
  * ⑤ **l'environnement qui impose se dit**, avec le geste qui rend la main ;
  * ⑥ **une API coupée se dit** au lieu d'un écran vide ;
- * ⑦ **un geste que l'API n'a pas reçu se dit en mots**, à l'endroit du geste.
+ * ⑦ **un geste que l'API n'a pas reçu se dit en mots**, à l'endroit du geste ;
+ * ⑧ **l'abonnement se connecte d'ici** (#1704) — le geste sous le verdict, l'attente
+ *    à sa place, l'épreuve relancée d'elle-même quand la connexion aboutit.
  *
  * Le va-et-vient réel avec l'API et le modèle est exercé sur la vraie stack à la
  * clôture du ticket ; ici, les doubles de `setup.ts` (`poserFournisseurDefaut`,
@@ -33,12 +35,15 @@ import {
   ACCES_CLAUDE,
   ACCES_OPENAI,
   CATALOGUE_POSTE_NU,
+  connexionsOuvertes,
   constatPosteFactice,
   demandesEnregistrees,
   demandesEprouvees,
+  PAGE_CONNEXION,
   poserCoupureFournisseurDefaut,
   poserFournisseurDefaut,
   poserFournisseurs,
+  poserIssueConnexion,
   poserLargeurFenetre,
   poserPanneFournisseurDefaut,
   poserVerdictEpreuve,
@@ -372,23 +377,37 @@ describe("② présent n'est pas éprouvé", () => {
 });
 
 describe("③ le verdict dit son motif et son geste", () => {
-  it("un abonnement non connecté nomme la commande qui connecte Maestro, telle que l'API l'a trouvée", async () => {
+  it("un abonnement non connecté offre de connecter Maestro d'ici, sans aucune commande à taper", async () => {
     poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "authentication_failed" });
     const utilisateur = await monter();
 
     await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
 
     expect(await screen.findByText("Échec de l'épreuve")).toBeInTheDocument();
-    // Les sessions de Maestro ont leur propre dossier du CLI (#1515) : connecter le CLI
-    // de la personne ne les connecterait pas.
     expect(
-      screen.getByText(/« "C:\\Program Files\\Maestro\\python\\maestro-connexion\.exe" »/),
+      screen.getByText("Maestro n'est pas connecté à ce compte, ou sa connexion a expiré."),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connecter Maestro" })).toBeInTheDocument();
+    // Ni terminal, ni commande : la personne qui a installé Maestro par double-clic n'en a pas.
+    expect(screen.queryByText(/terminal/)).toBeNull();
+    expect(screen.queryByText(/maestro-connexion/)).toBeNull();
     expect(screen.queryByText(/auth login/)).toBeNull();
     expect(screen.getByText("authentication_failed").closest("p")).toHaveTextContent(
       "Relevé de l'épreuve : authentication_failed",
     );
     expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+  });
+
+  it("un accès dont l'API n'ouvre pas la connexion nomme encore la commande, telle que l'API l'a trouvée", () => {
+    const [abonnement] = ACCES_CLAUDE;
+    const verdict = { ok: false, motif: "authentification" as const, precision: "" };
+
+    // Les sessions de Maestro ont leur propre dossier du CLI (#1515) : connecter le CLI
+    // de la personne ne les connecterait pas.
+    expect(phraseDuVerdict(verdict, { ...abonnement, opens_login: false })).toMatch(
+      /« "C:\\Program Files\\Maestro\\python\\maestro-connexion\.exe" »/,
+    );
+    expect(phraseDuVerdict(verdict, abonnement)).not.toMatch(/terminal/);
   });
 
   it("un Ollama détecté propose ses modèles, et un serveur muet se dit injoignable", async () => {
@@ -682,5 +701,118 @@ describe("⑦ côté client : la panne de transport est typée à la source (#16
     expect(echec).toBeInstanceOf(reel.ErreurApi);
     expect((echec as InstanceType<typeof reel.ErreurApi>).statut).toBeNull();
     expect((echec as InstanceType<typeof reel.ErreurApi>).chemin).toBe(chemin);
+  });
+});
+
+/** Ce que l'écran dit d'une connexion que l'API n'a pas reçue (#1636, recopié du composant). */
+const CONNEXION_SANS_API =
+  "L'API n'a pas répondu : la connexion n'a pas pu s'ouvrir. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/** Le suivi de la connexion lit l'API chaque seconde : une issue se voit dans ce délai. */
+const SUIVI = { timeout: 3000 };
+
+/** Monte la carte, éprouve un abonnement non connecté, et ouvre sa connexion. */
+async function ouvrirLaConnexion() {
+  poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "authentication_failed" });
+  const utilisateur = await monter();
+  await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+  await utilisateur.click(await screen.findByRole("button", { name: "Connecter Maestro" }));
+  await screen.findByText("En attente de votre autorisation dans le navigateur…");
+  return utilisateur;
+}
+
+describe("⑧ l'abonnement se connecte d'ici, sans terminal (#1704)", () => {
+  it("le geste ouvre la connexion de l'accès, et l'attente prend sa place avec son recours", async () => {
+    await ouvrirLaConnexion();
+
+    expect(connexionsOuvertes).toEqual([["claude", "abonnement"]]);
+    expect(screen.queryByRole("button", { name: "Connecter Maestro" })).toBeNull();
+    const recours = screen.getByRole("link", { name: "Rouvrir la page de connexion" });
+    expect(recours).toHaveAttribute("href", PAGE_CONNEXION);
+    expect(recours).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("button", { name: "Annuler" })).toBeInTheDocument();
+  });
+
+  it("une connexion qui aboutit relance l'épreuve d'elle-même, et le réglage s'enregistre", async () => {
+    const utilisateur = await ouvrirLaConnexion();
+    poserVerdictEpreuve({ ok: true, motif: "ok", precision: "" });
+
+    poserIssueConnexion("connected");
+
+    expect(await screen.findByText("Accès éprouvé", {}, SUIVI)).toBeInTheDocument();
+    // La même saisie, éprouvée deux fois : avant la connexion, puis sans aucun geste après.
+    expect(demandesEprouvees).toHaveLength(2);
+    expect(demandesEprouvees[1]).toEqual(demandesEprouvees[0]);
+    expect(screen.queryByText(/En attente de votre autorisation|Connecter Maestro/)).toBeNull();
+    const enregistrer = screen.getByRole("button", { name: "Enregistrer" });
+    expect(enregistrer).toBeEnabled();
+    await utilisateur.click(enregistrer);
+    expect(demandesEnregistrees.at(-1)).toMatchObject({ fournisseur: "claude", acces: "abonnement" });
+  });
+
+  it("annuler arrête l'attente, le dit, et rend le geste pour réessayer", async () => {
+    const utilisateur = await ouvrirLaConnexion();
+
+    await utilisateur.click(screen.getByRole("button", { name: "Annuler" }));
+
+    expect(await screen.findByText("La connexion a été annulée.")).toBeInTheDocument();
+    expect(screen.queryByText("En attente de votre autorisation dans le navigateur…")).toBeNull();
+    await utilisateur.click(screen.getByRole("button", { name: "Réessayer" }));
+    expect(connexionsOuvertes).toHaveLength(2);
+  });
+
+  it("un échec se dit en mots avec son relevé typé, jamais un texte du CLI", async () => {
+    await ouvrirLaConnexion();
+
+    poserIssueConnexion("failed", "code de sortie 1");
+
+    expect(await screen.findByText("La connexion n'a pas abouti.", {}, SUIVI)).toBeInTheDocument();
+    // Le relevé a sa ligne, comme celui de l'épreuve, et non le bout de la phrase.
+    expect(screen.getByText("Relevé de la connexion :", { exact: false })).toHaveTextContent(
+      "Relevé de la connexion : code de sortie 1",
+    );
+    expect(screen.getByRole("button", { name: "Réessayer" })).toBeInTheDocument();
+    // L'épreuve n'est pas relancée sur un échec : son verdict reste celui d'avant.
+    expect(demandesEprouvees).toHaveLength(1);
+  });
+
+  it("une API redémarrée a perdu la connexion : l'écran la dit annulée au lieu d'attendre", async () => {
+    await ouvrirLaConnexion();
+
+    poserIssueConnexion(null);
+
+    expect(await screen.findByText("La connexion a été annulée.", {}, SUIVI)).toBeInTheDocument();
+  });
+
+  it("une connexion que l'API n'a pas reçue se dit comme une issue manquée : au-dessus de « Réessayer »", async () => {
+    poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "authentication_failed" });
+    const utilisateur = await monter();
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    const connecter = await screen.findByRole("button", { name: "Connecter Maestro" });
+    poserCoupureFournisseurDefaut(ErreurApi.injoignable("/api/fournisseurs/login"));
+
+    await utilisateur.click(connecter);
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(CONNEXION_SANS_API);
+    const reessayer = screen.getByRole("button", { name: "Réessayer" });
+    // Le même ordre qu'un échec ou une annulation : l'issue d'abord, le geste suivant ensuite.
+    expect(alerte.compareDocumentPosition(reessayer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Connecter Maestro" })).toBeNull();
+  });
+
+  it("un accès sans connexion à ouvrir n'offre pas le geste", async () => {
+    poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "" });
+    const utilisateur = await monter();
+    await utilisateur.click(screen.getByRole("radio", { name: CLE_ANTHROPIC }));
+    const cle = within(carte(CLE_ANTHROPIC));
+    await utilisateur.type(cle.getByLabelText("Clé"), "sk-ant-essai-123");
+
+    await utilisateur.click(cle.getByRole("button", { name: "Éprouver" }));
+
+    expect(
+      await cle.findByText("La clé est refusée. Vérifiez-la, ou collez-en une autre."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connecter Maestro" })).toBeNull();
   });
 });

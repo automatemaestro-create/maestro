@@ -370,7 +370,9 @@ class ClaudeProvider(ModelProvider):
             temoins=("cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"),
             # Les sessions de Maestro ont leur propre dossier du CLI : ce qui les
             # connecte est `maestro-connexion`, pas la connexion du CLI de la personne.
+            # L'écran ouvre la même connexion, par l'API (#1704).
             connexion=claude_login.command,
+            ouvrir_connexion=claude_login.ClaudeLogin,
         ),
         AccesFournisseur(
             id="cle",

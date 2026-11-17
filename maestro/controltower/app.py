@@ -157,6 +157,7 @@ from maestro.controltower.projets import (
     ProjetInconnu,
     ServiceProjets,
 )
+from maestro.controltower.provider_login import ProviderLoginService
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
 from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
 from maestro.controltower.renfort import RelaisRenfort
@@ -349,6 +350,7 @@ def create_app(
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
     fournisseur_defaut: ServiceFournisseurParDefaut | None = None,
+    connexion_fournisseur: ProviderLoginService | None = None,
     accueil: ServiceAccueil | None = None,
     installation: LecteurInstallation | None = None,
     acces: PolitiqueAcces | None = None,
@@ -560,6 +562,10 @@ def create_app(
     Par défaut il éprouve avec le vrai fournisseur : un test lui injecte son
     éprouveur, comme il injecte une sonde.
 
+    `connexion_fournisseur` (#1704) ouvre la connexion d'un accès qui la sait
+    ouvrir (`/api/fournisseurs/login`) et en sert l'issue ; une connexion encore
+    en attente meurt avec l'API.
+
     `accueil` (#642) dit si le premier lancement reste à faire sur ce poste
     (`/api/accueil`) : par défaut, le dépôt des réglages du poste et les projets
     déclarés par `projets`.
@@ -646,6 +652,9 @@ def create_app(
         else ServiceFournisseurParDefaut(coffre=secrets)
     )
     ctx.fournisseur_defaut = fournisseur_defaut
+    ctx.connexion_fournisseur = (
+        connexion_fournisseur if connexion_fournisseur is not None else ProviderLoginService()
+    )
     permissions = permissions if permissions is not None else PermissionStore.default()
     ctx.permissions = permissions
     projets = projets if projets is not None else ServiceProjets.default()
@@ -1325,6 +1334,8 @@ async def lifespan(ctx: Contexte, app: FastAPI) -> AsyncIterator[None]:
         # Les relais de renfort aussi : un run détaché qui attend encore tient
         # sa propre borne, et repart avec l'équipe actuelle à l'échéance.
         relais_renfort.fermer()
+        # Une connexion en attente : plus personne ne suivrait son issue.
+        ctx.connexion_fournisseur.close()
         pompe.cancel()
         with suppress(asyncio.CancelledError):
             await pompe

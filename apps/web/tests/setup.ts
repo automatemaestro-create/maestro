@@ -42,10 +42,12 @@ import type { DemandeFournisseurDefaut } from "@/lib/types";
 
 import {
   accueilDuPoste,
+  annulationConnexionFactice,
   CATALOGUE_POSTE_NU,
   canauxDemandes,
   catalogueAgents,
   cheminCourant,
+  connexionDuPoste,
   enregistrementFactice,
   epreuveFactice,
   etatGlobalCourant,
@@ -59,6 +61,7 @@ import {
   noterCanal,
   noterPortee,
   noterProjetDuFil,
+  ouvertureConnexionFactice,
   pageJournalCourante,
   porteesDemandees,
   poserAccueil,
@@ -167,6 +170,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
       Promise.resolve(demande).then(epreuveFactice),
     enregistrerFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
       Promise.resolve(demande).then(enregistrementFactice),
+    // #1704 : la connexion d'un accès, ouverte et suivie par l'API. Défaut : aucune ;
+    // `poserIssueConnexion` règle ce que la personne a fait dans son navigateur.
+    ouvrirConnexion: (fournisseur: string, acces: string) =>
+      Promise.resolve().then(() => ouvertureConnexionFactice(fournisseur, acces)),
+    chargerConnexion: () => Promise.resolve().then(connexionDuPoste),
+    annulerConnexion: () => Promise.resolve().then(annulationConnexionFactice),
     // #642 : la porte d'un poste sans projet demande si le premier lancement reste
     // à faire. Défaut : terminé — une liste vide ouvre la création, et tout test
     // écrit avant ce lot dit encore vrai. `poserAccueil` règle le poste neuf.

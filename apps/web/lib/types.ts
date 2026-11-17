@@ -1302,7 +1302,8 @@ export type Fournisseur = {
  * (`ConstatPoste.cle`) qui disent l'accès **présent ici** — présent, pas éprouvé.
  * `connexion` est la commande qu'une personne lance dans un terminal pour
  * connecter l'accès sur ce poste, telle que l'API l'a trouvée (#1515), ou `null`
- * quand l'accès n'en demande pas.
+ * quand l'accès n'en demande pas. `opens_login` dit que l'API sait ouvrir cette
+ * connexion elle-même, depuis l'écran (#1704, `POST /api/fournisseurs/login`).
  */
 export type AccesFournisseur = {
   id: string;
@@ -1313,6 +1314,24 @@ export type AccesFournisseur = {
   adresse_defaut: string | null;
   temoins: string[];
   connexion: string | null;
+  opens_login: boolean;
+};
+
+/** Les états d'une connexion ouverte par l'API (`maestro.providers.login.LOGIN_STATES`). */
+export type EtatConnexion = "pending" | "connected" | "failed" | "cancelled";
+
+/**
+ * Une connexion d'accès ouverte par l'API (#1704) : `pending` tant que la page
+ * d'autorisation attend la personne, puis son issue. `url` est cette page, que
+ * l'écran rouvre au besoin ; `detail` est un fait typé (un code de sortie), jamais
+ * un texte d'outil.
+ */
+export type ConnexionAcces = {
+  provider: string;
+  access: string;
+  state: EtatConnexion;
+  url: string | null;
+  detail: string;
 };
 
 /** Les motifs d'une épreuve (`maestro.providers.base.MOTIFS_EPREUVE`). */

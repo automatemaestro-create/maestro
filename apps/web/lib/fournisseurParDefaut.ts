@@ -130,6 +130,9 @@ export function phraseDuVerdict(epreuve: Epreuve, acces: AccesFournisseur): stri
         : `Le programme « ${commande} » est introuvable sur ce poste. Installez-le, ou choisissez un autre accès.`;
     case "authentification":
       if (sorte === "outil") {
+        if (acces.opens_login) {
+          return "Maestro n'est pas connecté à ce compte, ou sa connexion a expiré.";
+        }
         return acces.connexion === null
           ? "L'accès n'est pas connecté à un compte, ou sa connexion a expiré."
           : `Maestro n'est pas connecté à ce compte, ou sa connexion a expiré. Lancez « ${acces.connexion} » dans un terminal, puis éprouvez de nouveau.`;

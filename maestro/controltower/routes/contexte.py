@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from maestro.controltower.outillage import ServiceOutillage
     from maestro.controltower.persistence import BusDurable, EventLog
     from maestro.controltower.projets import ServiceProjets
+    from maestro.controltower.provider_login import ProviderLoginService
     from maestro.controltower.recit import ConteurDeFin
     from maestro.controltower.renfort import RelaisRenfort
     from maestro.controltower.routes.communs import Diffusion
@@ -70,6 +71,7 @@ class Contexte:
     chat_repondeur: RepondeurChat | None
     chat_store: ChatStore
     chats_de_projet: dict[str, ServiceChat]
+    connexion_fournisseur: ProviderLoginService
     consultations: Consultations
     conteur: ConteurDeFin
     diffusion: Diffusion
