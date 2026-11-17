@@ -1309,11 +1309,19 @@ def _occupant(ou: Path) -> Iterator[subprocess.Popen[str]]:
 
     La ligne lue sur sa sortie est une **barrière** et non un `sleep` (#292) : elle prouve que le
     processus tourne, là où une attente arbitraire ferait dépendre le verdict de la charge du poste.
+
+    Il attend par `read`, une commande **interne** de bash, sur une entrée en tube que personne
+    n'écrit : aucun enfant ne naît. Sous MSYS, une commande externe — même la dernière, que bash
+    exécute à sa place — tourne dans un autre processus Windows que celui que Python tient, et
+    `kill()` n'atteint que ce dernier : un `sleep` survivrait au bloc en gardant `ou` pour
+    répertoire courant (#1697). Le délai de `read` borne sa vie si le `kill()` manquait ; la
+    fermeture du tube, si Python disparaissait.
     """
     assert BASH is not None
     processus = subprocess.Popen(  # noqa: S603
-        [BASH, "-c", "printf 'pret\\n'; sleep 60"],
+        [BASH, "-c", "printf 'pret\\n'; read -r -t 60 _"],
         cwd=str(ou),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
         encoding="utf-8",
@@ -1325,6 +1333,57 @@ def _occupant(ou: Path) -> Iterator[subprocess.Popen[str]]:
     finally:
         processus.kill()
         processus.wait(timeout=30)
+        for tube in (processus.stdin, processus.stdout):
+            if tube is not None:
+                tube.close()
+
+
+def _postes_dans(ou: Path) -> list[str]:
+    """Les processus dont le répertoire courant est `ou` — « <pid> <ligne de commande> » chacun.
+
+    Le balayage est celui de `gc` (`/proc/<pid>/cwd` comparé par `-ef`), joué depuis un autre
+    répertoire pour ne pas s'y compter lui-même. Sans `/proc`, il n'y a rien à observer : le test
+    qui s'en sert est sauté, jamais déclaré vert.
+    """
+    assert BASH is not None
+    balayage = subprocess.run(  # noqa: S603
+        [
+            BASH,
+            "-c",
+            '[ -d /proc ] || exit 3; for d in /proc/[0-9]*; do [ "$d/cwd" -ef "$1" ] || continue;'
+            ' printf "%s " "${d##*/}"; tr "\\0" " " <"$d/cmdline"; printf "\\n"; done',
+            "_",
+            str(ou),
+        ],
+        cwd=str(RACINE),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if balayage.returncode == 3:
+        pytest.skip("aucun /proc où lire les répertoires courants")
+    assert balayage.returncode == 0, balayage.stderr
+    return [ligne.strip() for ligne in balayage.stdout.splitlines() if ligne.strip()]
+
+
+def test_l_occupant_ne_laisse_rien_vivre_derriere_lui(tmp_path: Path) -> None:
+    """Le contrôle sur lequel reposent tous les tests de #503 : un occupant parti est PARTI.
+
+    Sous MSYS, `kill()` n'atteint que le processus Windows que Python a lancé ; une commande
+    externe de l'occupant lui survivrait, le dossier pour répertoire courant, et « retiré une fois
+    le processus parti » verrait encore un occupant vivant (#1697). La présence pendant le bloc est
+    assertée d'abord : c'est elle qui prouve que le balayage voit un occupant quand il y en a un.
+    """
+    poste = tmp_path / "poste"
+    poste.mkdir()
+
+    with _occupant(poste):
+        pendant = _postes_dans(poste)
+    apres = _postes_dans(poste)
+
+    assert pendant, "le balayage ne voit pas l'occupant vivant"
+    assert apres == [], apres
 
 
 def _fiche_de_session(depot: Depot, pid: int, cwd: Path, *, identifiant: str, nom: str) -> None:
