@@ -127,6 +127,7 @@ from maestro.telemetry.costs import (
     STEP_RESUME,
     STEP_SPENDING_CAP,
     STEP_TEAM,
+    STEP_VERSIONS,
     RunCost,
     TaskCost,
 )
@@ -314,6 +315,7 @@ def test_the_cost_ledger_keeps_its_json_keys_and_the_steps_it_reads() -> None:
         STEP_ASSESSMENT,
         STEP_PROBE,
         STEP_ACCEPTANCE,
+        STEP_VERSIONS,
     )
     assert steps == (
         "planification",
@@ -325,6 +327,7 @@ def test_the_cost_ledger_keeps_its_json_keys_and_the_steps_it_reads() -> None:
         "bilan",
         "sonde",
         "recette",
+        "versions",
     )
 
 

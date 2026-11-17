@@ -57,6 +57,8 @@ def test_claude_from_settings_reads_optional_api_key():
         # Bornes de l'arbitrage au vol (#583) non réglées : celles du module.
         arbitrage_attente = None
         arbitrage_borne_hook = None
+        # Aucune variable nommée par la personne (#1312) : le socle seul.
+        env_agent = None
 
     provider = ClaudeProvider.from_settings(_Settings())
     assert provider.credentials.api_key is None

@@ -265,6 +265,11 @@ class Settings:
     #: Réseau Docker du mode isolé (`MAESTRO_ISOLATION_RESEAU`), ou None : `bridge`
     #: (sortant seul, aucun port publié). `none` coupe tout réseau (diagnostic).
     isolation_reseau: str | None = None
+    #: Les variables du poste qu'une session d'agent reçoit au-delà du socle
+    #: (`MAESTRO_AGENT_ENV`, #1312) : des noms séparés par des virgules, un `*` final
+    #: pour une famille (`JAVA_HOME,GRADLE_*`). None : le socle seul
+    #: (`maestro.sandbox.session_env`). Lu par le fournisseur, qui l'applique.
+    env_agent: str | None = None
     #: Canal Slack des notifications de supervision (`MAESTRO_SLACK_CANAL`), ou
     #: None : le notificateur de run (#105, maestro.supervision) refuse alors de
     #: se construire — pas de canal, pas de notification.
@@ -341,6 +346,7 @@ class Settings:
             isolation_image=(getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
             or None,
+            env_agent=(getenv("MAESTRO_AGENT_ENV") or "").strip() or None,
             slack_canal=(getenv("MAESTRO_SLACK_CANAL") or "").strip() or None,
             openai_api_key=getenv("OPENAI_API_KEY") or None,
             openai_base_url=getenv("OPENAI_BASE_URL", "").strip()
