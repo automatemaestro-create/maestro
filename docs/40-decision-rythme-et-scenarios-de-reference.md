@@ -282,6 +282,18 @@ run a laissé dans sa racine. La grille a dix lignes :
 Une installation ratée laisse les lignes suivantes **non jouées**, comptées comme manquées. Un juge
 qui s'abstient ne compte ni pour ni contre.
 
+**Un livrable qui n'a rien à installer n'est pas mis à zéro** (#1744). Une installation que le
+livrable ne déclare pas manque, mais elle ne bloque rien : les lignes suivantes se jouent. Un projet
+qui dit lui-même n'avoir rien à installer, ou rien à construire, tient la ligne. C'est le cas d'un
+projet écrit avec la seule bibliothèque standard, ou de pages servies telles quelles. Le lecteur
+nomme cette étape avec ce que le projet en dit, et les lignes suivantes, jouées sans elle, le
+vérifient. Le lint, le formatage, les types et les tests ont toujours du code à vérifier : ils ne
+s'excusent jamais ainsi. Un fichier que les pièces montrent tronqué le dit, et une question peut le
+nommer pour le lire plus loin. Au passage `20261118-125220` de `club-season`, le `LISEZ-MOI.md` de
+l'agent seul déclarait à sa fin la commande de ses tests et « aucune bibliothèque à installer ». Le
+modèle n'en avait vu que le début, et la grille rendait 0/7 à un livrable qui tenait ses 54
+critères.
+
 **La durée d'une commande n'est jamais un verdict** (#1681). Une commande se joue dans le délai que
 le livrable lui laisse : la limite du job qui joue cette vérification dans son intégration
 continue, même par une autre commande (celle de l'hébergement quand le projet n'en pose aucune), ou

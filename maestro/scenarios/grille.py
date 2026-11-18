@@ -40,7 +40,13 @@ lecture, donc par le même biais s'il y en a un.
 personne qui découvre le dépôt : installer, puis vérifier, puis construire, puis
 servir. Une installation qui échoue laisse les lignes suivantes **non jouées**
 (elles n'avaient pas de quoi passer), un build qui échoue laisse les pages non
-jouées, et une non jouée compte comme manquée. Les trois lignes jugées le sont
+jouées, et une non jouée compte comme manquée. Une installation que le livrable ne
+déclare pas ne bloque rien : elle manque, et les suivantes se jouent (#1744). Un
+projet qui dit n'avoir rien à installer ou rien à construire (une seule bibliothèque
+standard, des pages servies telles quelles) tient la ligne : le lecteur nomme l'étape
+avec ce que le projet en dit (`UNNEEDED:`), et les lignes suivantes, jouées sans elle,
+le vérifient. Le lint, le formatage, les types et les tests ont toujours du code à
+vérifier : ils ne s'excusent jamais ainsi. Les trois lignes jugées le sont
 **après**, sur ce que le dépôt porte : un juge injoignable s'abstient (« non
 jugé »), et une abstention ne compte ni pour ni contre.
 
@@ -90,6 +96,12 @@ tronquée, tous les dossiers suivis — et nomme, question par question, les fic
 ou les motifs à lire. Le banc les résout contre la liste **entière** des fichiers
 suivis, et seul un fichier suivi se lit. Aucune table de chemins : le modèle sait où
 une intégration continue s'écrit, le dépôt dit s'il en porte une.
+
+Un fichier montré tronqué **le dit** à sa fin, avec ce qu'il en montre, et une question
+peut le nommer pour le lire plus loin (`CARACTERES_PAR_FICHIER_NOMME`) : il est alors
+montré une fois, à la place de son début (#1744). Un README écrit pour une personne qui
+ne code pas garde souvent pour sa fin ce qui s'adresse aux techniciens : la commande des
+tests, ce qu'il n'y a pas à installer.
 
 Le lecteur de commandes sait aussi **sur quel système** le clone se rejoue
 (`PosteDuBanc.systeme`) : un projet qui déclare une commande pour Windows et une
@@ -240,6 +252,11 @@ CHANGEMENTS_LISTES = 200
 FICHIERS_CHANGES_LUS = 8
 #: Les fichiers qu'une question nomme, lus en plus des autres pour elle seule.
 FICHIERS_NOMMES_LUS = 6
+#: Un fichier qu'une question nomme se lit au-delà du début que les pièces en montrent, jusqu'à
+#: cette longueur (#1744). Au passage `20261118-125220`, le `LISEZ-MOI.md` de l'agent seul
+#: faisait 4 379 caractères, et ses commandes en fermaient la fin. Les six fichiers nommés
+#: tiennent ainsi ensemble sous 72 000 caractères.
+CARACTERES_PAR_FICHIER_NOMME = 12_000
 
 #: Les en-têtes de la réponse du lecteur de commandes, une ligne chacun. Lire un champ
 #: que le modèle a été chargé de remplir est une **forme**, comme `VERDICT:` dans le
@@ -259,6 +276,13 @@ CHAMP_DELAIS = "DELAIS"
 #: Les lignes dont le projet dit rendre le verdict ailleurs que sur le poste, sans commande
 #: qui l'y joue d'ici (#1695). Un nom neuf qui voyage naît en anglais (docs/55 § 3).
 CHAMP_AILLEURS = "ELSEWHERE"
+#: Les étapes de préparation dont le projet dit qu'elles n'ont rien à faire pour lui : aucune
+#: dépendance à installer, rien à construire (#1744).
+CHAMP_SANS_BESOIN = "UNNEEDED"
+#: Les lignes qui préparent le livrable au lieu de le vérifier : un projet peut n'avoir rien à
+#: faire pour elles. Il a toujours du code à vérifier, et le lint, le formatage, les types et les
+#: tests ne s'excusent jamais ainsi.
+AXES_PREPARATOIRES: tuple[str, ...] = (AXE_INSTALLATION, AXE_BUILD)
 AUCUNE = "aucune"
 
 #: Une ligne `CHAMP: valeur`. Des blancs **de ligne** seulement (`[ \t]`) : `\s`
@@ -275,10 +299,11 @@ _DELAI = re.compile(
     r"(?:[ \t]*\((?P<origine>[^()]*)\))?"
 )
 
-#: Un verdict du champ `ELSEWHERE:` : `CHAMP=où il se rend (d'où le lecteur le tient)`. L'endroit
-#: ne porte ni virgule ni parenthèse ; l'origine, entre parenthèses, peut porter des virgules.
-_AILLEURS = re.compile(
-    r"(?P<champ>[A-Z]+)[ \t]*=[ \t]*(?P<systeme>[^=(),]*[^=(),\s])"
+#: Une entrée des champs `ELSEWHERE:` et `UNNEEDED:` : `CHAMP=ce que le lecteur en dit (d'où il le
+#: tient)`. Ce qu'il en dit ne porte ni virgule ni parenthèse ; l'origine, entre parenthèses, peut
+#: porter des virgules.
+_CHAMP_DIT = re.compile(
+    r"(?P<champ>[A-Z]+)[ \t]*=[ \t]*(?P<dit>[^=(),]*[^=(),\s])"
     r"(?:[ \t]*\((?P<origine>[^()]*)\))?"
 )
 
@@ -312,6 +337,12 @@ SYSTEME_COMMANDES = (
     f"celle qui se joue ici et nomme cet environnement sous {CHAMP_AILLEURS}. Le système où "
     "tourne son intégration continue ne suffit pas : il faut que le projet dise que ce "
     "verdict se rend là-bas et pas ici.\n"
+    "Une étape qui prépare le livrable peut n'avoir rien à faire pour lui : un projet sans "
+    "dépendance n'a rien à installer, un projet qui se sert tel quel n'a rien à construire. "
+    "Quand le projet le dit lui-même, nomme cette étape sous "
+    f"{CHAMP_SANS_BESOIN}, avec ce qu'il en dit. S'il ne le dit pas, elle reçoit « {AUCUNE} » "
+    "comme les autres. Le lint, le formatage, les types et les tests ont toujours du code à "
+    "vérifier : ils ne se nomment jamais ainsi.\n"
     "Réponds par exactement ces lignes, et rien d'autre :\n"
     f"{CHAMPS_COMMANDES[AXE_INSTALLATION]}: la commande qui installe les dépendances, ou {AUCUNE}\n"
     f"{CHAMPS_COMMANDES[AXE_LINT]}: la commande du linter, ou {AUCUNE}\n"
@@ -328,7 +359,10 @@ SYSTEME_COMMANDES = (
     f"(d'où vient ce délai)`, séparés par des virgules, ou {AUCUNE}\n"
     f"{CHAMP_AILLEURS}: pour chaque commande ci-dessus dont le projet dit rendre le verdict "
     "ailleurs que sur ce système sans en déclarer une qui l'y joue d'ici, `CHAMP=où ce "
-    f"verdict se rend (d'où tu le tiens)`, séparés par des virgules, ou {AUCUNE}"
+    f"verdict se rend (d'où tu le tiens)`, séparés par des virgules, ou {AUCUNE}\n"
+    f"{CHAMP_SANS_BESOIN}: pour l'installation ou la construction dont le projet dit qu'elle "
+    "n'a rien à faire, `CHAMP=ce qu'il en dit, en quelques mots sans virgule (d'où tu le "
+    f"tiens)`, séparés par des virgules, ou {AUCUNE}"
 )
 
 #: Les lignes qu'un choix de la personne peut écarter, sous le champ que le modèle nomme,
@@ -391,8 +425,10 @@ SYSTEME_LECTURES = (
     "Tu prépares la relecture d'un dépôt de logiciel. On te montre la liste de ses fichiers "
     "suivis — tronquée sur un gros dépôt, ses dossiers étant alors tous nommés — et le "
     "début de quelques-uns. Pour chaque question qu'on te pose, nomme les fichiers suivis "
-    "qu'il faut lire pour y répondre et dont le contenu n'est pas déjà montré : des chemins "
-    "exacts, ou des motifs (`dossier/*.yml`, `dossier/`). Tu ne réponds pas aux questions.\n"
+    "qu'il faut lire pour y répondre et que tu ne vois pas déjà en entier : des chemins "
+    "exacts, ou des motifs (`dossier/*.yml`, `dossier/`). Un fichier dont on ne te montre que "
+    "le début le dit à sa fin (« tronqué ») : nomme-le aussi s'il peut répondre, et il sera "
+    "lu plus loin. Tu ne réponds pas aux questions.\n"
     "Réponds par une ligne par question, sous le champ qu'elle porte : "
     f"`CHAMP: chemins séparés par des virgules`, ou `CHAMP: {AUCUN}`, et rien d'autre."
 )
@@ -543,10 +579,28 @@ class Ailleurs:
 
 
 @dataclass(frozen=True)
+class SansBesoin:
+    """Une étape de préparation dont le livrable dit qu'elle n'a rien à faire pour lui (aucune
+    dépendance à installer, rien à construire) : ce qu'il en dit, et d'où le lecteur le tient
+    (#1744)."""
+
+    dit: str
+    origine: str = ""
+
+    def en_mots(self) -> str:
+        """Ce que la ligne tenue dit."""
+        origine = f" ({self.origine})" if self.origine else ""
+        return f"le livrable dit n'avoir rien à faire ici{origine} : « {self.dit} »"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"says": self.dit, "origin": self.origine}
+
+
+@dataclass(frozen=True)
 class Commandes:
     """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, ses pages, le
-    délai que le livrable laisse à celles qu'il borne, et les lignes dont il rend le verdict
-    ailleurs que sur le poste."""
+    délai que le livrable laisse à celles qu'il borne, les lignes dont il rend le verdict
+    ailleurs que sur le poste, et les étapes de préparation qu'il dit n'avoir rien à faire."""
 
     par_axe: Mapping[str, str] = field(default_factory=dict)
     servir: str = ""
@@ -554,6 +608,7 @@ class Commandes:
     absentes: tuple[str, ...] = ()
     delais: Mapping[str, Delai] = field(default_factory=dict)
     ailleurs: Mapping[str, Ailleurs] = field(default_factory=dict)
+    sans_besoin: Mapping[str, SansBesoin] = field(default_factory=dict)
     brut: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -565,6 +620,7 @@ class Commandes:
             "absentes": list(self.absentes),
             "delais": {axe: delai.to_dict() for axe, delai in self.delais.items()},
             "elsewhere": {axe: verdict.to_dict() for axe, verdict in self.ailleurs.items()},
+            "unneeded": {axe: rien.to_dict() for axe, rien in self.sans_besoin.items()},
             "brut": self.brut,
         }
 
@@ -783,7 +839,9 @@ class Pieces:
     `fichiers` est la liste **entière** des fichiers suivis : seul le texte la tronque, et
     c'est contre elle que se résout ce qu'une ligne nomme. `commits` sont les messages
     entiers des commits, du plus récent au plus ancien. `base` et `changements` disent ce
-    que le livrable change depuis sa base — vides sans base.
+    que le livrable change depuis sa base — vides sans base. `tronques` sont les fichiers lus
+    dont `contenus` ne montre que le début : une question peut les nommer pour les lire plus
+    loin (#1744).
     """
 
     fichiers: tuple[str, ...]
@@ -791,11 +849,13 @@ class Pieces:
     commits: tuple[str, ...]
     base: str = ""
     changements: tuple[tuple[str, str], ...] = ()
+    tronques: frozenset[str] = frozenset()
 
     def en_texte(self, nommes: Sequence[tuple[str, str]] = ()) -> str:
         """Les pièces en un bloc : la liste des fichiers, ce que le livrable change, ce qui est lu.
 
-        `nommes` sont les fichiers que la question a nommés, lus pour elle seule.
+        `nommes` sont les fichiers que la question a nommés, lus pour elle seule. Un fichier
+        nommé dont le début est déjà montré prend sa place : il n'est montré qu'une fois.
         """
         liste = "\n".join(self.fichiers[:FICHIERS_LISTES]) or "(aucun fichier suivi)"
         reste = len(self.fichiers) - FICHIERS_LISTES
@@ -813,9 +873,11 @@ class Pieces:
                 f"Ce que le livrable change depuis sa base `{self.base[:12]}` :\n"
                 f"{changes or '(aucun fichier changé)'}"
             )
+        montres = dict(self.contenus)
+        montres.update(nommes)
         lus = "\n".join(
             f'<fichier chemin="{chemin}">\n{contenu}\n</fichier>'
-            for chemin, contenu in (*self.contenus, *nommes)
+            for chemin, contenu in montres.items()
         )
         return "\n\n".join(
             [f"Fichiers suivis :\n{liste}", *blocs, f"Fichiers lus :\n{lus or '(aucun)'}"]
@@ -862,45 +924,66 @@ def _pieces(copie: Path, base: str = "") -> Pieces:
         if "/" in chemin and chemin.split("/", 1)[0].startswith(".")
     ]
     contenus: list[tuple[str, str]] = []
+    tronques: set[str] = set()
     for chemins, maximum in (
         (changes, FICHIERS_CHANGES_LUS),
         (racine, FICHIERS_LUS),
         (configuration, FICHIERS_DE_CONFIGURATION_LUS),
     ):
         deja = {chemin for chemin, _ in contenus}
-        contenus += _lus(copie, [chemin for chemin in chemins if chemin not in deja], maximum)
+        lus, coupes = _lus(copie, [chemin for chemin in chemins if chemin not in deja], maximum)
+        contenus += lus
+        tronques |= coupes
     return Pieces(
         fichiers=fichiers,
         contenus=tuple(contenus),
         commits=commits,
         base=base,
         changements=changements,
+        tronques=frozenset(tronques),
     )
 
 
-def _lus(copie: Path, chemins: Sequence[str], maximum: int) -> list[tuple[str, str]]:
-    """Les `maximum` premiers fichiers lisibles de `chemins`, et leur début."""
+def _lus(
+    copie: Path,
+    chemins: Sequence[str],
+    maximum: int,
+    caracteres: int = CARACTERES_PAR_FICHIER,
+) -> tuple[list[tuple[str, str]], set[str]]:
+    """Les `maximum` premiers fichiers lisibles de `chemins`, leurs `caracteres` premiers
+    caractères, et ceux qui n'en sont montrés qu'en partie."""
     lus: list[tuple[str, str]] = []
+    tronques: set[str] = set()
     for chemin in chemins:
         if len(lus) >= maximum:
             break
-        texte = _lire(copie / chemin)
-        if texte is not None:
-            lus.append((chemin, texte))
-    return lus
+        lu = _lire(copie / chemin, caracteres)
+        if lu is None:
+            continue
+        texte, tronque = lu
+        lus.append((chemin, texte))
+        if tronque:
+            tronques.add(chemin)
+    return lus, tronques
 
 
-def _lire(chemin: Path) -> str | None:
-    """Le début d'un fichier texte — `None` s'il est trop gros, binaire ou illisible."""
+def _lire(chemin: Path, caracteres: int) -> tuple[str, bool] | None:
+    """Le début d'un fichier texte, et s'il est tronqué — `None` s'il est trop gros, binaire ou
+    illisible.
+
+    Un fichier tronqué le dit à sa fin, avec ce qu'il en montre : le lecteur sait alors qu'il
+    peut le nommer pour le lire plus loin, au lieu de le croire lu (#1744).
+    """
     try:
         if chemin.stat().st_size > OCTETS_LISIBLES:
             return None
         texte = chemin.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    if len(texte) > CARACTERES_PAR_FICHIER:
-        return texte[:CARACTERES_PAR_FICHIER] + "\n[…]"
-    return texte
+    if len(texte) <= caracteres:
+        return texte, False
+    fin = f"[… tronqué : {caracteres} caractères montrés sur {len(texte)}]"
+    return f"{texte[:caracteres]}\n{fin}", True
 
 
 def _lectures(
@@ -912,8 +995,11 @@ def _lectures(
 ) -> tuple[dict[str, tuple[tuple[str, str], ...]], str]:
     """Les fichiers que chaque question nomme, lus — et ce qui l'a été, en mots.
 
-    Une nomination qui n'a pas eu lieu (fournisseur injoignable) ne lit rien de plus :
-    chaque ligne se juge alors sur les seules pièces communes.
+    Un fichier nommé se lit plus loin que le début que les pièces montrent
+    (`CARACTERES_PAR_FICHIER_NOMME`) : un fichier montré tronqué se nomme donc aussi, et seul
+    un fichier montré en entier ne se relit pas. Une nomination qui n'a pas eu lieu
+    (fournisseur injoignable) ne lit rien de plus : chaque ligne se juge alors sur les seules
+    pièces communes.
     """
     if not questions:
         return {}, ""
@@ -932,7 +1018,7 @@ def _lectures(
     except Exception as exc:  # fournisseur injoignable, quota : rien de plus n'est lu
         return {}, f"aucun fichier nommé : {exc}"
     champs = _champs(brut)
-    deja = {chemin for chemin, _ in pieces.contenus}
+    deja = {chemin for chemin, _ in pieces.contenus if chemin not in pieces.tronques}
     nommes: dict[str, tuple[tuple[str, str], ...]] = {}
     for question in questions:
         valeur = champs.get(QUESTIONS_DE_LECTURE[question][0], "")
@@ -942,7 +1028,8 @@ def _lectures(
             if motif and motif.strip(" .").lower() != AUCUN
         ]
         designes = _designes(motifs, pieces.fichiers, deja)
-        nommes[question] = tuple(_lus(copie, designes, FICHIERS_NOMMES_LUS))
+        lus, _coupes = _lus(copie, designes, FICHIERS_NOMMES_LUS, CARACTERES_PAR_FICHIER_NOMME)
+        nommes[question] = tuple(lus)
     detail = " ; ".join(
         f"{QUESTIONS_DE_LECTURE[question][0]} : "
         + (", ".join(chemin for chemin, _ in nommes[question]) or AUCUN)
@@ -1027,6 +1114,7 @@ def commandes_depuis(brut: str) -> Commandes:
         absentes=chemins(CHAMP_ABSENTES, ABSENTES_MAX),
         delais=_delais(valeur(CHAMP_DELAIS)),
         ailleurs=_ailleurs(valeur(CHAMP_AILLEURS)),
+        sans_besoin=_sans_besoin(valeur(CHAMP_SANS_BESOIN)),
         brut=brut or "",
     )
 
@@ -1050,14 +1138,29 @@ def _ailleurs(texte: str) -> dict[str, Ailleurs]:
     ne s'applique à rien, et le premier de chaque ligne fait foi."""
     axes = {champ: axe for axe, champ in CHAMPS_COMMANDES.items()}
     ailleurs: dict[str, Ailleurs] = {}
-    for trouve in _AILLEURS.finditer(texte):
+    for trouve in _CHAMP_DIT.finditer(texte):
         axe = axes.get(trouve.group("champ"))
         if axe is None or axe in ailleurs:
             continue
         ailleurs[axe] = Ailleurs(
-            trouve.group("systeme").strip(), (trouve.group("origine") or "").strip()
+            trouve.group("dit").strip(), (trouve.group("origine") or "").strip()
         )
     return ailleurs
+
+
+def _sans_besoin(texte: str) -> dict[str, SansBesoin]:
+    """Les étapes du champ `UNNEEDED:`, parmi celles qui préparent le livrable — une ligne qui le
+    vérifie ne s'excuse pas ainsi, et la première entrée de chaque ligne fait foi (#1744)."""
+    axes = {CHAMPS_COMMANDES[axe]: axe for axe in AXES_PREPARATOIRES}
+    sans_besoin: dict[str, SansBesoin] = {}
+    for trouve in _CHAMP_DIT.finditer(texte):
+        axe = axes.get(trouve.group("champ"))
+        if axe is None or axe in sans_besoin:
+            continue
+        sans_besoin[axe] = SansBesoin(
+            trouve.group("dit").strip(), (trouve.group("origine") or "").strip()
+        )
+    return sans_besoin
 
 
 def lignes_ecartees(lecteur: Lecteur, choix: Sequence[str], axes: Sequence[str] = AXES) -> Ecartees:
@@ -1103,11 +1206,14 @@ def _jouer_les_commandes(
 ) -> dict[str, Ligne]:
     """Les lignes jouées, dans l'ordre — une installation ratée laisse les suivantes non jouées.
 
-    Une commande sans retour dans son délai ne tranche pas (#1681), ni l'échec d'une
-    ligne dont le livrable rend le verdict ailleurs que sur le poste (#1695). Une
-    installation qui n'a pas abouti pour l'une de ces raisons laisse les suivantes se
-    jouer : un succès est tenu, un échec ne tranche pas. Une ligne écartée par la
-    personne ne se joue pas.
+    Une installation sans commande ne bloque rien (#1744) : elle manque, ou elle est tenue
+    quand le livrable dit n'avoir rien à installer, et les suivantes se jouent. Une ligne non
+    jouée compte comme manquée : jouer les suivantes ne fait rien gagner à un livrable qui
+    échoue, et rend au livrable qui tient ce qu'il tient. Une commande sans retour dans son
+    délai ne tranche pas (#1681), ni l'échec d'une ligne dont le livrable rend le verdict
+    ailleurs que sur le poste (#1695). Une installation qui n'a pas abouti pour l'une de ces
+    raisons laisse les suivantes se jouer : un succès est tenu, un échec ne tranche pas. Une
+    ligne écartée par la personne ne se joue pas.
     """
     lignes: dict[str, Ligne] = {}
     bloquee = illisible
@@ -1121,11 +1227,14 @@ def _jouer_les_commandes(
             lignes[axe] = Ligne(axe, NON_JOUE, bloquee, commande=commande)
             continue
         if not commande:
-            lignes[axe] = Ligne(
-                axe, MANQUE, f"le livrable ne déclare aucune commande pour : {LIBELLES[axe]}"
+            rien = commandes.sans_besoin.get(axe)
+            lignes[axe] = (
+                Ligne(axe, TENU, rien.en_mots())
+                if rien is not None
+                else Ligne(
+                    axe, MANQUE, f"le livrable ne déclare aucune commande pour : {LIBELLES[axe]}"
+                )
             )
-            if axe == AXE_INSTALLATION:
-                bloquee = "l'installation n'a pas de commande : rien n'a de quoi passer"
             continue
         lignes[axe], expiree = _jouer_la_ligne(
             axe,
@@ -1295,6 +1404,11 @@ def _commandes_en_mots(commandes: Commandes) -> str:
         for axe, verdict in commandes.ailleurs.items()
     )
     morceaux.append(f"verdicts rendus ailleurs : {ailleurs or 'aucun'}")
+    rien = ", ".join(
+        LIBELLES[axe] + (f" ({etape.origine})" if etape.origine else "")
+        for axe, etape in commandes.sans_besoin.items()
+    )
+    morceaux.append(f"rien à faire : {rien or 'aucune étape'}")
     return " ; ".join(morceaux)
 
 
