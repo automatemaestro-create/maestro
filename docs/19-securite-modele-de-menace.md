@@ -354,8 +354,17 @@ réponse en trois couches :
   processus de l'autre ;
 - le **réseau**, bouclage compris ;
 - l'**environnement** de la personne, hors ce que Maestro retient ;
-- la vérification d'une tâche, que Maestro joue lui-même au niveau de la personne. Celle de
-  l'outillage joue sous la borne des agents (#1691).
+- la vérification d'une tâche, que Maestro joue lui-même au niveau de la personne. Ses commandes
+  exécutent le code de l'agent. Celle de l'outillage joue sous la borne des agents (#1691), et celle
+  d'une tâche y passera ([docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md), #1728).
+
+**Le régime conteneur, sans le tube du moteur** ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
+décidé le 2026-11-18). Le moteur de Docker Desktop refuse un processus abaissé (#1714), et ouvrir son
+tube à l'agent serait une sortie générale du confinement. L'agent obtiendra donc le conteneur par un
+**courtier** : il demande une commande dans un conteneur, et Maestro compose lui-même ce conteneur
+sur l'espace de la session, sur le contrat de [docs/17 §3](./17-isolation-execution.md). Ce que le
+courtier ouvre, à savoir un verbe, la construction d'une image, le disque du moteur et la frontière
+du conteneur, est nommé au §4 de la note.
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
 n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.

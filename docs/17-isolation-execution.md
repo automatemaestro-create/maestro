@@ -443,6 +443,12 @@ rendrait rien ([docs/10 §8.4](./10-workflow-git.md)). Le tube n'est pas ouvert 
 commande le moteur monte dans un conteneur n'importe quel dossier que la personne peut écrire, et y
 écrit. Ce serait une sortie générale du confinement, pas un aménagement.
 
+**Le régime conteneur reviendra à l'agent par un courtier** ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
+décidé le 2026-11-18, chantier #1724). L'agent demandera une commande dans un conteneur. Maestro le
+composera lui-même, au niveau de la personne, sur le contrat du §3 et sur l'espace de la session, et
+le code de l'agent ne jouera que dedans. Ce qu'il ouvre et ce qu'il ne couvre pas sont écrits
+là-bas, au §4. Tant que le chantier n'est pas livré, le natif reste le régime de l'agent.
+
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
 `tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
 - `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
@@ -493,7 +499,9 @@ commande le moteur monte dans un conteneur n'importe quel dossier que la personn
     tout agent du poste peut le lire ;
 - **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
   niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
-  pas ;
+  pas, mais le code qu'elles exécutent est celui de l'agent : ses tests, ses scripts. Elle passera
+  sous la borne du poste, et par le courtier pour ce qui demande un conteneur
+  ([docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md), #1728) ;
 - **les autres systèmes** : ailleurs que sous Windows, rien n'est abaissé. Le défaut y est `hote`,
   et le conteneur reste l'option qui isole.
 
