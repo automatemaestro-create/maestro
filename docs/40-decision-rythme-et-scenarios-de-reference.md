@@ -317,6 +317,26 @@ livrable n'y était pour rien. Le système où tourne une intégration continue 
 déclaration : sans elle, un échec sur le poste reste un manque. C'est ce que le banc existe pour
 voir, comme le typage du bilan de p5, qui ne passait que sur l'arbre de l'agent.
 
+**Une commande appelle un programme comme le projet le déclare pour ce poste** (#1746). Le banc
+constate chaque programme que les commandes retenues appellent, comme Maestro le fait pour ses
+agents (#1403) : présent ou absent par `type`, lancé ou non par `--version`, dont le code fait foi.
+Un programme absent, ou dont le `--version` échoue, ferait échouer sa commande pour une raison du
+poste. Le lecteur relit alors une fois avec ces faits. Il retient la façon d'appeler ce programme
+que le projet déclare pour ce système, même dans un autre fichier ou pour une autre commande, et
+n'en invente aucune. Sur le poste du banc, `python` est l'alias du Microsoft Store, et il rend le
+code 49. Le livrable seul de `20261118-125220` appelait Python par `py -3` dans son lanceur
+Windows. Le banc jouait le `python` de son `LISEZ-MOI.md`, et ses tests et ses pages manquaient,
+alors que ses 27 tests passaient par `py -3`. Un poste qui lance chaque programme ne fait rien
+relire. Un programme sur lequel il n'a pas répondu ne fait rien relire non plus : ne pas savoir
+n'est pas « absent ». Désactiver l'alias d'exécution du Store est un réglage du poste, donc une
+décision de la personne, jamais un geste du banc.
+
+**Le port d'un service se lit aussi dans ses arguments** (#1746). Le banc exporte `PORT` avant la
+commande qui sert le livrable. Une affectation en préfixe (`PORT=4600 commande`) n'entre que dans
+l'environnement de la commande, et `"$PORT"` se développe avant, à vide. Le lanceur du même livrable
+recevait `--port ''` et tombait. C'était aussi le constat 5 de #1513 : `manage.py runserver "$PORT"`
+servait sur 8000, que le banc ne sondait pas, d'où « sans réponse ».
+
 **Une ligne que la personne a écartée est sans objet** (#1681). C'est le cas du formatage quand elle
 dit « aucun formateur appliqué au dépôt ». Un modèle lit ses choix et nomme les lignes qu'un choix
 exclut en toutes lettres. Ces lignes ne se jouent ni ne se jugent, et ne comptent ni pour ni contre.

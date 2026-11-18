@@ -927,7 +927,10 @@ def servir(
 
     `attendus` donne, page par page, le statut qu'elle doit rendre : `200` pour une
     page servie, `404` pour une page qui ne doit pas exister (le banc comparatif,
-    #1512). Le port est donné à `commande` par la variable `PORT`.
+    #1512). Le port est donné à `commande` par la variable `PORT`, **exportée** avant
+    elle : une affectation en préfixe (`PORT=4600 commande`) n'entre que dans
+    l'environnement de la commande, et `"$PORT"` s'y développerait à vide dans ses
+    propres arguments (`runserver "$PORT"`, `--port "$PORT"`, #1746).
 
     Le serveur tourne dans un fil à part, borné par `DELAI_SERVICE_S` et arrêté avec
     sa descendance à son terme ; les pages sont sondées pendant ce temps, jusqu'à ce
@@ -940,8 +943,9 @@ def servir(
     if port is None:
         return vues, f"aucun port libre à partir de {PORT_SERVICE} pour le servir"
     rendu: list[execution.Execution] = []
+    servie = f"export PORT={port}; {commande}"
     serveur = threading.Thread(
-        target=lambda: rendu.append(poste.jouer(f"PORT={port} {commande}", copie, DELAI_SERVICE_S)),
+        target=lambda: rendu.append(poste.jouer(servie, copie, DELAI_SERVICE_S)),
         daemon=True,
     )
     serveur.start()

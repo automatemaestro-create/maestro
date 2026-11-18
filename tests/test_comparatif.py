@@ -52,13 +52,15 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.machine import ABSENT, NON_SONDE, PRESENT, Programme
 from maestro.providers.base import LimiteUsageAtteinte, SessionAgent
+from maestro.sandbox import verification as execution
 from maestro.sandbox.verification import Execution
 from maestro.scenarios import comparatif as cmp
 from maestro.scenarios import couverture as cv
 from maestro.scenarios import grille as gr
 from maestro.scenarios.api import FIL, ErreurAPI, Reponse
-from maestro.scenarios.gestes import REPONSE_OUTILLAGE, port_de_service
+from maestro.scenarios.gestes import PORT_SERVICE, REPONSE_OUTILLAGE, port_de_service, servir
 from maestro.scenarios.juge import Avis, JugeModele
 from maestro.scenarios.modele import Journal
 from maestro.scenarios.projets import Atelier
@@ -619,7 +621,7 @@ class LecteurFactice:
 class Joueur:
     """Joue une commande sans rien lancer, et retient où : un code par commande, `0` sinon.
 
-    `serveur_s` fait **tenir** le serveur (`PORT=…`) ce temps réel avant de rendre la main,
+    `serveur_s` fait **tenir** le serveur (`export PORT=…`) ce temps réel avant de rendre la main,
     comme un vrai serveur tient sa fenêtre : la sonde a alors le temps de repasser.
     `expirees` sont les commandes qui ne rendent pas la main dans leur délai, et `delais`
     retient le délai donné à chacune.
@@ -640,9 +642,9 @@ class Joueur:
 
     def __call__(self, commande: str, dossier: Path, delai_s: float) -> Execution:
         self.joues.append((commande, dossier))
-        if commande.startswith("PORT=") and self.serveur_s:
+        if commande.startswith("export PORT=") and self.serveur_s:
             time.sleep(self.serveur_s)
-        nue = re.sub(r"^(CI=1|PORT=\d+) ", "", commande)
+        nue = re.sub(r"^(CI=1 |export PORT=\d+; )", "", commande)
         self.delais[nue] = delai_s
         if nue in self.expirees:
             return Execution(code=None, sortie="", duree_s=delai_s, expiree=True)
@@ -717,7 +719,7 @@ def test_la_grille_joue_sur_un_clone_les_commandes_que_le_livrable_declare(
         "CI=1 npm test",
         "CI=1 npm run build",
     ]
-    assert re.fullmatch(r"PORT=\d+ npm start", joues[6])
+    assert re.fullmatch(r"export PORT=\d+; npm start", joues[6])
     # Le lecteur a vu le dépôt commité : ses fichiers, son intégration continue.
     assert ".github/workflows/ci.yml" in lecteur.lus[0] and "non-commite" not in lecteur.lus[0]
     assert "jobs: {}" in lecteur.lus[0]
@@ -878,7 +880,7 @@ def test_une_installation_sans_commande_ne_bloque_pas_ses_suivantes(tmp_path: Pa
         "CI=1 npm test",
         "CI=1 npm run build",
     ]
-    assert re.fullmatch(r"PORT=\d+ npm start", joues[5])
+    assert re.fullmatch(r"export PORT=\d+; npm start", joues[5])
     etats = {ligne.axe: ligne.etat for ligne in grille.lignes}
     assert gr.NON_JOUE not in etats.values()
     assert grille.tenues == len(gr.AXES) - 1
@@ -997,6 +999,188 @@ def test_une_commande_declaree_l_emporte_sur_rien_a_faire(tmp_path: Path) -> Non
     grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), Joueur({"npm run build": 2}))
     assert grille.ligne(gr.AXE_BUILD).etat == gr.MANQUE
     assert grille.ligne(gr.AXE_PAGES).etat == gr.NON_JOUE
+
+
+#: Le lanceur Windows du livrable seul de `20261118-125220` (#1746) : il appelle Python par
+#: `py -3`, et par `python` à défaut. Son `LISEZ-MOI.md`, lui, ne dit que `python`.
+_LANCEUR_WINDOWS = (
+    "@echo off\r\nwhere py >nul 2>nul\r\nif %errorlevel%==0 (\r\n  py -3 lancer.py %*\r\n"
+    "  goto fin\r\n)\r\npython lancer.py %*\r\n:fin\r\n"
+)
+
+
+class LecteurDuPoste:
+    """Un lecteur qui ne répond que d'après ce qu'on lui montre. À la première lecture, il retient
+    la commande du `LISEZ-MOI.md`. Quand on lui dit que le poste ne lance pas `python`, il retient
+    la façon d'appeler Python que le lanceur du projet déclare pour Windows."""
+
+    def __init__(self) -> None:
+        self.lus: list[str] = []
+
+    def rediger(self, systeme: str, prompt: str) -> str:
+        if systeme != gr.SYSTEME_COMMANDES:
+            return "COMMANDES: aucun\nECARTEES: aucune\nPOURQUOI: aucun choix"
+        self.lus.append(prompt)
+        dit_du_poste = (
+            prompt.split("<poste>")[1].split("</poste>")[0] if "<poste>" in prompt else ""
+        )
+        relu = "`python`" in dit_du_poste and "code 49" in dit_du_poste
+        interprete = "py -3" if relu and "py -3 lancer.py" in prompt else "python"
+        return (
+            f"INSTALLATION: aucune\nTESTS: {interprete} -m unittest discover tests\n"
+            f'SERVIR: {interprete} lancer.py --port "$PORT"\nPAGES: /\n'
+            "UNNEEDED: INSTALLATION=aucune bibliothèque à installer (LISEZ-MOI.md)\n"
+        )
+
+    def juger(self, systeme: str, prompt: str) -> Avis:
+        return Avis(nomme=True, pourquoi="tenu")
+
+
+class Constat:
+    """Le constat des programmes, doublé : ce que le poste répond de chacun — non sondé hors de la
+    table —, et ce qu'on lui a demandé."""
+
+    def __init__(self, *reponses: Programme) -> None:
+        self.reponses = {programme.nom: programme for programme in reponses}
+        self.demandes: list[tuple[str, ...]] = []
+
+    def __call__(self, noms: Sequence[str]) -> tuple[Programme, ...]:
+        self.demandes.append(tuple(noms))
+        return tuple(self.reponses.get(nom, Programme(nom, NON_SONDE)) for nom in noms)
+
+
+@AVEC_GIT
+def test_un_programme_que_le_poste_ne_lance_pas_fait_jouer_la_variante_que_le_projet_declare(
+    tmp_path: Path,
+) -> None:
+    """#1746 : le lecteur avait retenu `python`, que le poste ne lance pas (code 49, l'alias du
+    Store), et Tests et Pages servies manquaient. Le lanceur Windows du livrable appelle Python par
+    `py -3`, et par `py -3` ses 27 tests passaient. Le banc dit au lecteur ce que le poste répond
+    des programmes appelés. Le lecteur relit, et la variante que le projet déclare pour ce système
+    se joue."""
+    depot = _depot(
+        tmp_path / "seul",
+        "feat: l'application du club",
+        **{
+            "LISEZ-MOI.md": "# Les Sentiers\n\n- Tests : `python -m unittest discover tests`\n",
+            "Lancer l'application.bat": _LANCEUR_WINDOWS,
+            "lancer.py": "import argparse\n",
+            "tests/test_appli.py": "import unittest\n",
+        },
+    )
+    lecteur = LecteurDuPoste()
+    joueur = Joueur(
+        {"python -m unittest discover tests": 49, 'python lancer.py --port "$PORT"': 49}
+    )
+    constat = Constat(
+        Programme("python", PRESENT, None, code_version=49),
+        Programme("py", PRESENT, "3.13.5", code_version=0),
+    )
+    poste = replace(_poste(joueur), systeme="Windows 11 (10.0.26300, AMD64)", constat=constat)
+    traces: list[tuple[str, str]] = []
+
+    grille = gr.rejouer(
+        depot,
+        tmp_path / "clone",
+        choix=(),
+        lecteur=lecteur,
+        poste=poste,
+        axes=(*gr.AXES_JOUES, gr.AXE_PAGES),
+        trace=lambda libelle, detail: traces.append((libelle, detail)),
+    )
+
+    tests = grille.ligne(gr.AXE_TESTS)
+    assert tests is not None and tests.etat == gr.TENU, tests
+    assert tests.commande == "py -3 -m unittest discover tests"
+    pages = grille.ligne(gr.AXE_PAGES)
+    assert pages is not None and pages.etat == gr.TENU, pages
+    joues = [commande for commande, _ in joueur.joues]
+    assert not any("python" in commande for commande in joues)
+    # Le poste n'est interrogé que sur ce que les commandes retenues appellent.
+    assert constat.demandes == [("python",)]
+    premiere, relue = lecteur.lus
+    assert "<poste>" not in premiere
+    # La relecture reçoit ce que le poste répond, et ce que le lecteur avait retenu d'abord.
+    assert "`python`" in relue.split("<poste>")[1] and "code 49" in relue.split("</poste>")[0]
+    assert "python -m unittest discover tests" in relue.split("<retenues>")[1]
+    assert grille.commandes is not None
+    rapport = grille.commandes.to_dict()
+    assert any("code 49" in fait for fait in rapport["host"])
+    assert "TESTS: python -m unittest discover tests" in rapport["first_reading"]
+    libelles = [libelle for libelle, _ in traces]
+    assert libelles.index("ce que le poste répond des programmes appelés") < libelles.index(
+        "commandes relues selon le poste"
+    )
+
+
+@AVEC_GIT
+@pytest.mark.parametrize(
+    "reponses",
+    [
+        pytest.param(
+            (
+                Programme("npm", PRESENT, "10.9.2", code_version=0),
+                Programme("npx", PRESENT, None, code_version=0),
+            ),
+            id="chaque-programme-se-lance",
+        ),
+        pytest.param(
+            (Programme("npm", NON_SONDE), Programme("npx", PRESENT, None, code_version=None)),
+            id="ne-pas-savoir-n-est-pas-absent",
+        ),
+    ],
+)
+def test_un_poste_qui_ne_dit_aucun_echec_ne_fait_rien_relire(
+    tmp_path: Path, reponses: tuple[Programme, ...]
+) -> None:
+    """Relire coûte un appel au modèle : rien ne se relit tant que le poste lance chaque programme
+    appelé. Un programme sur lequel le poste n'a pas répondu, ou dont le `--version` n'a pas rendu
+    la main, n'est pas un programme qui ne se lance pas."""
+    constat = Constat(*reponses)
+    lecteur, joueur = LecteurFactice(), Joueur()
+    grille = gr.rejouer(
+        _livrable(tmp_path),
+        tmp_path / "clone",
+        choix=("tests : Vitest",),
+        lecteur=lecteur,
+        poste=replace(_poste(joueur), constat=constat),
+    )
+    assert constat.demandes == [("npm", "npx")]
+    assert len(lecteur.lus) == 1
+    assert grille.tenues == len(gr.AXES)
+    assert grille.commandes is not None and grille.commandes.to_dict()["host"] == []
+
+
+class LecteurQuiTombe(LecteurFactice):
+    """Un lecteur dont le fournisseur tombe après la première lecture des commandes."""
+
+    def rediger(self, systeme: str, prompt: str) -> str:
+        if systeme == gr.SYSTEME_COMMANDES and self.lus:
+            raise RuntimeError("fournisseur injoignable")
+        return super().rediger(systeme, prompt)
+
+
+@AVEC_GIT
+def test_une_relecture_injoignable_joue_les_commandes_lues_d_abord(tmp_path: Path) -> None:
+    """Un programme absent du poste fait relire. Si la relecture n'a pas lieu, les commandes lues
+    d'abord se jouent, et le déroulé le dit : la panne du fournisseur ne retire rien au livrable."""
+    constat = Constat(Programme("npm", ABSENT), Programme("npx", PRESENT, "10.9.2", code_version=0))
+    lecteur, joueur = LecteurQuiTombe(), Joueur()
+    traces: list[tuple[str, str]] = []
+    grille = gr.rejouer(
+        _livrable(tmp_path),
+        tmp_path / "clone",
+        choix=("tests : Vitest",),
+        lecteur=lecteur,
+        poste=replace(_poste(joueur), constat=constat),
+        trace=lambda libelle, detail: traces.append((libelle, detail)),
+    )
+    assert len(lecteur.lus) == 1
+    assert [commande for commande, _ in joueur.joues][0] == "CI=1 npm ci"
+    relecture = dict(traces)["commandes relues selon le poste"]
+    assert "fournisseur injoignable" in relecture and "lues d'abord" in relecture
+    assert "`npm` : absent" in dict(traces)["ce que le poste répond des programmes appelés"]
+    assert grille.commandes is not None and grille.commandes.to_dict()["first_reading"] == ""
 
 
 @AVEC_GIT
@@ -1379,6 +1563,29 @@ def test_le_livrable_ne_se_sert_pas_sur_un_port_qu_un_serveur_ipv6_tient(tmp_pat
     with serveur:
         tenu = serveur.getsockname()[1]
         assert port_de_service(tenu) != tenu
+
+
+@pytest.mark.commandes_jouees
+def test_la_commande_qui_sert_le_livrable_lit_son_port_dans_ses_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`py -3 lancer.py --port "$PORT"` recevait `--port ''` (#1746), par le vrai bash.
+
+    Mesuré au rejeu `20261118-150451` : `lancer.py: error: argument --port: invalid int
+    value: ''`. Une affectation en préfixe (`PORT=4600 commande`) n'entre que dans
+    l'environnement de la commande, et `"$PORT"` s'y développe avant, à vide. C'est aussi
+    le constat 5 de #1513 : `manage.py runserver "$PORT"` servait sur 8000, que le banc
+    ne sondait pas.
+    """
+    if execution.interprete() is None:  # pragma: no cover — poste sans bash
+        pytest.skip("aucun bash sur ce poste")
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")  # ce que `jouer_commande` poserait
+    poste = gr.PosteDuBanc(sonde=lambda url: None)
+    commande = """echo "argument=$PORT"; bash -c 'echo "environnement=$PORT"'"""
+    _, sortie = servir(poste, tmp_path, commande=commande, attendus={"/": 200})
+    lu = re.search(r"argument=(\d+) environnement=(\d+)", sortie)
+    assert lu is not None, sortie
+    assert lu[1] == lu[2] and int(lu[1]) >= PORT_SERVICE
 
 
 def test_les_commandes_se_lisent_dans_leurs_champs() -> None:

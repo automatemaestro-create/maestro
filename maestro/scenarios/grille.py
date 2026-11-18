@@ -107,6 +107,16 @@ Le lecteur de commandes sait aussi **sur quel système** le clone se rejoue
 (`PosteDuBanc.systeme`) : un projet qui déclare une commande pour Windows et une
 pour Unix est rejoué par celle du poste.
 
+**Et ce que le poste répond des programmes que ses commandes appellent** (#1746). Le banc
+constate chacun comme Maestro le fait pour ses agents (`maestro.machine.constater`, #1403) :
+présent ou absent par `type`, et lancé par `--version`, dont le code fait foi. Un programme
+absent, ou dont le `--version` échoue, ferait échouer sa commande pour une raison du poste.
+Le lecteur relit alors une fois avec ces faits, et retient la façon de l'appeler que le
+projet déclare pour ce système, même dans un autre fichier ou pour une autre commande (un
+lanceur écrit pour Windows qui appelle Python par `py -3`, quand le README dit `python`). Il
+n'en invente aucune. Un poste qui lance chaque programme ne fait rien relire, et un programme
+sur lequel il n'a pas répondu non plus.
+
 ## Le livrable d'un ticket, sur un dépôt existant (#1544)
 
 Un livrable rejoué **contre une base** (`base`) est ce que `HEAD` ajoute à ce
@@ -128,8 +138,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+from maestro.machine import ABSENT, PRESENT, Programme, constater
 from maestro.machine import systeme as systeme_du_poste
-from maestro.outillage.verification import Delais
+from maestro.outillage.verification import Delais, programmes
 from maestro.sandbox import verification as execution
 from maestro.scenarios.gestes import (
     PAGE_SERVIE,
@@ -322,6 +333,13 @@ SYSTEME_COMMANDES = (
     "son usage exige pour jouer la vérification sur tout le projet. Quand le projet "
     "déclare une même commande en plusieurs variantes selon le système, retiens celle de "
     "ce système. Le serveur reçoit son port dans la variable d'environnement PORT.\n"
+    "On peut aussi te dire ce que ce système répond des programmes qu'appellent les commandes "
+    "que tu as retenues. Un programme qui y est absent, ou dont le `--version` y échoue, ferait "
+    "échouer sa commande pour une raison du système et non du projet. Quand le projet déclare "
+    "pour ce système une autre façon d'appeler ce programme, même dans un autre fichier ou pour "
+    "une autre commande (le lanceur qu'il écrit pour ce système, par exemple), retiens-la pour "
+    "chaque commande qui appelle ce programme. Sinon, garde la commande telle que le projet la "
+    "déclare : tu n'en inventes aucune.\n"
     "Le délai d'une commande est celui que le projet laisse à la vérification qu'elle joue. "
     "Si son intégration continue joue cette vérification, même par une autre commande que "
     "celle que tu retiens (les tests avec d'autres options, une installation par un autre "
@@ -489,14 +507,26 @@ def systeme_du_rejeu() -> str:
     return f"{systeme_du_poste()}, commandes jouées par {bash}"
 
 
+def constat_du_poste(noms: Sequence[str]) -> tuple[Programme, ...]:
+    """Ce que le poste répond de chaque programme de `noms` : présent, et s'il se lance.
+
+    C'est le constat que Maestro fait pour ses agents (`maestro.machine.constater`, #1403),
+    par le bash qui joue les commandes du rejeu : la présence par `type`, le lancement par
+    `--version`, et le code de retour fait foi.
+    """
+    return constater(noms).programmes
+
+
 @dataclass
 class PosteDuBanc:
     """Le poste où le livrable se rejoue : jouer une commande, sonder une page, attendre.
 
     Les vrais gestes par défaut — le bash des agents (`jouer_commande`), une vraie
-    requête (`sonder_page`) ; les tests les doublent. Il satisfait le `Poste` de
-    `maestro.scenarios.gestes.servir`, sans parler à aucune API. `systeme` est ce que
-    le lecteur de commandes sait du poste, pour retenir la variante qui s'y joue.
+    requête (`sonder_page`), le constat des programmes (`constat_du_poste`) ; les tests
+    les doublent. Il satisfait le `Poste` de `maestro.scenarios.gestes.servir`, sans
+    parler à aucune API. `systeme` est ce que le lecteur de commandes sait du poste, pour
+    retenir la variante qui s'y joue, et `constat` ce que le poste répond des programmes
+    que ces commandes appellent (#1746).
     """
 
     joueur: Joueur = jouer_commande
@@ -504,10 +534,15 @@ class PosteDuBanc:
     horloge: Callable[[], float] = time.monotonic
     dormir: Callable[[float], None] = time.sleep
     systeme: str = field(default_factory=systeme_du_rejeu)
+    constat: Callable[[Sequence[str]], Sequence[Programme]] = constat_du_poste
 
     def jouer(self, commande: str, dossier: Path, delai_s: float) -> execution.Execution:
         """Joue `commande` dans `dossier`."""
         return self.joueur(commande, dossier, delai_s)
+
+    def constater(self, noms: Sequence[str]) -> tuple[Programme, ...]:
+        """Ce que le poste répond des programmes `noms`."""
+        return tuple(self.constat(noms))
 
     def sonder_la_page(self, url: str) -> int | None:
         """Le statut que rend `url`, `None` si personne ne répond."""
@@ -600,7 +635,11 @@ class SansBesoin:
 class Commandes:
     """Ce que le lecteur a lu dans le livrable : une commande par ligne jouée, ses pages, le
     délai que le livrable laisse à celles qu'il borne, les lignes dont il rend le verdict
-    ailleurs que sur le poste, et les étapes de préparation qu'il dit n'avoir rien à faire."""
+    ailleurs que sur le poste, et les étapes de préparation qu'il dit n'avoir rien à faire.
+
+    Des commandes relues selon le poste (#1746) portent ce que le poste a répondu des
+    programmes appelés (`poste`) et la réponse de la première lecture (`premiere_lecture`).
+    """
 
     par_axe: Mapping[str, str] = field(default_factory=dict)
     servir: str = ""
@@ -610,6 +649,8 @@ class Commandes:
     ailleurs: Mapping[str, Ailleurs] = field(default_factory=dict)
     sans_besoin: Mapping[str, SansBesoin] = field(default_factory=dict)
     brut: str = ""
+    poste: tuple[str, ...] = ()
+    premiere_lecture: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Les commandes lues en JSON — la réponse brute du lecteur comprise."""
@@ -622,6 +663,8 @@ class Commandes:
             "elsewhere": {axe: verdict.to_dict() for axe, verdict in self.ailleurs.items()},
             "unneeded": {axe: rien.to_dict() for axe, rien in self.sans_besoin.items()},
             "brut": self.brut,
+            "host": list(self.poste),
+            "first_reading": self.premiere_lecture,
         }
 
 
@@ -751,6 +794,20 @@ def rejouer(
             lecteur, choix, pieces, poste.systeme, nommes.get(LECTURE_COMMANDES, ())
         )
         trace("commandes lues dans le livrable", illisible or _commandes_en_mots(commandes))
+        if not illisible:
+            a_jouer = [
+                axe for axe in (*joues, AXE_PAGES) if axe in axes and axe not in ecartees.axes
+            ]
+            commandes = _relire_selon_le_poste(
+                commandes,
+                lecteur,
+                choix,
+                pieces,
+                poste,
+                nommes.get(LECTURE_COMMANDES, ()),
+                a_jouer,
+                trace,
+            )
     # Sans commande à lire, chaque ligne jouée est écartée : elle se range sans se jouer.
     lignes = _jouer_les_commandes(
         copie, commandes or Commandes(), illisible, joues, axes, poste, trace, ecartees
@@ -1068,11 +1125,26 @@ def _lire_commandes(
     pieces: Pieces,
     systeme: str,
     nommes: Sequence[tuple[str, str]] = (),
+    faits: Sequence[str] = (),
+    retenues: str = "",
 ) -> tuple[Commandes, str]:
-    """Ce que le livrable déclare, ligne par ligne — et pourquoi rien, si la lecture a échoué."""
+    """Ce que le livrable déclare, ligne par ligne — et pourquoi rien, si la lecture a échoué.
+
+    `faits` sont ce que le poste répond des programmes que les commandes `retenues` d'une
+    première lecture appellent : la relecture les reçoit (#1746).
+    """
+    constat = ""
+    if faits:
+        constat = (
+            "Ce que ce système répond des programmes que les commandes retenues appellent :\n"
+            "<poste>\n" + "\n".join(f"- {fait}" for fait in faits) + "\n</poste>\n"
+            f"Les commandes retenues à la première lecture :\n<retenues>\n{retenues}\n"
+            "</retenues>\n"
+        )
     prompt = (
         f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
         f"Le système où le clone se rejoue :\n<systeme>{systeme}</systeme>\n"
+        f"{constat}"
         f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte(nommes)}</depot>\n"
         "Quelles commandes ce projet déclare-t-il ?"
     )
@@ -1081,6 +1153,86 @@ def _lire_commandes(
     except Exception as exc:  # fournisseur injoignable, quota : la lecture n'a pas eu lieu
         return Commandes(), f"les commandes du livrable n'ont pas pu être lues : {exc}"
     return commandes_depuis(brut), ""
+
+
+def _relire_selon_le_poste(
+    commandes: Commandes,
+    lecteur: Lecteur,
+    choix: Sequence[str],
+    pieces: Pieces,
+    poste: PosteDuBanc,
+    nommes: Sequence[tuple[str, str]],
+    axes: Collection[str],
+    trace: Callable[[str, str], None],
+) -> Commandes:
+    """Les commandes à jouer, relues une fois quand le poste ne lance pas un programme qu'elles
+    appellent (#1746).
+
+    Le poste dit, de chaque programme que les commandes des lignes `axes` appellent, s'il est là
+    et s'il se lance (`PosteDuBanc.constater`). Un programme absent, ou dont le `--version`
+    échoue, ferait échouer sa commande pour une raison du poste. Le lecteur relit alors avec ces
+    faits, et retient la façon de l'appeler que le projet déclare pour ce système, s'il en déclare
+    une. Un programme sur lequel le poste n'a pas répondu ne fait rien relire : ne pas savoir n'est
+    pas « absent ». Une relecture qui n'a pas lieu laisse jouer les commandes lues d'abord.
+    """
+    noms = _programmes_appeles(commandes, axes)
+    if not noms:
+        return commandes
+    constat = poste.constater(noms)
+    faits = tuple(_programme_en_mots(programme) for programme in constat)
+    trace("ce que le poste répond des programmes appelés", " ; ".join(faits))
+    if not any(_ne_se_lance_pas(programme) for programme in constat):
+        return commandes
+    relues, illisible = _lire_commandes(
+        lecteur, choix, pieces, poste.systeme, nommes, faits=faits, retenues=commandes.brut
+    )
+    if illisible:
+        trace(
+            "commandes relues selon le poste", f"{illisible} : les commandes lues d'abord se jouent"
+        )
+        return commandes
+    relues = replace(relues, poste=faits, premiere_lecture=commandes.brut)
+    trace("commandes relues selon le poste", _commandes_en_mots(relues))
+    return relues
+
+
+def _programmes_appeles(commandes: Commandes, axes: Collection[str]) -> tuple[str, ...]:
+    """Les programmes que les commandes des lignes `axes` appellent, chacun une fois, dans leur
+    ordre — lus par le lexique commun des commandes (`maestro.outillage.verification.programmes`),
+    jamais sur une liste de piles."""
+    lues = [commandes.par_axe.get(axe, "") for axe in AXES_JOUES if axe in axes]
+    if AXE_PAGES in axes:
+        lues.append(commandes.servir)
+    vus: dict[str, None] = {}
+    for commande in (lue for lue in lues if lue):
+        for nom in programmes(commande):
+            vus.setdefault(nom, None)
+    return tuple(vus)
+
+
+def _ne_se_lance_pas(programme: Programme) -> bool:
+    """Le poste a-t-il répondu que ce programme ne se lance pas ? Absent, ou un `--version` qui a
+    rendu un code non nul. Sans réponse du poste, on ne sait pas, et ce n'est pas un non."""
+    if programme.etat == ABSENT:
+        return True
+    return programme.etat == PRESENT and programme.code_version not in (None, 0)
+
+
+def _programme_en_mots(programme: Programme) -> str:
+    """Ce que le poste a répondu d'un programme, en une ligne — ce que le lecteur relit."""
+    nom = f"`{programme.nom}`"
+    if programme.etat == ABSENT:
+        return f"{nom} : absent de ce système (`type` ne le trouve pas)"
+    if programme.etat != PRESENT:
+        return f"{nom} : non sondé, le poste n'a pas répondu"
+    if programme.code_version is None:
+        return f"{nom} : présent, `{programme.nom} --version` n'a pas rendu la main"
+    if programme.code_version != 0:
+        return (
+            f"{nom} : présent, mais `{programme.nom} --version` y échoue "
+            f"(code {programme.code_version})"
+        )
+    return f"{nom} : se lance" + (f", version {programme.version}" if programme.version else "")
 
 
 def _champs(brut: str) -> dict[str, str]:

@@ -160,11 +160,17 @@ class Programme:
 
     `etat` vaut `PRESENT`, `ABSENT` ou `NON_SONDE`. `version` n'existe que pour un
     programme présent dont le `--version` a rendu un numéro ; `None` sinon.
+
+    `code_version` est le code qu'a rendu son `--version`, `None` s'il n'a pas été lancé ou
+    n'a pas rendu la main. Un code non nul dit que le poste ne le lance pas comme on
+    l'appelle, ou que le programme ignore `--version` : le constat ne tranche pas entre les
+    deux, le modèle qui le lit en juge (#1746).
     """
 
     nom: str
     etat: str
     version: str | None = None
+    code_version: int | None = None
 
     def ligne(self) -> str:
         """La ligne de la section, pour ce programme."""
@@ -390,8 +396,15 @@ def _sonder(
         elif presence.code != 0:
             trouves.append(Programme(nom, ABSENT))
         else:
-            version = _version(jouer(f"{shlex.quote(nom)} --version", delais.version_s))
-            trouves.append(Programme(nom, PRESENT, version=version))
+            essai = jouer(f"{shlex.quote(nom)} --version", delais.version_s)
+            trouves.append(
+                Programme(
+                    nom,
+                    PRESENT,
+                    version=_version(essai),
+                    code_version=None if essai is None else essai.code,
+                )
+            )
     return replace(machine, version_shell=version_shell, programmes=tuple(trouves))
 
 
