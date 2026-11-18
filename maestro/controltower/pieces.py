@@ -149,6 +149,7 @@ from maestro.outillage.modele import (
     Analyse,
     Constats,
     Entree,
+    FichierGarde,
     Lecture,
     Recommandation,
 )
@@ -163,10 +164,17 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
     sujet_de,
 )
-from maestro.outillage.recommandation import recommander
+from maestro.outillage.recommandation import (
+    a_la_suite,
+    avertissement,
+    garde_de,
+    qui_garde,
+    recommander,
+)
 from maestro.outillage.redaction import PORTEE_FICHIER, Fichier, raison_stable, rediger
 from maestro.outillage.verification import (
     ECHOUEE,
+    USAGE_GARDE,
     VERIFIEE,
     CommandeEcrite,
     Verificateur,
@@ -470,7 +478,12 @@ class ServicePieces:
         if not revoir:
             connues = _verdicts_du_fil(fil)
             return await asyncio.to_thread(
-                self._chercher, matiere, deja, connues, d_abord=tuple(d_abord)
+                self._chercher,
+                matiere,
+                deja,
+                connues,
+                d_abord=tuple(d_abord),
+                gardees=_gardes_du_fil(fil),
             )
         matiere, revus = await self._revue(matiere)
         return await asyncio.to_thread(
@@ -758,7 +771,7 @@ class ServicePieces:
                 fichier,
                 source=piece.source,
                 frontiere=frontiere,
-                verifications=piece.verifications,
+                verifications=_des_commandes(piece.verifications),
                 corrections=piece.corrections_prises,
             )
             ecriture = rapport.ecritures[0] if rapport.ecritures else None
@@ -805,7 +818,7 @@ class ServicePieces:
                     fichier,
                     source=piece.source,
                     frontiere=FrontiereEcriture.pour(espace.path, projet.perimetre),
-                    verifications=piece.verifications,
+                    verifications=_des_commandes(piece.verifications),
                     corrections=piece.corrections_prises,
                 )
                 ecriture = rapport.ecritures[0] if rapport.ecritures else None
@@ -978,6 +991,7 @@ class ServicePieces:
         revoir: bool = False,
         revus: Mapping[str, Verification] | None = None,
         d_abord: tuple[str, ...] = (),
+        gardees: Mapping[tuple[str, str, str], Verification] | None = None,
     ) -> PieceProposee | None:
         """La première pièce qui changerait le disque et n'a pas été tranchée — **bloquant**.
 
@@ -992,6 +1006,12 @@ class ServicePieces:
         valent : le reste se rejoue sur le projet construit — et l'a déjà été par la
         revue (`revus`, #1381), dont les verdicts sont repris tels quels, « à vérifier »
         compris : rien n'est joué deux fois dans la même revue.
+
+        Une pièce qui écrirait dans un fichier que le projet **garde** joue ce qui le garde
+        sur une copie qui la porte (#1716, `Verificateur.verifier_garde`) : son verdict
+        rejoint ceux de ses commandes, et sa raison le dit. `gardees` sont ceux que le fil a
+        déjà montrés, par chemin, texte d'après et commande : la même pièce sur le même
+        fichier ne se rejoue pas.
         """
         racine, projet = matiere.racine, matiere.projet
         portees = portees_declarees(racine)
@@ -1051,7 +1071,36 @@ class ServicePieces:
             prevision = prevoir(racine, fichier, frontiere=frontiere)
             if not prevision.ecrirait or (fichier.chemin, empreinte(fichier.contenu)) in deja:
                 continue
-            return _proposee(matiere, entree, fichier, prevision, verdicts, rang, len(plan))
+            garde = (
+                garde_de(fichier.chemin, matiere.constats.fichiers_gardes)
+                if prevision.avant is not None
+                else None
+            )
+            jouee = (
+                None
+                if garde is None
+                else (gardees or {}).get(
+                    (fichier.chemin, _empreinte_de(prevision.apres), garde.commande.strip())
+                )
+                or verificateur.verifier_garde(
+                    racine,
+                    garde,
+                    chemin=fichier.chemin,
+                    texte=prevision.apres or "",
+                    perimetre=projet.perimetre,
+                    installation=installation_de(matiere.constats),
+                )
+            )
+            return _proposee(
+                matiere,
+                entree,
+                fichier,
+                prevision,
+                verdicts,
+                rang,
+                len(plan),
+                garde=(garde, jouee) if garde is not None and jouee is not None else None,
+            )
         return None
 
 
@@ -1088,9 +1137,20 @@ def _proposee(
     verdicts: Sequence[Verification],
     rang: int,
     total: int,
+    *,
+    garde: tuple[FichierGarde, Verification] | None = None,
 ) -> PieceProposee:
-    """La pièce telle que la carte la montrera — et telle que l'accord l'écrira."""
+    """La pièce telle que la carte la montrera — et telle que l'accord l'écrira.
+
+    `garde` (#1716) : ce que le projet garde au chemin de la pièce, et le verdict de ce qui
+    le garde, joué sur une copie qui la porte. Il suit les verdicts des commandes sur la
+    carte, et la raison commence par lui ; ce qui se tire des commandes — l'échec d'une
+    correction, les commandes dites ou proposées — ne lit que les leurs.
+    """
     projet = matiere.projet
+    raison = _raison_de_la_piece(entree, prevision)
+    if garde is not None:
+        raison = _raison_gardee(raison, entree, *garde)
     return PieceProposee(
         projet_id=projet.id,
         projet_nom=projet.nom,
@@ -1098,7 +1158,7 @@ def _proposee(
         chemin=fichier.chemin,
         nom=entree.nom,
         nature=entree.type,
-        raison=_raison_de_la_piece(entree, prevision),
+        raison=raison,
         role=fichier.role,
         portee=fichier.portee,
         contenu=fichier.contenu,
@@ -1113,7 +1173,7 @@ def _proposee(
             if prevision.bloc
             else SORT_REECRIT
         ),
-        verifications=tuple(verdicts),
+        verifications=(*verdicts, *((garde[1],) if garde is not None else ())),
         correction=_phrase_portee(matiere.corrections, fichier.contenu),
         echec=_echec_de_correction(matiere.constats, verdicts),
         rang=rang,
@@ -1170,6 +1230,61 @@ def _raison_de_la_piece(entree: Entree, prevision: Prevision) -> str:
     if prevision.bloc or prevision.avant is None:
         return entree.raison
     return raison_stable(entree)
+
+
+def _raison_gardee(
+    raison: str, entree: Entree, garde: FichierGarde, verdict: Verification
+) -> str:
+    """La raison d'une pièce qui écrirait dans un fichier gardé, **après** avoir joué sa garde.
+
+    L'avertissement de l'analyse (« peut faire rougir », `avertissement`) cède la place au
+    verdict, qui ouvre la raison : la pièce tient, elle fait rougir ce qui garde le fichier,
+    ou rien n'a pu trancher — et alors l'avertissement reste, avec ce qui a empêché de jouer.
+    La sortie de la commande n'est pas recopiée : la carte la montre sous les commandes.
+    """
+    chemin = entree.chemin
+    suite = raison.removeprefix(f"{avertissement(chemin, garde)} ")
+    commande = f"`{verdict.commande}`"
+    if verdict.etat == VERIFIEE:
+        tete = (
+            f"✓ {qui_garde(chemin, garde)}, et cette pièce tient : {commande}, qui le vérifie, "
+            "passe sur une copie du projet qui la porte."
+        )
+    elif verdict.etat == ECHOUEE:
+        tete = (
+            f"✗ cette pièce fait rougir {commande} : {qui_garde(chemin, garde)}, et sur une "
+            "copie du projet, la commande passe sans la pièce et échoue avec — sa sortie est "
+            f"sous les commandes. {_sans_ecriture_qui_tienne(entree)}"
+        )
+    else:
+        jouee = f"{commande} : " if verdict.commande else ""
+        tete = (
+            f"{avertissement(chemin, garde)} Maestro n'a pas pu le vérifier sur une copie qui "
+            f"porte cette pièce — {jouee}{verdict.raison.rstrip('.')}."
+        )
+    return a_la_suite(tete, suite)
+
+
+def _sans_ecriture_qui_tienne(entree: Entree) -> str:
+    """Pourquoi Maestro n'a pas d'autre écriture à proposer, et ce que la personne peut faire.
+
+    Maestro n'écrit que son bloc, entre les balises qui le disent à lui (docs/38 §4.2), et ne
+    touche jamais au reste d'un fichier qui est au projet : la place ne peut venir que de là.
+    Une pièce que la personne accepte après avoir fait de la place se rejoue sur le fichier
+    changé (`PieceChangee`), garde comprise.
+    """
+    if entree.type == "pont":
+        pourquoi = (
+            "Maestro n'a pas d'écriture plus courte : un pont tient en une ligne (@AGENTS.md), "
+            "entre les deux balises qui la disent à Maestro"
+        )
+    else:
+        pourquoi = "Maestro n'a pas d'écriture plus courte de ce bloc"
+    return (
+        f"{pourquoi}, et la place ne peut venir que du reste de {entree.chemin}, qui est au "
+        f"projet. Refusez cette pièce, ou faites de la place dans {entree.chemin} avant de "
+        "l'accepter : Maestro la rejouera sur le fichier changé."
+    )
 
 
 def _phrase_portee(corrections: Sequence[CorrectionPrise], contenu: str) -> str:
@@ -1272,10 +1387,38 @@ def _verdicts_du_fil(fil: Sequence[MessageChat]) -> dict[str, Verification]:
     for message in fil:
         if message.piece is None:
             continue
-        for verdict in message.piece.verifications:
+        for verdict in _des_commandes(message.piece.verifications):
             if verdict.etat in _JOUES:
                 verdicts[verdict.commande] = verdict
     return verdicts
+
+
+def _gardes_du_fil(fil: Sequence[MessageChat]) -> dict[tuple[str, str, str], Verification]:
+    """Les verdicts de garde **joués** que les pièces du fil ont portés (#1716).
+
+    Rangés par chemin, empreinte du texte d'après et commande : c'est ce dont le verdict
+    dépend. Un fichier qui a bougé depuis, ou une autre commande lue, se rejoue.
+    """
+    gardees: dict[tuple[str, str, str], Verification] = {}
+    for message in fil:
+        piece = message.piece
+        if piece is None:
+            continue
+        for verdict in piece.verifications:
+            if verdict.usage == USAGE_GARDE and verdict.etat in _JOUES:
+                cle = (piece.chemin, _empreinte_de(piece.texte_apres), verdict.commande)
+                gardees[cle] = verdict
+    return gardees
+
+
+def _des_commandes(verdicts: Sequence[Verification]) -> tuple[Verification, ...]:
+    """Les verdicts des commandes que la pièce écrit — sans celui de sa garde (#1716).
+
+    Le verdict de garde juge une copie qui porte la pièce, pas une commande de l'outillage :
+    au manifeste, ou repris pour une autre pièce, il se lirait comme le verdict d'une
+    commande que le projet joue tel qu'il est.
+    """
+    return tuple(v for v in verdicts if v.usage != USAGE_GARDE)
 
 
 def _a_revoir(projet: Projet) -> bool:
