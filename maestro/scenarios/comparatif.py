@@ -76,8 +76,13 @@ porte trois choses de plus que p5, et le banc s'en sert des deux côtés :
 
 Le rapport compte les **critères tenus** de chaque côté, les gestes de la reprise,
 raconte chaque nuit, et dit pour l'agent seul s'il a bouclé le projet **d'un trait**
-(`Passage.d_un_trait`) : c'est ce qui vérifie que le projet dépasse une session. La
+(`Passage.d_un_trait`) : c'est ce qui vérifie que le projet dépasse une session. Un
+non nomme sa cause, lue dans la première session et dans la couverture (#1736). La
 durée comparée est la durée **active** : la nuit n'y entre pas.
+
+`club` tient en une session : la session seule l'a bouclé d'un trait (#1513). Le
+terrain du go/no-go est `club-season`, le même club sur une saison entière, avec
+54 critères (#1736). Le projet grandit, le jour reste de trente minutes.
 
 ## Trois issues, et la troisième ne compte pas
 
@@ -571,6 +576,17 @@ class Passage:
     nuit_s: float | None = None
     tours: tuple[Tour, ...] = ()
     couverture: Couverture | None = None
+    tokens_sans_cout: int = 0
+
+    @property
+    def cout_plancher(self) -> bool:
+        """Le coût n'est-il qu'un plancher ? — des tokens consommés n'ont pas de prix (#1280).
+
+        C'est le cas d'une session coupée avant son résultat, celle que la nuit ferme en
+        plein travail : l'adaptateur relève ses tokens tour par tour, mais ne tarife
+        qu'au résultat, qui n'est jamais venu (#1736). Le banc n'invente pas leur prix.
+        """
+        return self.cout_usd is not None and self.tokens_sans_cout > 0
 
     @property
     def compte(self) -> bool:
@@ -612,6 +628,7 @@ class Passage:
             "duree_s": None if self.duree_s is None else round(self.duree_s, 3),
             "cout_usd": self.cout_usd,
             "cout_source": self.cout_source,
+            "unpriced_tokens": self.tokens_sans_cout,
             "cout_postes": dict(self.cout_postes),
             "gestes": None if self.gestes is None else len(self.gestes),
             "detail_gestes": None if self.gestes is None else list(self.gestes),
@@ -962,6 +979,8 @@ def jouer_seul(
     duree = horloge() - debut
     journal.note("session soldée", f"{issue} — {motif}")
     cout = depense.total.cost_usd
+    # Une session fermée le soir n'a pas rendu de résultat : ses tokens restent sans prix.
+    sans_cout = max(depense.total.unpriced_tokens, 0)
     return Passage(
         cote=COTE_SEUL,
         rang=rang,
@@ -970,6 +989,7 @@ def jouer_seul(
         duree_s=duree,
         cout_usd=cout,
         cout_source="rapporté par l'adaptateur" if cout is not None else "non rapporté",
+        tokens_sans_cout=sans_cout,
         gestes=tuple(gestes),
         livrable=str(etabli),
         modele=modele,
@@ -1274,8 +1294,13 @@ def en_markdown(comparatif: Comparatif) -> str:
     }
     if objectif.criteres:
         noms[GRANDEUR_CRITERES] = (f"Critères tenus (sur {len(objectif.criteres)})", _nombre)
+    planchers = {c for c in cotes if any(p.cout_plancher for p in comparatif.comptes(c))}
     for grandeur, (libelle, forme) in noms.items():
-        cellules = [_mesure_en_mots(comparatif.mesures(c)[grandeur], forme) for c in cotes]
+        cellules = [
+            ("≥ " if grandeur == GRANDEUR_COUT and c in planchers else "")
+            + _mesure_en_mots(comparatif.mesures(c)[grandeur], forme)
+            for c in cotes
+        ]
         fin = ""
         if rapports:
             rapport = rapports.get(grandeur)
@@ -1284,7 +1309,13 @@ def en_markdown(comparatif: Comparatif) -> str:
     lignes += [
         "",
         "Médiane sur les passages comptés, puis l'étendue (du plus petit au plus grand) et "
-        "son rapport à la médiane. Un passage empêché n'entre dans aucune médiane.",
+        "son rapport à la médiane. Un passage empêché n'entre dans aucune médiane."
+        + (
+            " Un coût précédé de « ≥ » est un plancher : des tokens consommés n'ont pas de "
+            "prix, ceux d'une session coupée avant son résultat."
+            if planchers
+            else ""
+        ),
         "",
         "## La grille, ligne par ligne",
         "",
@@ -1343,8 +1374,15 @@ def _passage_en_markdown(passage: Passage) -> list[str]:  # noqa: C901
         "",
         f"- **motif** : {passage.motif}",
         f"- **durée** : {_duree(passage.duree_s)}",
-        f"- **coût** : {_dollars(passage.cout_usd)} ({passage.cout_source or '—'})"
-        + _postes_en_mots(passage.cout_postes),
+        f"- **coût** : {'≥ ' if passage.cout_plancher else ''}{_dollars(passage.cout_usd)} "
+        f"({passage.cout_source or '—'})"
+        + _postes_en_mots(passage.cout_postes)
+        + (
+            f" — un plancher : {passage.tokens_sans_cout} tokens sans prix, ceux d'une "
+            "session coupée avant son résultat"
+            if passage.cout_plancher
+            else ""
+        ),
     ]
     if passage.gestes is not None:
         detail = _gestes_en_mots(passage.gestes)
@@ -1370,7 +1408,7 @@ def _passage_en_markdown(passage: Passage) -> list[str]:  # noqa: C901
             )
         )
     if passage.tours and passage.couverture is not None:
-        lignes.append(f"- **d'un trait** : {_d_un_trait_en_mots(passage.d_un_trait)}")
+        lignes.append(f"- **d'un trait** : {_d_un_trait_en_mots(passage)}")
     if passage.couverture is not None:
         lignes += _couverture_en_markdown(passage.couverture)
     if passage.grille is not None:
@@ -1401,8 +1439,14 @@ def _passage_en_markdown(passage: Passage) -> list[str]:  # noqa: C901
     return lignes
 
 
-def _d_un_trait_en_mots(d_un_trait: bool | None) -> str:
-    """Ce que dit `Passage.d_un_trait`, pour qui lit le rapport."""
+def _d_un_trait_en_mots(passage: Passage) -> str:
+    """Ce que dit `Passage.d_un_trait`, pour qui lit le rapport — et, sur un non, sa cause.
+
+    La cause se lit dans la première session et dans la couverture, jamais dans un texte
+    de l'agent : c'est elle qui dit pourquoi le projet a dépassé une session (#1736).
+    Une première session qui a échoué ne prouve rien du projet, et le rapport le dit.
+    """
+    d_un_trait = passage.d_un_trait
     if d_un_trait is None:
         return "on ne sait pas — des critères n'ont pas pu être jugés"
     if d_un_trait:
@@ -1410,7 +1454,39 @@ def _d_un_trait_en_mots(d_un_trait: bool | None) -> str:
             "oui — la première session l'a dit terminé, et tous les critères sont tenus : "
             "ce projet tient en une session"
         )
-    return "non — la première session ne l'a pas bouclé : le projet dépasse une session"
+    premier = passage.tours[0]
+    if premier.fin == FIN_ECHEC:
+        return (
+            "non — la première session a échoué (voir le motif) : ce passage ne dit pas si "
+            "le projet dépasse une session"
+        )
+    return f"non — {_ce_qui_rompt_le_trait(passage)} : le projet dépasse une session"
+
+
+def _ce_qui_rompt_le_trait(passage: Passage) -> str:
+    """Pourquoi la première session n'a pas bouclé le projet, en mots (#1736)."""
+    premier = passage.tours[0]
+    apres = _duree(premier.duree_s)
+    if premier.fin == FIN_NUIT:
+        return (
+            f"la première session a été fermée le soir en plein travail, après {apres} : "
+            "elle n'avait pas fini à la fin du premier jour"
+        )
+    if premier.fin == FIN_DELAI:
+        return f"la première session n'a pas fini dans le délai, après {apres}"
+    if premier.lecture == LECTURE_QUESTION:
+        return f"la première session a rendu la main sur une question, après {apres}"
+    if premier.lecture == LECTURE_EN_CHEMIN:
+        return (
+            f"la première session a rendu la main avant la fin, après {apres}, sans dire "
+            "le projet terminé"
+        )
+    couverture = passage.couverture
+    assert couverture is not None  # `d_un_trait` ne dit non sur une fin rendue que par elle
+    return (
+        f"la première session l'a dit terminé après {apres}, mais le livrable ne tient que "
+        f"{couverture.tenus} critère(s) sur {len(couverture.verdicts)}"
+    )
 
 
 def _couverture_en_markdown(couverture: Couverture) -> list[str]:
