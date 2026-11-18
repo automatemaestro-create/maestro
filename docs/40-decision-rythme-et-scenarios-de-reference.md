@@ -157,7 +157,7 @@ la personne a déjà approuvé, et c'est son accord qu'on cesse de lui redemande
 > de ses oracles ; ils ne décrivent ni le ticket ni le bouclage d'un jalon, qui se jouent sur des
 > exercices construits ([docs/10 §3.4 et §6](./10-workflow-git.md)). Restent au présent : l'état
 > qu'un exercice a sauvé, rouvert par `start.sh --etat-banc`, les ateliers des passages et leur
-> rétention, et le banc comparatif avec ses objectifs `p5` et `club`.
+> rétention, et le banc comparatif avec ses objectifs `p5`, `club` et `club-season`.
 
 Le retex du 2026-09-11 est la seule vérification qui ait trouvé de vrais défauts. Il était manuel et
 n'a été joué qu'une fois. Il devient une commande (#1148), jouée contre la vraie stack et le vrai
@@ -387,6 +387,42 @@ trait** : non dès que sa première session n'a pas rendu la main en le disant t
 livrable manque un critère. C'est ce qui vérifie, passage après passage, que le projet dépasse une
 session. Un passage coûte de l'ordre de 56 $ côté Maestro et 28 $ côté agent seul, trois fois et
 demie p5 : une estimation annoncée avant de jouer.
+
+**`club` tient en une session ; le terrain du go/no-go est `club-season`** (#1736). Au passage réel
+`20261020-200829`, la session seule a bouclé `club` d'un trait : 20 min 01 s, 4,25 $, un geste, et
+ses 20 critères tenus (#1513). `club` reste au banc, comme la mesure de ce qu'une session boucle.
+Le terrain est le même club, agrandi à ce que la vie d'une association demande sur une saison
+entière (`maestro/scenarios/objectifs/club-season.toml`) : les familles, les paiements en trois
+fois et leurs reçus numérotés, les licences reversées à la fédération, les animateurs et leurs
+diplômes, l'absence répétée qui suspend les inscriptions, le covoiturage avec partage des frais,
+les séjours avec acompte, solde, remboursement selon la date et répartition dans les chambres, le
+matériel prêté et sa caution, une comptabilité qui s'alimente seule, ne s'efface pas et se clôture,
+les reçus de dons, les documents, le calendrier, l'assemblée générale avec ses procurations, son
+quorum et ses votes. La même trésorière le dit sans un mot technique, en un message près de trois
+fois plus long. Il porte **54 critères**, chacun rattaché à une phrase du message, et une feuille
+de treize réponses.
+
+**C'est le projet qui grandit, jamais le jour qui raccourcit.** Le jour reste de trente minutes,
+comme pour `club` : un jour plus court ferait dépasser une session à n'importe quel projet. Le
+rapport dit pourquoi la première session n'a pas bouclé le projet. Elle a pu être fermée le soir
+en plein travail, rendre la main en chemin ou sur une question, ou se dire terminée alors que le
+livrable manque des critères. Une première session qui échoue ne prouve rien du projet, et le
+rapport le dit. Un passage s'estime à 70 $ côté Maestro et 15 $ côté agent seul, trois fois ce
+que `club` a coûté de chaque côté.
+
+**Mesuré : `club-season` dépasse une session** (passage réel `20261118-125220`, côté agent seul,
+`claude-opus-5-5`). Le rapport dit *« d'un trait : non »*, et en donne la cause : la première
+session a été fermée le soir en plein travail, au bout de 30 min 05 s. Elle n'avait pas fini à la
+fin du premier jour. Rouverte le lendemain dans la même conversation par « Continue. », elle a
+terminé en 22 min 06 s. Le passage a duré 52 min 29 s de travail actif, en deux gestes, et ses
+54 critères sont tenus. C'est aussi la première nuit de la session seule jouée sur le réel, et
+elle tient.
+
+**Un coût sans prix est un plancher.** L'adaptateur ne connaît le prix d'une session qu'à son
+résultat. Une session fermée le soir n'en rend aucun, et ses tokens restent sans prix (#1280). Le
+rapport le dit : il précède le coût d'un « ≥ » et compte les tokens restés sans prix
+(`unpriced_tokens` dans `rapport.json`). Au passage `20261118-125220`, les 3,23 $ rapportés ne
+paient que le second jour. Le banc n'invente pas de prix pour le premier jour.
 
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on

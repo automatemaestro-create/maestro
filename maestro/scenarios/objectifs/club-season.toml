@@ -1,0 +1,199 @@
+# Le terrain du go/no-go (#1736) — l'application du club de randonnée, toute la saison,
+# confiée par sa trésorière, qui ne code pas, et reprise le lendemain des deux côtés.
+#
+# `club` ne dépasse pas une session : la session seule l'a bouclé d'un trait, en 20 min,
+# pour 4,25 $ et 20 critères sur 20 (#1513, passage `20261020-200829`). Ce projet-ci est
+# le même club, avec ce que la vie d'une association demande sur une saison entière :
+# les familles, les paiements en plusieurs fois et leurs reçus, les licences, les
+# animateurs et leurs diplômes, les séjours avec acompte et remboursement, le matériel
+# prêté, une comptabilité qu'on clôture, l'assemblée générale. Il porte 54 critères,
+# près de trois fois ceux de `club`.
+#
+# - `message` est ce que la personne écrit, une fois, des deux côtés. Il porte tout ce
+#   que les critères exigent : un agent qui ne pose aucune question peut tous les tenir.
+# - `criteres` sont les critères d'acceptation, chacun vérifiable sur le livrable et
+#   rattaché à une phrase du message. Un modèle les juge sur pièces, après le passage
+#   (`maestro.scenarios.couverture`).
+# - `reponses` sont ce que la personne répond quand on lui demande quelque chose,
+#   écrit d'avance et sans aide technique : la même feuille des deux côtés, donnée
+#   seulement à qui pose une question.
+#
+# Aucun choix d'outillage : la personne n'en a pas. La grille ne garde donc que ses
+# lignes jouées, comme pour `club`.
+
+titre = "L'application du club de randonnée, toute la saison (terrain du go/no-go)"
+
+message = """Bonjour ! Je suis la trésorière bénévole d'un club de randonnée, « Les Sentiers du Vexin ». Nous sommes environ 120 adhérents, quatre au bureau, et une dizaine d'animateurs qui mènent les sorties. Aujourd'hui tout est éparpillé entre des tableaux, des cahiers et des e-mails, et on s'y perd. Je voudrais une application à nous, que l'on ouvre dans un navigateur, sur un ordinateur comme sur un téléphone, et qui serve à tout le club, toute l'année. Je ne sais pas programmer : je vous dis ce dont on a besoin, et je vous fais confiance pour le reste.
+
+Ce qu'il nous faut :
+
+Les adhérents
+- Pour chacun : son nom, son prénom, sa date de naissance, son e-mail, son téléphone, son adresse, une personne à prévenir en cas d'accident, la date de son certificat médical et son numéro de licence. On doit pouvoir chercher quelqu'un par son nom, et voir d'un coup d'œil qui est à jour de sa cotisation et qui ne l'est pas.
+- J'ai déjà la liste des adhérents dans un tableau : je veux pouvoir la faire entrer dans l'application depuis un fichier de mon tableur, au lieu de tout retaper.
+- Une famille regroupe les adhérents qui vivent sous le même toit, et ils partagent une seule cotisation famille.
+- Quand quelqu'un quitte le club, on le met de côté : il disparaît des listes, mais ses paiements restent dans les comptes, et on peut le faire revenir s'il se réinscrit.
+
+Les cotisations
+- La saison va du 1er septembre au 31 août. Il y a trois tarifs : 35 € pour un adulte, 20 € pour les moins de 25 ans (l'âge compte au 1er septembre), 60 € pour une famille.
+- Quand quelqu'un paie, je note la date, le montant et comment il a payé (chèque, espèces ou virement) ; pour un chèque, aussi son numéro et sa banque. On peut payer en trois fois au plus : on n'est à jour que lorsque tout est payé.
+- Chaque paiement donne un reçu que je peux imprimer, avec un numéro qui se suit d'un reçu à l'autre.
+- Je veux la liste de ceux qui n'ont pas encore payé, pour les relancer.
+- Le certificat médical est valable trois ans : l'application doit me prévenir de ceux qui sont périmés ou qui le seront dans le mois.
+- Chaque adhérent a une licence de la fédération, et le club en reverse le prix à la fédération : 28 € par adulte, 50 € par famille. Je veux savoir ce que le club doit à la fédération pour la saison, ce qu'il lui a déjà versé et ce qui reste à verser.
+
+Les sorties
+- Pour chaque randonnée : la date, l'heure et le lieu de rendez-vous, la distance, le dénivelé, le niveau (facile, moyen ou difficile), l'animateur qui la mène et le nombre de places.
+- Les adhérents s'y inscrivent eux-mêmes, et peuvent se désister. Les inscriptions ferment la veille à 18 heures. Quand c'est complet, les suivants passent sur une liste d'attente, et le premier de la liste prend la place libérée par un désistement : il le voit en se connectant.
+- Seuls les adhérents à jour de cotisation peuvent s'inscrire, et il faut un certificat valide pour les sorties difficiles.
+- Une sortie peut être annulée, par exemple à cause du mauvais temps : les inscrits le voient en se connectant.
+- Après la sortie, l'animateur note qui était là. Quelqu'un qui ne vient pas trois fois dans la saison sans s'être désisté ne peut plus s'inscrire pendant un mois.
+- L'animateur écrit aussi un petit compte rendu de la sortie, avec des photos, que tous les adhérents peuvent lire.
+
+Les animateurs
+- Pour chaque animateur, ses diplômes (le brevet d'animateur de randonnée, le secourisme), avec leur date de fin de validité. Une sortie difficile ne peut être menée que par un animateur dont le brevet et le secourisme sont valides le jour de la sortie, et un animateur ne mène pas deux sorties le même jour.
+- Un animateur voit la liste des inscrits de ses sorties, avec le téléphone de chacun et celui de sa personne à prévenir, et il peut l'imprimer.
+
+Le covoiturage
+- Pour chaque sortie, ceux qui ont une voiture disent combien de places ils offrent, ceux qui n'en ont pas demandent une place, et on voit qui part avec qui.
+- Les frais se partagent : le conducteur indique les kilomètres aller-retour, on compte 0,20 € par kilomètre, le total est partagé à parts égales entre ses passagers, et l'application dit combien chacun doit au conducteur.
+
+Les séjours
+- Plusieurs fois par an, on part plusieurs jours. Pour chaque séjour : les dates, le lieu, l'hébergement et ses chambres avec leur nombre de lits, le prix par personne et le nombre de places.
+- Pour s'inscrire, on verse un acompte de 30 % du prix ; le reste est à payer au plus tard un mois avant le départ. Je veux voir qui a payé l'acompte, qui a tout payé, et qui est en retard.
+- Si quelqu'un annule plus de 30 jours avant le départ, on lui rend tout ce qu'il a versé, moins 15 € de frais ; entre 30 et 8 jours avant, la moitié ; après, rien. L'application calcule ce qu'on lui rend.
+- Je répartis les inscrits dans les chambres, sans dépasser le nombre de lits de chaque chambre.
+
+Le matériel
+- Le club prête du matériel : des bâtons, des raquettes à neige, des GPS, des trousses de secours. Je veux l'inventaire avec l'état de chaque objet, qui l'a emprunté et quand il doit le rendre, et la liste des retards.
+- Pour les raquettes, on demande une caution de 50 €, rendue au retour.
+
+Les comptes
+- Je note les recettes et les dépenses avec une catégorie (cotisations, licences, séjours, location du car, assurance, matériel…), et je veux voir le solde et, pour la saison, le total des recettes et des dépenses par catégorie.
+- Les paiements des cotisations et des séjours, les remboursements et ce qu'on verse à la fédération entrent tout seuls dans les comptes, sans que je les saisisse deux fois.
+- En début de saison, je prépare un budget par catégorie, et je veux le comparer à ce qui a vraiment été reçu et dépensé.
+- Une écriture garde qui l'a saisie et quand. On n'en efface jamais : une erreur se corrige par une écriture inverse, pour que le vérificateur aux comptes s'y retrouve.
+- En fin de saison, je clôture : le solde passe à la saison suivante, et la saison close ne se modifie plus.
+- Les dons au club donnent un reçu fiscal numéroté, avec le nom et l'adresse du donateur, le montant et la date, que j'imprime.
+
+Les annonces, les documents et le calendrier
+- Le bureau publie des nouvelles que tous les adhérents voient en arrivant.
+- Le bureau dépose des documents (les statuts, le règlement intérieur, les comptes rendus de réunion) que les adhérents peuvent ouvrir.
+- Un calendrier montre, mois par mois, les sorties, les séjours et les réunions du bureau.
+
+L'assemblée générale
+- Une fois par an, il y a l'assemblée générale. Je veux la liste d'émargement des adhérents à jour, avec qui est présent et qui a donné procuration à qui ; personne ne porte plus de deux procurations.
+- Le quorum est atteint quand le quart des adhérents à jour sont présents ou représentés : l'application le dit.
+- On vote des résolutions : pour chacune, le nombre de pour, de contre et d'abstentions, et si elle est adoptée, à la majorité des voix exprimées (les abstentions ne comptent pas).
+- Pour le rapport de l'assemblée, je veux les chiffres de la saison : le nombre d'adhérents par tranche d'âge, le nombre de sorties, la moyenne de participants par sortie, et les kilomètres parcourus par chacun.
+
+Qui voit quoi
+- Chacun se connecte avec son e-mail et un mot de passe. Les membres du bureau ont accès à tout. Un animateur prépare et modifie ses sorties, note les présents et en écrit le compte rendu, mais il n'a pas accès aux comptes. Un adhérent voit les sorties, les séjours, les annonces et les documents, s'inscrit, voit et corrige sa propre fiche, mais pas celles des autres, ni les comptes.
+- Si quelqu'un oublie son mot de passe, un membre du bureau lui en donne un provisoire, qu'il doit changer à sa connexion suivante.
+
+Les fichiers
+- Je veux pouvoir sortir la liste des adhérents, le bilan de la saison et les comptes dans un fichier que j'ouvre avec mon tableur.
+- Je veux aussi pouvoir faire une sauvegarde de tout dans un fichier, et la remettre si l'ordinateur tombe en panne.
+
+Tout doit rester enregistré d'une fois sur l'autre, tout doit être en français, et les montants doivent s'écrire en euros, avec une virgule.
+
+Et dites-moi simplement comment la lancer sur l'ordinateur du club.
+
+Construisez l'application entière."""
+
+# Chaque critère reprend une phrase du message, et se vérifie sur le livrable.
+criteres = [
+  "La fiche d'un adhérent porte son nom, son prénom, sa date de naissance, son e-mail, son téléphone, son adresse, la personne à prévenir en cas d'accident, la date de son certificat médical et son numéro de licence ; elle se crée et se modifie.",
+  "On retrouve un adhérent en cherchant son nom.",
+  "La liste des adhérents montre qui est à jour de sa cotisation pour la saison en cours, qui court du 1er septembre au 31 août.",
+  "La liste des adhérents s'importe depuis un fichier de tableur.",
+  "Une famille regroupe des adhérents qui vivent sous le même toit et partagent une seule cotisation famille.",
+  "Un adhérent qui quitte le club est mis de côté : il disparaît des listes, ses paiements restent dans les comptes, et il peut revenir.",
+  "Les trois tarifs existent : 35 € pour un adulte, 20 € pour les moins de 25 ans, l'âge comptant au 1er septembre, et 60 € pour une famille.",
+  "Un paiement s'enregistre avec sa date, son montant et son moyen (chèque, espèces ou virement), et, pour un chèque, son numéro et sa banque.",
+  "Une cotisation se paie en trois fois au plus, et l'adhérent n'est à jour que lorsqu'elle est payée en entier.",
+  "Chaque paiement donne un reçu imprimable, dont le numéro se suit d'un reçu à l'autre.",
+  "La liste des adhérents qui n'ont pas payé la saison en cours est disponible, pour les relancer.",
+  "L'application signale les certificats médicaux périmés (plus de trois ans) et ceux qui le seront dans le mois.",
+  "L'application dit ce que le club doit à la fédération pour la saison (28 € par licence adulte, 50 € par licence famille), ce qu'il lui a versé et ce qui reste à verser.",
+  "Une sortie porte sa date, son heure et son lieu de rendez-vous, sa distance, son dénivelé, son niveau (facile, moyen ou difficile), son animateur et son nombre de places.",
+  "Un adhérent s'inscrit lui-même à une sortie, et peut se désister.",
+  "Les inscriptions à une sortie ferment la veille à 18 heures.",
+  "Une sortie complète met les inscrits suivants sur une liste d'attente, et un désistement donne la place au premier de la liste, qui le voit en se connectant.",
+  "Seuls les adhérents à jour de cotisation peuvent s'inscrire, et une sortie difficile exige un certificat médical valide.",
+  "Une sortie s'annule, et ses inscrits le voient en se connectant.",
+  "Après une sortie, l'animateur note les présents ; trois absences dans la saison sans désistement empêchent l'adhérent de s'inscrire pendant un mois.",
+  "L'animateur publie un compte rendu de sortie, avec des photos, que tous les adhérents peuvent lire.",
+  "Les diplômes d'un animateur (brevet d'animateur de randonnée, secourisme) s'enregistrent avec leur date de fin de validité.",
+  "Une sortie difficile n'est confiée qu'à un animateur dont le brevet et le secourisme sont valides le jour de la sortie, et un animateur ne mène pas deux sorties le même jour.",
+  "Un animateur voit la liste des inscrits de ses sorties, avec le téléphone de chacun et celui de sa personne à prévenir, et peut l'imprimer.",
+  "Pour une sortie, un adhérent offre des places dans sa voiture ou en demande une, et l'on voit qui part avec qui.",
+  "Les frais d'une voiture se partagent : 0,20 € par kilomètre aller-retour, à parts égales entre ses passagers, et l'application dit ce que chacun doit au conducteur.",
+  "Un séjour porte ses dates, son lieu, son hébergement avec ses chambres et leur nombre de lits, son prix par personne et son nombre de places.",
+  "L'inscription à un séjour demande un acompte de 30 % du prix, le solde est dû au plus tard un mois avant le départ, et l'on voit qui a payé l'acompte, qui a tout payé et qui est en retard.",
+  "Une annulation de séjour se rembourse selon sa date : plus de 30 jours avant le départ, tout ce qui a été versé moins 15 € ; de 30 à 8 jours, la moitié ; ensuite, rien. L'application calcule le remboursement.",
+  "Les inscrits d'un séjour se répartissent dans les chambres, sans dépasser le nombre de lits de chacune.",
+  "L'inventaire du matériel prêté donne l'état de chaque objet, qui l'a emprunté et quand il doit le rendre, ainsi que la liste des retards.",
+  "Le prêt de raquettes demande une caution de 50 €, rendue au retour.",
+  "Les recettes et les dépenses s'enregistrent avec une catégorie ; le solde se lit, ainsi que, pour la saison, le total des recettes et des dépenses par catégorie.",
+  "Les paiements des cotisations et des séjours, les remboursements et les versements à la fédération entrent d'eux-mêmes dans les comptes, sans seconde saisie.",
+  "Un budget par catégorie se prépare en début de saison, et se compare à ce qui a été reçu et dépensé.",
+  "Une écriture des comptes garde qui l'a saisie et quand ; aucune ne s'efface, et une erreur se corrige par une écriture inverse.",
+  "La clôture d'une saison reporte son solde sur la suivante, et la saison close ne se modifie plus.",
+  "Un don donne un reçu fiscal numéroté et imprimable, avec le nom et l'adresse du donateur, le montant et la date.",
+  "Le bureau publie des annonces, que tout adhérent connecté voit en arrivant.",
+  "Le bureau dépose des documents que les adhérents peuvent ouvrir.",
+  "Un calendrier montre, mois par mois, les sorties, les séjours et les réunions du bureau.",
+  "La liste d'émargement de l'assemblée générale porte les adhérents à jour, les présents et les procurations, et personne ne porte plus de deux procurations.",
+  "L'application dit si le quorum de l'assemblée est atteint : le quart des adhérents à jour, présents ou représentés.",
+  "Chaque résolution compte ses pour, ses contre et ses abstentions, et se dit adoptée ou rejetée à la majorité des voix exprimées, sans compter les abstentions.",
+  "Les chiffres de la saison donnent le nombre d'adhérents par tranche d'âge, le nombre de sorties, la moyenne de participants par sortie et les kilomètres parcourus par chaque adhérent.",
+  "Chacun se connecte avec son e-mail et un mot de passe.",
+  "Les membres du bureau ont accès à tout ; un adhérent voit et corrige sa propre fiche, mais ne voit ni les fiches des autres ni les comptes.",
+  "Un animateur prépare et modifie ses sorties, note les présents et en écrit le compte rendu, sans accéder aux comptes.",
+  "Un mot de passe oublié se remplace par un mot de passe provisoire, donné par le bureau, que l'adhérent doit changer à sa connexion suivante.",
+  "La liste des adhérents, le bilan de la saison et les comptes se sortent dans un fichier qui s'ouvre dans un tableur.",
+  "Toutes les données se sauvegardent dans un fichier, et cette sauvegarde se remet.",
+  "Les données restent enregistrées d'un lancement de l'application à l'autre.",
+  "L'application est en français, ses montants s'écrivent en euros avec une virgule, et elle est utilisable sur un téléphone comme sur un ordinateur.",
+  "La façon de lancer l'application sur l'ordinateur du club est écrite pour la personne, en mots simples.",
+]
+
+# Ce que la personne répond quand on lui demande quelque chose : sa feuille, écrite
+# d'avance, sans aide technique. Elle ne la donne qu'à qui pose une question.
+reponses = [
+  "Je ne sais pas programmer : pour tout ce qui est technique, choisissez ce qui vous paraît le plus simple et le plus solide, je vous fais confiance.",
+  "L'application tournera d'abord sur l'ordinateur du club, un portable sous Windows. Plus tard, on aimerait peut-être la mettre en ligne.",
+  "Le tarif famille couvre deux adultes et leurs enfants qui vivent sous le même toit.",
+  "Le certificat compte à partir de la date où le médecin l'a signé.",
+  "Au bureau, nous sommes quatre : la présidente, le secrétaire, moi qui suis trésorière, et un animateur. Les autres animateurs sont des adhérents qui mènent les sorties.",
+  "Pas d'envoi d'e-mails depuis l'application pour l'instant : une liste que je peux copier me suffit pour les relances.",
+  "Mon tableau des adhérents a une ligne par personne, avec ces colonnes : Nom, Prénom, Date de naissance, E-mail, Téléphone, Adresse.",
+  "Pour le rapport de l'assemblée, les tranches d'âge sont : moins de 25 ans, de 25 à 44 ans, de 45 à 64 ans, et 65 ans et plus.",
+  "Une réunion du bureau, c'est une date, une heure, un lieu et un ordre du jour.",
+  "Les reçus, il me suffit de pouvoir les imprimer : je les signe à la main.",
+  "Pour la sauvegarde, un fichier que je copie sur une clé USB me suffit.",
+  "Pour les couleurs, quelque chose de clair et lisible, avec du vert, comme la nature, si c'est possible.",
+  "Pour essayer, vous pouvez inventer quelques adhérents, quelques sorties et un séjour.",
+]
+
+# La personne n'a pas demandé de dépôt Git : le banc ne l'impose pas. Un livrable non
+# versionné se rejoue comme son dossier, moins ce qu'il déclare ignorer (`grille`).
+versionner = false
+
+# Les lignes jouées de la grille, celles qui ne dépendent d'aucun choix d'outillage.
+axes = ["installation", "lint", "formatage", "types", "tests", "build", "pages"]
+
+# Le jour de `club`, sans y toucher : c'est le projet qui grandit, jamais le jour qui
+# raccourcit. Trente minutes de travail actif, puis la nuit, puis le lendemain.
+jour_s = 1800
+
+# Ce que le banc laisse à un passage, nuit comprise : six heures. Maestro a mis 55 min
+# sur `club`, trois fois plus petit (#1513).
+delai_s = 21600
+
+# Trois fois `club` de chaque côté, au tarif mesuré sur son passage du 2026-10-20 (#1513) :
+# 23,10 $ côté Maestro, 4,25 $ côté session seule. Une estimation annoncée avant de jouer,
+# jamais une borne.
+[cout_estime_usd]
+maestro = 70.0
+seul = 15.0

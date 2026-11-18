@@ -1727,6 +1727,7 @@ def test_liste_nomme_les_objectifs(tmp_path: Path) -> None:
     assert code == cmp.CODE_ECRIT
     assert sortie.splitlines() == [
         "club  L'application du club de randonnée (projet long)",
+        "club-season  L'application du club de randonnée, toute la saison (terrain du go/no-go)",
         "p5  Livre de recettes Next.js (p5)",
     ]
 
@@ -1752,6 +1753,28 @@ def test_le_projet_long_est_dit_sans_choix_technique_avec_ses_criteres_et_sa_feu
     assert objectif.versionner is False
     assert not {gr.AXE_CI, gr.AXE_COMMITS, gr.AXE_OUTILLAGE} & set(objectif.axes)
     assert set(objectif.cout_estime_usd) == {cmp.COTE_MAESTRO, cmp.COTE_SEUL}
+
+
+def test_le_terrain_du_go_no_go_est_club_agrandi_jamais_un_jour_raccourci() -> None:
+    """Le terrain du go/no-go (#1736) : `club`, qu'une session a bouclé d'un trait, agrandi.
+
+    Dit par la même trésorière, sans choix technique, avec ses critères d'acceptation et sa
+    feuille. Le projet grandit, le jour ne raccourcit jamais : un jour plus court ferait
+    dépasser une session à n'importe quel projet.
+    """
+    club = cmp.charger_objectif("club")
+    terrain = cmp.charger_objectif("club-season")
+    assert terrain.choix == ()
+    assert not [mot for mot in _CHOIX_DE_P5 if mot in terrain.message]
+    assert "Les Sentiers du Vexin" in terrain.message
+    assert "Construisez l'application entière." in terrain.message
+    assert len(terrain.criteres) == 54 and len(set(terrain.criteres)) == 54
+    assert len(terrain.criteres) >= 2.5 * len(club.criteres)
+    assert len(terrain.message) >= 2.5 * len(club.message)
+    assert terrain.reponses and terrain.converse
+    assert terrain.jour_s == club.jour_s and terrain.delai_s == club.delai_s
+    assert terrain.versionner is False and terrain.axes == club.axes
+    assert set(terrain.cout_estime_usd) == {cmp.COTE_MAESTRO, cmp.COTE_SEUL}
 
 
 def test_la_personne_repond_par_sa_feuille_a_toute_question() -> None:
@@ -2043,6 +2066,61 @@ def test_la_session_seule_est_fermee_le_soir_puis_rouverte_le_lendemain(tmp_path
     assert passage.cout_usd == pytest.approx(4 * 7.5)
 
 
+class SessionTarifeeAuResultat(SessionScriptee):
+    """L'adaptateur tel qu'il tarife : les tokens d'un tour sans prix, le prix au résultat.
+
+    Un tour signale ses tokens dès qu'il passe, sans coût ; le résultat, s'il vient,
+    porte le prix de la session et couvre ses tours (`claude._CompteurTours`). Une
+    session coupée avant son résultat garde donc ses tokens sans prix (#1280).
+    """
+
+    TOKENS_PAR_SESSION = 1000
+
+    async def run_agent(self, prompt: str, **reglages: Any) -> str:
+        self.appels.append({"prompt": prompt, **reglages})
+        report_usage(StepUsage(output_tokens=self.TOKENS_PAR_SESSION))
+        dort, texte = self._script.pop(0)
+        if dort:
+            await asyncio.sleep(dort)
+        report_usage(StepUsage(calls=1, cost_usd=2.0, unpriced_tokens=-self.TOKENS_PAR_SESSION))
+        return texte
+
+
+def test_une_session_fermee_le_soir_laisse_un_cout_plancher(tmp_path: Path) -> None:
+    """Le banc n'invente pas le prix du premier jour : il dit que le coût est un plancher."""
+    fournisseur = SessionTarifeeAuResultat(
+        [(10.0, "jamais rendu : la nuit tombe avant"), (0.0, "[FINI] Tout est livré.")]
+    )
+    passage = cmp.jouer_seul(
+        replace(cmp.charger_objectif("club-season"), jour_s=0.3),
+        rang=1,
+        atelier=Atelier(tmp_path / "atelier"),
+        fournisseur=fournisseur,
+        modele="claude-opus-5-5",
+        journal=Journal(),
+        delai_s=30.0,
+        lecteur=LecteurDeFin(),
+    )
+
+    # Seul le lendemain a rendu son résultat, donc son prix ; la veille reste sans prix.
+    assert passage.cout_usd == pytest.approx(2.0)
+    assert passage.tokens_sans_cout == SessionTarifeeAuResultat.TOKENS_PAR_SESSION
+    assert passage.cout_plancher
+    assert passage.to_dict()["unpriced_tokens"] == SessionTarifeeAuResultat.TOKENS_PAR_SESSION
+    texte = cmp.en_markdown(
+        cmp.Comparatif("20261118-120000", cmp.charger_objectif("club"), (passage,))
+    )
+    assert "| Coût | ≥ 2.00 $ |" in texte
+    assert "- **coût** : ≥ 2.00 $ (rapporté par l'adaptateur) — un plancher : 1000 tokens" in texte
+    assert "Un coût précédé de « ≥ » est un plancher" in texte
+    # Une session qui rend son résultat couvre ses tokens : son coût n'est pas un plancher.
+    entier = _passage(cmp.COTE_SEUL, 1, cout_usd=2.0)
+    assert not entier.cout_plancher
+    assert "≥" not in cmp.en_markdown(
+        cmp.Comparatif("20261118-120000", cmp.charger_objectif("club"), (entier,))
+    )
+
+
 def test_une_session_qui_rend_la_main_le_soir_recoit_sa_reponse_le_lendemain(
     tmp_path: Path,
 ) -> None:
@@ -2095,6 +2173,52 @@ def test_d_un_trait_se_juge_sur_la_premiere_session_et_les_criteres() -> None:
     assert passage(rendue, _couverture(cv.TENU, cv.NON_JUGE)).d_un_trait is None
     assert passage(rendue, None).d_un_trait is None
     assert _passage(cmp.COTE_MAESTRO, 1).d_un_trait is None
+
+
+@pytest.mark.parametrize(
+    "tour, couverture, cause",
+    [
+        (
+            cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_NUIT, duree_s=1800.0),
+            (cv.TENU, cv.TENU),
+            "non — la première session a été fermée le soir en plein travail, après 30 min 00 s"
+            " : elle n'avait pas fini à la fin du premier jour : le projet dépasse une session",
+        ),
+        (
+            cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_RENDUE, cmp.LECTURE_EN_CHEMIN, duree_s=900.0),
+            (cv.TENU, cv.TENU),
+            "non — la première session a rendu la main avant la fin, après 15 min 00 s, sans "
+            "dire le projet terminé : le projet dépasse une session",
+        ),
+        (
+            cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_RENDUE, cmp.LECTURE_QUESTION, duree_s=60.0),
+            (cv.TENU, cv.TENU),
+            "non — la première session a rendu la main sur une question, après 1 min 00 s",
+        ),
+        (
+            cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_RENDUE, cmp.LECTURE_TERMINE, duree_s=1200.0),
+            (cv.TENU, cv.MANQUE, cv.TENU),
+            "non — la première session l'a dit terminé après 20 min 00 s, mais le livrable ne "
+            "tient que 2 critère(s) sur 3 : le projet dépasse une session",
+        ),
+        (
+            cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_ECHEC, duree_s=5.0),
+            (cv.TENU,),
+            "non — la première session a échoué (voir le motif) : ce passage ne dit pas si le "
+            "projet dépasse une session",
+        ),
+    ],
+)
+def test_le_rapport_nomme_ce_qui_rompt_le_trait(
+    tour: cmp.Tour, couverture: tuple[str, ...], cause: str
+) -> None:
+    """Un « non » dit pourquoi (#1736) : la nuit, une main rendue en chemin, un critère manqué."""
+    passage = _passage(cmp.COTE_SEUL, 1, tours=(tour,), couverture=_couverture(*couverture))
+    assert passage.d_un_trait is False
+    texte = cmp.en_markdown(
+        cmp.Comparatif("20261118-120000", cmp.charger_objectif("club-season"), (passage,))
+    )
+    assert f"- **d'un trait** : {cause}" in texte
 
 
 def test_la_lecture_d_une_fin_demande_d_abord_si_l_agent_attend_une_reponse() -> None:
