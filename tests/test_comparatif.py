@@ -859,6 +859,147 @@ def test_une_installation_ratee_laisse_les_lignes_suivantes_non_jouees(tmp_path:
 
 
 @AVEC_GIT
+def test_une_installation_sans_commande_ne_bloque_pas_ses_suivantes(tmp_path: Path) -> None:
+    """#1744 : sans commande d'installation, la grille laissait tout le reste non joué, pages
+    comprises. Une ligne non jouée compte déjà comme manquée : jouer les suivantes ne fait rien
+    gagner à un livrable qui échoue, et rend au livrable qui tient ce qu'il tient."""
+    commandes = _COMMANDES.replace("INSTALLATION: npm ci", "INSTALLATION: aucune")
+    joueur = Joueur()
+    grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), joueur)
+
+    installation = grille.ligne(gr.AXE_INSTALLATION)
+    assert installation is not None and installation.etat == gr.MANQUE
+    assert "ne déclare aucune commande" in installation.detail
+    joues = [commande for commande, _ in joueur.joues]
+    assert joues[:5] == [
+        "CI=1 npm run lint",
+        "CI=1 npx prettier --check .",
+        "CI=1 npm run typecheck",
+        "CI=1 npm test",
+        "CI=1 npm run build",
+    ]
+    assert re.fullmatch(r"PORT=\d+ npm start", joues[5])
+    etats = {ligne.axe: ligne.etat for ligne in grille.lignes}
+    assert gr.NON_JOUE not in etats.values()
+    assert grille.tenues == len(gr.AXES) - 1
+
+
+#: Le livrable de l'agent seul au passage `20261118-125220` (#1744), en petit : Python sans
+#: dépendance, des tests, et un `LISEZ-MOI.md` plus long que ce que les pièces en montrent, qui
+#: déclare à sa fin ce qu'il n'y a pas à installer et comment jouer les tests.
+_LISEZ_MOI_LONG = (
+    "# Les Sentiers du Vexin\n\n"
+    + "Double-cliquez sur « Lancer l'application » : elle s'ouvre dans le navigateur.\n" * 60
+    + "\n## Pour les techniciens\n\n"
+    "- Python 3.10 ou plus récent, aucune bibliothèque à installer. "
+    "Lancement : `python lancer.py`\n"
+    "- Tests automatiques : `python -m unittest discover tests`\n"
+)
+
+
+class LecteurQuiLit:
+    """Un lecteur qui ne répond que d'après ce qu'on lui montre, comme on le demande au modèle :
+    il nomme le fichier de tests et le `LISEZ-MOI.md`, puis lit les commandes dans le prompt."""
+
+    def __init__(self) -> None:
+        self.nominations: list[str] = []
+        self.lus: list[str] = []
+
+    def rediger(self, systeme: str, prompt: str) -> str:
+        if systeme == gr.SYSTEME_LECTURES:
+            self.nominations.append(prompt)
+            return "COMMANDES: tests/test_appli.py, LISEZ-MOI.md"
+        self.lus.append(prompt)
+        tests = "python -m unittest discover tests"
+        rien = "aucune bibliothèque à installer"
+        return (
+            f"INSTALLATION: aucune\nTESTS: {tests if tests in prompt else 'aucune'}\n"
+            'SERVIR: py -3 lancer.py --port "$PORT" --sans-navigateur\nPAGES: /\n'
+            f"UNNEEDED: {f'INSTALLATION={rien} (LISEZ-MOI.md)' if rien in prompt else 'aucune'}\n"
+        )
+
+    def juger(self, systeme: str, prompt: str) -> Avis:
+        return Avis(nomme=True, pourquoi="tenu")
+
+
+@AVEC_GIT
+def test_un_livrable_qui_n_a_rien_a_installer_joue_ses_tests_et_ses_pages(tmp_path: Path) -> None:
+    """#1744 : 54 critères sur 54, et 0/7 à la grille. Le `LISEZ-MOI.md` montré tronqué cachait
+    la commande des tests et « aucune bibliothèque à installer ». Le lecteur l'a nommé : il se lit
+    au-delà de son début. Le livrable dit n'avoir rien à installer : la ligne est tenue, et ses
+    tests et ses pages se jouent."""
+    assert len(_LISEZ_MOI_LONG) > gr.CARACTERES_PAR_FICHIER
+    depot = _depot(
+        tmp_path / "seul",
+        "feat: l'application du club",
+        **{
+            "LISEZ-MOI.md": _LISEZ_MOI_LONG,
+            "lancer.py": "import argparse\n",
+            "tests/test_appli.py": "import unittest\n",
+        },
+    )
+    lecteur, joueur = LecteurQuiLit(), Joueur()
+    grille = gr.rejouer(
+        depot,
+        tmp_path / "clone",
+        choix=(),
+        lecteur=lecteur,
+        poste=_poste(joueur),
+        axes=(*gr.AXES_JOUES, gr.AXE_PAGES),
+    )
+
+    # Le fichier montré en partie le dit, et le lecteur qui le nomme le reçoit entier, une fois.
+    (nomination,) = lecteur.nominations
+    lisez_moi = nomination.split('<fichier chemin="LISEZ-MOI.md">')[1].split("</fichier>")[0]
+    assert "tronqué" in lisez_moi and "Tests automatiques" not in lisez_moi
+    (commandes,) = lecteur.lus
+    assert "Tests automatiques" in commandes
+    assert commandes.count("# Les Sentiers du Vexin") == 1
+    installation = grille.ligne(gr.AXE_INSTALLATION)
+    assert installation is not None and installation.etat == gr.TENU
+    assert "aucune bibliothèque à installer" in installation.detail
+    assert "LISEZ-MOI.md" in installation.detail
+    tests = grille.ligne(gr.AXE_TESTS)
+    assert tests is not None and tests.etat == gr.TENU
+    assert "CI=1 python -m unittest discover tests" in [commande for commande, _ in joueur.joues]
+    assert grille.ligne(gr.AXE_PAGES).etat == gr.TENU
+    # Ce que le livrable ne déclare pas, il le manque toujours : rien n'est deviné pour lui.
+    assert grille.ligne(gr.AXE_TYPES).etat == gr.MANQUE
+    assert gr.NON_JOUE not in {ligne.etat for ligne in grille.lignes}
+
+
+def test_rien_a_faire_ne_vaut_que_pour_preparer_le_livrable() -> None:
+    """Un projet peut n'avoir rien à installer ni à construire. Il a toujours du code à vérifier :
+    le lint, le formatage, les types et les tests ne s'excusent pas ainsi."""
+    commandes = gr.commandes_depuis(
+        "INSTALLATION: aucune\nBUILD: npm run build\nTESTS: aucune\n"
+        f"{gr.CHAMP_SANS_BESOIN}: INSTALLATION=aucune dépendance (README), "
+        "BUILD=se sert tel quel (README), TESTS=pas de tests (README), "
+        "INSTALLATION=second\n"
+    )
+    assert set(commandes.sans_besoin) == {gr.AXE_INSTALLATION, gr.AXE_BUILD}
+    installation = commandes.sans_besoin[gr.AXE_INSTALLATION]
+    assert (installation.dit, installation.origine) == ("aucune dépendance", "README")
+    assert commandes.to_dict()["unneeded"]["installation"] == {
+        "says": "aucune dépendance",
+        "origin": "README",
+    }
+    assert gr.commandes_depuis(f"{gr.CHAMP_SANS_BESOIN}: aucune\n").sans_besoin == {}
+    assert "rien à faire : Installation" in gr._commandes_en_mots(commandes)
+    assert f"{gr.CHAMP_SANS_BESOIN}:" in gr.SYSTEME_COMMANDES
+
+
+@AVEC_GIT
+def test_une_commande_declaree_l_emporte_sur_rien_a_faire(tmp_path: Path) -> None:
+    """Le build déclaré se joue, et son échec laisse les pages non jouées, même si le lecteur dit
+    aussi qu'il n'y a rien à construire : la commande du livrable fait foi."""
+    commandes = _COMMANDES + f"{gr.CHAMP_SANS_BESOIN}: BUILD=rien à construire (README)\n"
+    grille = _rejouer(tmp_path, LecteurFactice(commandes=commandes), Joueur({"npm run build": 2}))
+    assert grille.ligne(gr.AXE_BUILD).etat == gr.MANQUE
+    assert grille.ligne(gr.AXE_PAGES).etat == gr.NON_JOUE
+
+
+@AVEC_GIT
 def test_une_commande_sans_retour_dans_son_delai_ne_vaut_aucun_verdict(tmp_path: Path) -> None:
     """#1681 : coupée à 300 s, l'installation du dépôt de Maestro était un manque et laissait le
     lint, les types et les tests non joués ; la suite entière, sans retour, manquait aussi."""
