@@ -10,6 +10,7 @@ Git Bash, as an agent does, and the container it obtains is looked at from insid
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
@@ -21,6 +22,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
@@ -44,6 +46,8 @@ from maestro.sandbox.container_broker import ContainerBroker
 from maestro.sandbox.container_broker_client import (
     ENV_ADDRESS,
     ENV_TOKEN,
+    FRAME_EXIT,
+    FRAME_REFUSED,
     NOT_RUN,
     PROGRAM,
     request,
@@ -169,6 +173,28 @@ def _versioned_project(tmp_path: Path, project_id: str = "prj-depensio") -> tupl
     return workspace, project
 
 
+@contextlib.contextmanager
+def _held_after_the_code(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Whatever the broker does once a code or a refusal has left it waits for the block's end.
+
+    The program returns on either (#1748): a barrier puts what the broker would do next
+    after what the test looks at, the worst order a race can take, never left to a delay.
+    """
+    looked = threading.Event()
+    send = container_broker._Channel.send
+
+    def sending(channel: object, data: bytes) -> None:
+        send(channel, data)
+        if {FRAME_EXIT, FRAME_REFUSED} & set(json.loads(data)):
+            looked.wait(timeout=60)
+
+    monkeypatch.setattr(container_broker._Channel, "send", sending)
+    try:
+        yield
+    finally:
+        looked.set()
+
+
 # --- What the broker composes and relays ----------------------------------------------------
 
 
@@ -226,6 +252,44 @@ def test_a_versioned_project_s_container_gets_its_own_repository_and_its_masks(
     # Rebuilt for the command, removed after it: never read by the host's git.
     assert not Path(depot).exists()
     assert not any(project.root_path.resolve() == Path(v.rsplit(":/", 1)[0]) for v in volumes)
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_the_program_gets_its_code_once_the_repository_is_removed_and_the_turn_freed(
+    broker, docker, tmp_path, monkeypatch
+):
+    """The program returns on its code (#1748): what it does next finds nothing of the command.
+
+    The race is forced by a barrier, never left to a delay: whatever the broker would do
+    once a code has left it is held until the program has looked — at the container's
+    repository, then at a second request of its project.
+    """
+    workspace, project = _versioned_project(tmp_path)
+    session = broker.open(workspace, project)
+    second: subprocess.Popen[bytes] | None = None
+    try:
+        with _held_after_the_code(monkeypatch):
+            first = _program(session.env, "alpine:3", "git", "status")
+            volumes = _volumes(docker.runs[0])
+            depot = next(v for v in volumes if v.endswith(":/maestro/depot")).rsplit(":/", 1)[0]
+            left = Path(depot).exists()
+            second = subprocess.Popen(
+                [sys.executable, "-I", str(CLIENT), "alpine:3", "true"],
+                env={**os.environ, **session.env},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert second.stderr is not None
+            told = second.stderr.readline().decode("utf-8")
+    finally:
+        if second is not None:
+            second.communicate(timeout=60)
+
+    assert first.returncode == 7, first.stderr
+    assert not left, "le programme a eu son code avant que le dépôt du conteneur soit retiré"
+    assert "attend son tour" not in told, told
+    assert second.returncode == 7
+    assert not Path(depot).exists()
 
 
 def test_a_second_request_of_the_session_waits_for_the_first_and_is_told(tmp_path):
@@ -841,6 +905,56 @@ def test_a_dockerfile_the_scope_excludes_is_refused_before_anything_is_built(eng
     text = done.stderr.decode("utf-8")
     assert "refusé" in text and "exclu par le périmètre" in text
     assert engine.spawned == []
+
+
+def _unstartable(argv: Sequence[str], stdin: IO[bytes] | None = None) -> subprocess.Popen[bytes]:
+    raise OSError("docker introuvable")
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+@pytest.mark.parametrize(
+    ("asked", "build_code", "starts", "said"),
+    [
+        (["--dockerfile", "Dockerfile"], 1, True, "la construction de l'image a échoué"),
+        (["--dockerfile", ".env"], 0, True, "exclu par le périmètre"),
+        (["alpine:3"], 0, False, "docker n'a pas pu être lancé"),
+    ],
+    ids=["build-fails", "dockerfile-refused", "docker-does-not-start"],
+)
+def test_a_request_refused_or_failed_leaves_no_repository_of_its_container(
+    tmp_path, monkeypatch, asked, build_code, starts, said
+):
+    workspace, project = _versioned_project(tmp_path)
+    engine = _Engine({"Dockerfile": b"FROM alpine:3\n"}, build_code=build_code)
+    broker = ContainerBroker(
+        spawn=engine.spawn if starts else _unstartable,
+        remove=lambda name: None,
+        docker=engine.docker,
+    )
+    built: list[str] = []
+    compose = container.protocole_sandbox
+
+    def composing(*arguments: object, **options: object) -> dict[str, str]:
+        environ = compose(*arguments, **options)  # type: ignore[arg-type]
+        built.append(environ[container.ENV_DEPOT])
+        return environ
+
+    monkeypatch.setattr(container, "protocole_sandbox", composing)
+    if asked[0] == "--dockerfile":
+        asked = [asked[0], str(workspace / asked[1])]
+    try:
+        session = broker.open(workspace, project)
+        with _held_after_the_code(monkeypatch):
+            done = _program(session.env, *asked, "true")
+            left = [depot for depot in built if Path(depot).exists()]
+    finally:
+        broker.shutdown()
+
+    assert done.returncode == NOT_RUN, done.stderr
+    assert said in done.stderr.decode("utf-8")
+    assert built, "le dépôt du conteneur n'a pas été construit"
+    assert left == []
+    assert not [argv for argv in engine.spawned if argv[1] == "run"]
 
 
 def test_a_session_without_a_project_has_its_images_removed_with_it(engine, tmp_path):
