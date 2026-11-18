@@ -2057,6 +2057,29 @@ renversés en partie, puisque la prose d'un paquet se réécrit d'un coup quand 
 
 ---
 
+## « Le conteneur sans le tube » — le régime du filet rendu à l'agent confiné (2026-11-18)
+
+Ce chantier vient de #1714. Le moteur de Docker Desktop refuse un processus à l'intégrité basse, si
+bien que le filet d'un agent confiné joue en natif : 52 suites en 35 min 26 s sur #1688. #1723 a
+instruit cinq voies contre docs/19, et la personne a tranché le 2026-11-18 : « V2, vérification
+comprise ». La décision est [docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md).
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Maestro fait mieux qu'un agent seul* (jalon existant, rail produit) | Un agent confiné obtient le verdict du filet de son projet au conteneur, par un courtier que Maestro tient. La vérification d'une tâche passe sous la borne du poste et par le même courtier | 2028-01-31 | **#1724** ; lots #1725 → #1726 → #1727 → #1728, en série |
+
+**Sa place dans la file** :
+- **dans le jalon du go/no-go.** La durée du filet de l'agent et la vérification d'une tâche y sont
+  mesurées ;
+- **en face du lot de traduction de `sandbox` (#1656).** Les deux touchent les mêmes fichiers, et ne
+  sont pas en vol en même temps.
+
+**Écartés** : jouer la commande déclarée au niveau de la personne, un mandataire filtrant de l'API
+Docker, un moteur dédié dans WSL, et l'agent en mode isolé, qui reste une option du poste
+(docs/57 §3).
+
+---
+
 ## Au-delà (idées V3+)
 
 - **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
