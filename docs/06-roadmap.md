@@ -106,6 +106,12 @@ gantt
 > de critères que la chaîne. Mais son livrable rougirait la CI, aucun de ses commits ne passe le
 > hook, et il dure 8,4 fois plus longtemps. La routine reste différée. Quatre écarts entrent au jalon
 > « Maestro fait mieux qu'un agent seul », dont l'échéance ne bouge pas.
+>
+> Le 2026-11-18, la file reçoit **une ligne d'arrivée : « Maestro 1.0 »**. La version 1.0.0 se
+> publie quand le go/no-go rend `GO` ou `GO avec réserves`, que la Phase 9 est bouclée et qu'elle
+> part sur le canal. Le jalon se place derrière la Phase 9 et devant les quatre jalons de
+> fonctionnalités, qui viennent après la 1.0, par la mise à jour. Le go/no-go se tranche enfin sur le
+> réel, par un parent neuf. Aucune échéance ne bouge.
 
 ---
 
@@ -290,6 +296,11 @@ aujourd'hui.
 >   ou trois personnes extérieures (#1516, C11).
 >
 > Voir la section « Maestro fait mieux qu'un agent seul », plus bas.
+>
+> ⚠ **Ce qui la suit, depuis le 2026-11-18** (#1740) : le jalon « Maestro 1.0 », au 2028-02-04, la
+> suppose bouclée, retex de personnes extérieures compris (C11). Pour y mener, **#645** porte
+> désormais la preuve d'une installation réelle et la première version 0.x publiée, et passe en
+> `haute`, parce que #1516 l'attend. Voir la section « Maestro 1.0 », plus bas.
 
 ---
 
@@ -1544,6 +1555,12 @@ Pourquoi ce rang :
   possible. Les mises à jour (#644) lèvent l'argument de la cible mouvante.
 - **Les quatre jalons de fonctionnalités** gardent leur ordre relatif, celui de #1416.
 
+> ⚠ **Une ligne d'arrivée s'insère entre la Phase 9 et ces quatre jalons le 2026-11-18** (#1740) :
+> le jalon « Maestro 1.0 », au 2028-02-04. La 1.0 se publie quand le go/no-go rend `GO` ou
+> `GO avec réserves` et que la Phase 9 est bouclée, et les quatre jalons viennent après elle, par la
+> mise à jour. #1510 s'étant fermé avec son dernier lot, le passage décisif du go/no-go est porté par
+> un parent neuf, **#1735** (#1736 → #1737 ∥ → #1738). Voir la section « Maestro 1.0 », plus bas.
+
 **Les priorités** changées le même jour, chacune avec sa raison :
 
 | Ticket | Prio | Raison |
@@ -2080,6 +2097,178 @@ Docker, un moteur dédié dans WSL, et l'agent en mode isolé, qui reste une opt
 
 ---
 
+## « Maestro 1.0 » — la ligne d'arrivée : le résultat prouvé, installé hors du projet, publié (2026-11-18)
+
+Ce chantier est né d'une demande du 2026-11-18, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1740. Le plan a été **présenté avant toute écriture** (#1415), et la
+personne l'a validé tel que recommandé, avec ses deux réponses. Rien n'est renversé, donc aucune
+note de décision n'est due : [docs/48](./48-decision-produit-pro-exploitable.md) reste la règle, et
+la 1.0 y ajoute une ligne d'arrivée.
+
+> *« Je voudrais un plan d'action complet pour arriver au bout de maestro. de sortir une version qui
+> fonctionne et donne un résultat concluant »*
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Maestro 1.0 — le résultat prouvé, installé hors du projet, publié** (jalon neuf, rail produit) | La ligne d'arrivée : le go/no-go rend `GO`, la Phase 9 est bouclée, et la version 1.0.0 est publiée et dit ce qu'elle est | **2028-02-04** (neuf) | **#1739** ; **#1306**, déplacé d'« Indépendant du modèle » ; #1740 |
+| *Maestro fait mieux qu'un agent seul* (jalon existant) | Le go/no-go se tranche sur le réel : un projet qu'une session seule ne boucle pas, trois passages par côté, et le plancher p5 | 2028-01-31 | **#1735** (`lot::arbitre`) — #1736 → #1737 ∥ → #1738 ; le courtier #1724, en cours |
+| *Phase 9 — Poste de travail : distribution* (jalon existant, **ancré**) | Le reste de la phase : la connexion depuis l'écran, la preuve d'une installation réelle et le retex de personnes extérieures | 2028-02-01 | #1704, en cours ; **#645** (moyenne → `haute`) ; #1516 |
+
+**Le constat** : la roadmap n'a pas de ligne d'arrivée, et le go/no-go n'a jamais été joué tel
+qu'il est défini.
+- **Aucune version n'a été publiée** ([docs/54 §3.4](./54-le-paquet-d-installation.md)). docs/48
+  ordonne la file, mais ne définit aucune version.
+- **Les trois mesures face à un agent seul sont défavorables**, surtout en durée et en gestes :
+
+  | Mesure | Maestro | En face | Rapport de durée |
+  | --- | --- | --- | --- |
+  | p5, 2026-10-14 ([docs/50](./50-ecart-face-a-un-agent-seul.md)) | 1 h 04, 15,97 $ | session seule : 26 min, 8,02 $ | ×2,5 |
+  | club, 2026-10-20 (#1513) | 55 min, 23,10 $, 22 gestes, 17/20 critères | session seule : 20 min, 4,25 $, 1 geste, 20/20 | ×2,8 |
+  | #1592 sur le dépôt de Maestro, 2026-11-04 → 16 ([docs/56](./56-maestro-de-nouveau-face-a-la-chaine.md)) | 2 h 37, 6,06 $, 13 gestes, 3/4 critères | chaîne du dépôt : 19 min, 6,74 $, 1 geste, 2/4 | ×8,4 |
+
+- **Le terrain du go/no-go n'est pas tenu** (son critère C1). Le projet versé par #1513 devait
+  dépasser une session, et la session seule l'a bouclé d'un trait, en 20 min.
+- **Ses critères C2 et C3 n'ont pas été rejoués après les leviers.** Il y a eu un passage de chaque
+  côté le 2026-10-20, avant les leviers, et jamais trois.
+- **L'étape « trancher » n'avait plus de porteur.** #1510, le parent du go/no-go, s'est fermé seul
+  le 2026-11-03, avec son dernier lot (`ferme-parent`, #515). Il ne restait au jalon que le courtier
+  (#1724) : une fois ses lots livrés, le jalon aurait été soldé sans avoir tranché.
+- **Les leviers sont livrés** : #1530 à #1533, #1542, #1543, #1678 à #1681, #1713 à #1717. #1543, la
+  reprise après la limite d'usage, n'a jamais été exercé (docs/56 §4.2).
+- **La Phase 9 en est à 19 tickets sur 23.** L'installeur (#1597), le premier lancement (#1616), la
+  mise à jour (#1643) et l'isolation par défaut (#1515) sont livrés. Restent #1704, #645 et #1516,
+  qui n'a encore rien à faire installer.
+- **La part de l'outillage est de 33 % sur 30 jours**, pour un plafond de 15 %
+  ([docs/49 §3](./49-decision-le-reglement-ne-grossit-plus.md)). #1524, qui la ferait dire, est à
+  faire.
+
+**La ligne d'arrivée.** La version 1.0.0 se publie quand quatre choses sont vraies. Ce sont les
+critères de sortie du jalon :
+1. **Le résultat est concluant** : le go/no-go rend `GO` ou `GO avec réserves`, arbitré par la
+   personne. Un `NO-GO` bloque la 1.0, et la suite revient à la personne
+   ([docs/48 §6](./48-decision-produit-pro-exploitable.md)).
+2. **Elle fonctionne chez d'autres** : la Phase 9 rend `GO` ou `GO avec réserves`, C11 compris.
+   Deux ou trois personnes hors du projet installent le produit et s'en servent jusqu'à un
+   livrable, sans aide.
+3. **Elle est publiée** : la 1.0.0 part sur le canal par `publier.sh`, un geste humain
+   ([docs/54 §6.3](./54-le-paquet-d-installation.md)). Elle s'installe sur un poste neuf, et une
+   installation 0.x s'y met à jour sans rien perdre.
+4. **Elle dit ce qu'elle est** : ses notes de version disent ce que la 1.0 fait et ne fait pas, et
+   aucun réglage qu'elle montre n'est ignoré en silence.
+
+Les quatre jalons de fonctionnalités viennent **après la 1.0**. Ils arrivent aux installations par
+la mise à jour : #644 lève l'argument de la cible mouvante
+([docs/48 §2.2](./48-decision-produit-pro-exploitable.md)).
+
+**Le contenu**, en trois chantiers :
+- **Le go/no-go se tranche** (jalon « Maestro fait mieux qu'un agent seul »). Un parent neuf,
+  **#1735**, porte trois lots, dans cet ordre :
+  1. **#1736, le terrain** : un projet qu'une session seule ne boucle pas d'un trait, prouvé par un
+     passage réel de la session seule. Seule la session seule y joue, donc il n'attend pas le
+     courtier ;
+  2. **#1737 ∥, le plancher p5** : trois passages par côté, après #1728. Ses passages servent aussi
+     au rejeu de C2 de « Le run livre un vrai projet » : un seul jeu de passages pour deux bilans ;
+  3. **#1738, le projet long** : trois passages par côté, interrompus entre deux jours, après #1736
+     et #1728. Il exerce aussi #1543.
+
+  Puis `/milestone-bilan` et `/milestone-verdict` : le verdict est une décision de la personne.
+  **Le coût**, au tarif mesuré par passage : environ 72 $ pour #1737, au moins 82 $ pour #1738, et
+  davantage, puisque le projet est plus grand par construction.
+- **La Phase 9 jusqu'au bout** (jalon existant, ancré) :
+  - **#645** reçoit une note : il porte la preuve d'une installation réelle, ce que docs/54 §3.4 lui
+    renvoie comme jamais vérifié. Ce sont une machine vierge, une session d'agent depuis
+    l'installation, une première version 0.x publiée sur le vrai canal, une mise à jour depuis ce
+    canal et un run en vol pendant la mise à jour. Sa priorité passe à `haute`, parce que #1516
+    l'attend ;
+  - **#1516**, une fois la 0.x publiée : la personne recrute deux ou trois personnes, et leurs
+    constats entrent en tickets.
+- **La 1.0** (jalon neuf) :
+  - **#1739, la publication** : les notes de version, la version 1.0.0 posée par une PR, puis
+    `publier.sh`, joué par la personne ;
+  - **#1306**, déplacé d'« Indépendant du modèle » avec une note : le fournisseur choisi pour un
+    agent est ignoré en silence, et une version publiée ne peut pas porter ce défaut. Le reste du
+    chantier #1307 reste à son jalon, après la 1.0.
+
+**Les arbitrages rendus** :
+- **un jalon neuf pour la 1.0**, plutôt qu'un ticket de la Phase 9 : la 1.0 suppose le go/no-go
+  **et** la Phase 9, et aucun de leurs critères ne la porte ;
+- **un parent neuf pour le go/no-go**, et #1510 n'est pas rouvert : il a soldé ses lots, et la
+  mesure décisive est une capacité à part ;
+- **#1737 se mène en parallèle de #1736, #1738 non** : seul #1738 a besoin du terrain de #1736. Les
+  passages ne se jouent jamais en même temps sur le poste, ce qui fausserait les durées ;
+- **#645 est mis à jour plutôt que doublé** : docs/54 §3.4 le nomme déjà comme l'endroit de ces
+  vérifications. C'est aussi la suite du « recadrer ou abandonner #645 » resté proposé le
+  2026-10-14 ;
+- **#1306 passe à la 1.0** : c'est un défaut d'un réglage déjà livré (#1611), pas une fonctionnalité
+  de plus ;
+- **le rejeu de C2 de « Le run livre un vrai projet » est porté par #1737**, pas par un ticket à
+  part.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Le run livre un vrai projet » (soldé, NO-GO) | 2028-01-30 (inchangée) |
+| **« Maestro fait mieux qu'un agent seul »** : le courtier, puis #1735 | 2028-01-31 (inchangée) |
+| **« Phase 9 »** (ancrée) : #1704, #645, #1516 | 2028-02-01 (inchangée) |
+| « Rien de figé », « Le run tient parole » (soldés) | 2028-02-02, 2028-02-03 (inchangées) |
+| **« Maestro 1.0 »** | **2028-02-04** (neuf) |
+| « Le niveau visuel », « Maestro simple », « Le mode conception », « Indépendant du modèle » | 2028-02-07 à 2028-02-10 (inchangées) |
+
+Pourquoi ce rang :
+- **derrière la Phase 9** : la 1.0 la suppose bouclée, retex compris, comme elle suppose le verdict
+  du go/no-go qui la précède ;
+- **devant les quatre jalons de fonctionnalités** : ils viennent après la 1.0, par la mise à jour.
+  Leur ordre relatif, celui de #1416, ne bouge pas ;
+- **la date du 2028-02-04 était libre** : aucune échéance ne bouge. Les jalons soldés qui la
+  précèdent gardent la leur : sans ticket ouvert, elle ne range rien.
+
+**La limite de quatre jalons en chantier** ([docs/48 §0.5](./48-decision-produit-pro-exploitable.md)).
+Le jalon neuf porte à sept le nombre de jalons produit en chantier. La règle demande alors un
+arbitrage écrit, et cette section l'est : la 1.0 est la ligne d'arrivée des jalons qui la précèdent,
+pas un chantier de plus. Elle ne porte que la publication (#1739) et un défaut d'un réglage déjà
+livré (#1306).
+
+**Les réponses de la personne**, le 2026-11-18 :
+- **Q1, le périmètre de la 1.0** : « Go/no-go + Phase 9 », comme recommandé. Les quatre jalons de
+  fonctionnalités viennent après la 1.0, par mise à jour.
+- **Q2, ce que « concluant » veut dire** : « Mieux qu'un agent seul », comme recommandé. C'est la
+  barre de docs/48, avec les seuils du critère C3 du go/no-go, et un `NO-GO` bloque la 1.0. Une autre réponse
+  aurait renversé docs/48 §0.1 et appelé une note de décision.
+- **Q3, écrire le plan dans la forge** : « ce que tu recommandes », c'est-à-dire oui.
+
+**Ne bougent pas** :
+- [docs/48](./48-decision-produit-pro-exploitable.md) : le go/no-go d'abord, la Phase 9 ancrée, et
+  un `NO-GO` qui bloque les jalons de fonctionnalités ;
+- les seuils du go/no-go, posés avant l'épreuve dans les critères de son jalon ;
+- l'objectif O7 du [cahier des charges](./00-cahier-des-charges.md), tenu au sens du texte :
+  `openai_compat` est branché, en texte seul. Une 1.0 dont seuls les agents Claude agissent avec des
+  outils ne le renverse pas, et #1306 la rend honnête ;
+- le plafond de l'outillage (docs/49 §3) : aucun gel neuf.
+
+**Sont écartés ou différés** :
+- **créer des leviers avant la mesure** : docs/48 veut des leviers tirés de la mesure, et #1738 dira
+  lesquels ;
+- **geler l'outillage** : la règle existe déjà. Elle est dépassée, et #1524 la fera dire ;
+- **reprendre `/orchestrate`** : la personne a demandé l'interactif pour le moment, et les passages
+  du banc se jouent en interactif ;
+- **la signature de l'installeur** : SmartScreen avertira les personnes extérieures, ce qui est
+  tolérable pour le retex. Pour la 1.0, c'est une décision de la personne à prendre avant la
+  publication, puisqu'un certificat a un coût ;
+- **ce qu'on fait sur un `NO-GO`** : docs/48 §6 renvoie la question à la personne, sur pièces. Elle
+  ne se tranche pas avant la mesure.
+
+**Le risque principal** : rien ne garantit que le projet long donne l'avantage à Maestro. Les trois
+mesures sont défavorables, de ×2,5 à ×8,4 en durée, et de 13 à 22 gestes contre un. #1736 est
+justement l'épreuve qui le dira au plus tôt, et au moindre coût.
+
+> ⚠ **Les critères de sortie de la 1.0 sont dans la description de son jalon**, section
+> `## Critères de sortie`, C1 à C4. Les critères de chaque ticket sont dans sa description. Ce sont
+> elles qui font foi au bouclage et à la clôture (docs/10 §3.4, §6), pas ce résumé. L'analyse
+> entière, mesures comprises, est le corps de #1740.
+
+---
+
 ## Au-delà (idées V3+)
 
 - **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
@@ -2104,6 +2293,7 @@ Docker, un moteur dédié dans WSL, et l'agent en mode isolé, qui reste une opt
 | **Fin Phase 7** | La Phase **10 — Continuité & multi-projet** se confirme-t-elle, et avec quel périmètre ? |
 | **« Maestro fait mieux qu'un agent seul »** *(rouvert le 2026-10-14, [docs/48](./48-decision-produit-pro-exploitable.md))* | Sur un projet qui dépasse une session, confié par une personne qui ne code pas et repris le lendemain, **Maestro fait-il mieux qu'une session d'agent seule** ? La mesure : trois passages par côté, avec un plancher sur p5. Un NO-GO bloque les jalons de fonctionnalités |
 | **Fin Phase 9** *(rouvert le 2026-10-14)* | **Des personnes extérieures** installent-elles le produit et s'en servent-elles **sans aide**, jusqu'à un livrable ? (C11, #1516) |
+| **« Maestro 1.0 »** *(neuf le 2026-11-18, section « Maestro 1.0 » plus haut)* | La **version 1.0.0** se publie-t-elle ? Elle suppose les deux verdicts qui la précèdent : le go/no-go en `GO` ou `GO avec réserves`, et la Phase 9 bouclée, C11 compris. Puis elle part par `publier.sh`, s'installe sur un poste neuf, une 0.x s'y met à jour sans rien perdre, et ses notes de version disent ce qu'elle fait et ne fait pas. Un `NO-GO` du go/no-go la bloque |
 
 > **Verdicts rendus.** Chaque jalon est tranché **sur pièces** dans la démo de fin de phase :
 > Phase 0 → [docs/11](./11-demo-poc.md), Phase 1 → [docs/12](./12-demo-mvp.md),
