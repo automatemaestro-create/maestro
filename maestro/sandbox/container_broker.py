@@ -15,7 +15,8 @@ that names anything else is refused, and the refusal says why.
 never by a second contract (`maestro.sandbox.container.protocole_sandbox`, then
 `commande_courtier`): the session's workspace on `/workspace`, with the masks of its
 scope; for a versioned project, the container's own repository
-(`maestro.sandbox.depot_conteneur`), built for the command and removed after it; a
+(`maestro.sandbox.depot_conteneur`), built for the command and removed after it, before
+its code is told; a
 read-only root, the non-root user `agent`, no capability, no new privilege, the caps;
 an outbound network. Nothing of the person's environment enters.
 
@@ -322,12 +323,14 @@ class ContainerBroker:
             try:
                 served = self._checked(raw)
                 channel.watch()
-                self._play(served, channel)
+                code = self._play(served, channel)
             except (BrokerRefusal, ImageRefusal) as refusal:
                 channel.send(frame(**{FRAME_REFUSED: str(refusal)}))
             except Exception as exc:  # noqa: BLE001 - said to the program, never swallowed
                 channel.say(f"le courtier a échoué : {type(exc).__name__}: {exc}")
                 channel.send(frame(**{FRAME_EXIT: NOT_RUN}))
+            else:
+                channel.send(frame(**{FRAME_EXIT: code}))
         finally:
             with contextlib.suppress(OSError):
                 connection.close()
@@ -372,8 +375,13 @@ class ContainerBroker:
             )
         return _Request(session, image, dockerfile, command)
 
-    def _play(self, served: _Request, channel: _Channel) -> None:
-        """Composes the container on the session's workspace, its image if need be, plays it."""
+    def _play(self, served: _Request, channel: _Channel) -> int:
+        """Composes the container on the session's workspace, its image if need be, plays it.
+
+        Returns the code, never sends it: the program returns on its code, so `serve`
+        tells it once the container's repository is removed and the project's turn
+        freed, and what the program does next finds nothing of the command (#1748).
+        """
         session = served.session
         if not session.lock.acquire(blocking=False):
             whose = "ton projet" if session.project is not None else "ta session"
@@ -389,16 +397,14 @@ class ContainerBroker:
                 )
             except ConfigError as exc:
                 channel.say(f"le conteneur n'a pas pu être composé : {exc}")
-                channel.send(frame(**{FRAME_EXIT: NOT_RUN}))
-                return
+                return NOT_RUN
             try:
                 if served.dockerfile is not None:
                     built = self._image(session, served.dockerfile, environ, channel)
                     if built is None:
-                        channel.send(frame(**{FRAME_EXIT: NOT_RUN}))
-                        return
+                        return NOT_RUN
                     environ[container.ENV_IMAGE] = built
-                self._run(session, environ, served.command, channel)
+                return self._run(session, environ, served.command, channel)
             finally:
                 depot = environ.get(container.ENV_DEPOT)
                 if depot:
@@ -412,7 +418,8 @@ class ContainerBroker:
         environ: Mapping[str, str],
         command: list[str],
         channel: _Channel,
-    ) -> None:
+    ) -> int:
+        """Plays the command in its container until it ends; the code to tell."""
         name = CONTAINER_PREFIX + secrets.token_hex(6)
         argv = container.commande_courtier(environ, command, nom=name)
         session.containers.add(name)
@@ -420,7 +427,7 @@ class ContainerBroker:
             code = self._follow(argv, channel, gone=lambda: self._remove(name))
         finally:
             session.containers.discard(name)
-        channel.send(frame(**{FRAME_EXIT: NOT_RUN if code is None else code}))
+        return NOT_RUN if code is None else code
 
     # ------------------------------------------------------------------ images
 

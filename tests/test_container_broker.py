@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
@@ -44,6 +45,7 @@ from maestro.sandbox.container_broker import ContainerBroker
 from maestro.sandbox.container_broker_client import (
     ENV_ADDRESS,
     ENV_TOKEN,
+    FRAME_EXIT,
     NOT_RUN,
     PROGRAM,
     request,
@@ -226,6 +228,53 @@ def test_a_versioned_project_s_container_gets_its_own_repository_and_its_masks(
     # Rebuilt for the command, removed after it: never read by the host's git.
     assert not Path(depot).exists()
     assert not any(project.root_path.resolve() == Path(v.rsplit(":/", 1)[0]) for v in volumes)
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_the_program_gets_its_code_once_the_repository_is_removed_and_the_turn_freed(
+    broker, docker, tmp_path, monkeypatch
+):
+    """The program returns on its code (#1748): what it does next finds nothing of the command.
+
+    The race is forced by a barrier, never left to a delay: whatever the broker would do
+    once a code has left it is held until the program has looked — at the container's
+    repository, then at a second request of its project.
+    """
+    workspace, project = _versioned_project(tmp_path)
+    session = broker.open(workspace, project)
+    looked = threading.Event()
+    send = container_broker._Channel.send
+
+    def sending(channel: object, data: bytes) -> None:
+        send(channel, data)
+        if FRAME_EXIT in json.loads(data):
+            looked.wait(timeout=60)
+
+    monkeypatch.setattr(container_broker._Channel, "send", sending)
+    second: subprocess.Popen[bytes] | None = None
+    try:
+        first = _program(session.env, "alpine:3", "git", "status")
+        volumes = _volumes(docker.runs[0])
+        depot = next(v for v in volumes if v.endswith(":/maestro/depot")).rsplit(":/", 1)[0]
+        left = Path(depot).exists()
+        second = subprocess.Popen(
+            [sys.executable, "-I", str(CLIENT), "alpine:3", "true"],
+            env={**os.environ, **session.env},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert second.stderr is not None
+        told = second.stderr.readline().decode("utf-8")
+    finally:
+        looked.set()
+        if second is not None:
+            second.communicate(timeout=60)
+
+    assert first.returncode == 7, first.stderr
+    assert not left, "le programme a eu son code avant que le dépôt du conteneur soit retiré"
+    assert "attend son tour" not in told, told
+    assert second.returncode == 7
+    assert not Path(depot).exists()
 
 
 def test_a_second_request_of_the_session_waits_for_the_first_and_is_told(tmp_path):
