@@ -87,7 +87,37 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 
 ---
 
+## 💻 Installer Maestro
+
+Pour **se servir** de Maestro, il n'y a ni dépôt à cloner, ni Python, ni Node à installer.
+
+1. **Téléchargez l'installeur** de la dernière version, `Maestro-<version>-installation-x64.exe`,
+   depuis les [publications du dépôt](https://github.com/automatemaestro-create/maestro/releases/latest).
+   Il pèse environ 285 Mo et vise Windows 10 et 11 (x64).
+2. **Double-cliquez-le.** Il s'installe pour vous seul, sans droit d'administrateur. Il pose un
+   raccourci sur le bureau et dans le menu Démarrer. L'installeur n'est pas signé : Windows
+   SmartScreen le signale comme une application d'éditeur inconnu (« Informations
+   complémentaires », puis « Exécuter quand même »).
+3. **Ouvrez Maestro.** Le premier lancement vous fait choisir le modèle qui fera le travail : une
+   clé d'API Anthropic, ou votre abonnement Claude, que l'écran vous dit comment connecter. Il vous
+   fait ensuite choisir le dossier où naîtront vos projets, puis il démarre votre premier projet.
+
+**Les mises à jour se font seules.** À chaque ouverture, Maestro cherche une version plus récente
+et la télécharge en arrière-plan. Il vous propose ensuite de redémarrer dessus, ou de la poser à
+la prochaine fermeture. Vos projets, vos réglages et l'historique de vos runs survivent à la mise
+à jour, à une réinstallation et à une désinstallation. Ils vivent sous votre profil
+(`%USERPROFILE%\.maestro\` et `%USERPROFILE%\Maestro\`), jamais dans le dossier d'installation.
+
+**Ce que l'installation n'apporte pas** : un compte pour le modèle, que vous connectez vous-même ;
+**Git for Windows**, dont un projet versionné a besoin ; et **Docker**, qui reste une option. macOS
+et Linux ne sont pas encore construits : le mode web, par un clone (ci-dessous), y tourne. Le
+détail est en [docs/54](./docs/54-le-paquet-d-installation.md).
+
+---
+
 ## 🛠️ Développement (Phase 0)
+
+Ce qui suit concerne qui **construit** Maestro, depuis un clone du dépôt.
 
 Stack **Python 3.11+** (option A du [doc stack](./docs/02-stack-technique.md)), moteur d'agents = **Claude Agent SDK**.
 

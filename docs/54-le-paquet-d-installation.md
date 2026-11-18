@@ -254,9 +254,14 @@ et le `.gitignore` que le paquet livre sous `core\projets\` et `core\reglages\` 
 
 ### 3.4 Ce qui n'a pas été vérifié
 
+Six de ces points attendent une même preuve : la machine vierge, la session d'agent, le poste sans
+Git, la 0.1.0 distribuée, la mise à jour depuis le vrai canal et le run en vol. Cette preuve est
+**différée, pas abandonnée** : elle attend deux gestes de la personne, et elle est prête à être
+jouée (§3.5).
+
 - **Une machine réellement vierge** (une VM Windows neuve) : le poste de référence a Python, Node et
-  Git installés, que la vérification masque au lieu de les retirer. Les tests différés de la
-  phase (#645) sont l'endroit où le faire.
+  Git installés, que la vérification masque au lieu de les retirer. Le Bac à sable de §3.5 est
+  cette machine.
 - **Une session d'agent depuis l'installation** : elle demande un compte connecté au modèle, que le
   poste n'avait pas le jour de la mesure (CLI déconnecté). Le CLI est trouvé, se lance et répond au
   SDK ; sa conversation avec le modèle n'a pas été jouée.
@@ -285,6 +290,55 @@ et le `.gitignore` que le paquet livre sous `core\projets\` et `core\reglages\` 
 - **Un dossier de profil de plus de 20 caractères** (un profil de domaine `prenom.nom.DOMAINE`, un
   `%TEMP%` redirigé ailleurs) : il entame la marge de §3.3.1. Rien ne le détecte à l'installation ;
   c'est un constat à reprendre si l'installeur devait servir des postes gérés.
+- **Le journal de la fenêtre, chez quelqu'un** : la coque écrit ses lignes, dont celles de la mise
+  à jour (`[mise à jour]`, §6.2), sur sa sortie standard. La vérification les capte parce qu'elle
+  lance `Maestro.exe` elle-même. Ouverte par son raccourci, la fenêtre n'a pas de console, et ces
+  lignes ne sont écrites nulle part : seuls les journaux du lanceur restent, sous
+  `%USERPROFILE%\.maestro\lanceur\`. Une mise à jour qui échoue chez quelqu'un ne laisse donc pas
+  de trace qu'il puisse transmettre.
+
+### 3.5 La preuve sur une machine vierge : différée, et comment la jouer
+
+<!-- documentation: développement -->
+
+La machine vierge est le **Bac à sable Windows** : un Windows neuf et jetable, sans Python, sans
+Node, sans Git et sans compte, qui s'efface à sa fermeture. Le poste de référence ne l'a pas activé.
+L'activer est un réglage du système, donc le geste de la personne. Publier la 0.1.0 en est un autre
+(§6.3). La preuve les attend tous les deux. La personne les fera à un moment calme, une fois mergé
+le lot qui donne la connexion au compte depuis l'écran (#1704). C'est la version que la première
+publication doit embarquer.
+
+Le jour venu, depuis le clone principal sur `main` à jour, dans cet ordre :
+
+1. **Activer le Bac à sable** (PowerShell administrateur), puis redémarrer le poste :
+   ```powershell
+   Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
+   ```
+2. **Construire la version de départ**, sous un numéro plus petit que celui qu'on publiera :
+   ```bash
+   bash scripts/distribution/construire.sh --version 0.0.9
+   ```
+3. **Préparer le Bac à sable** sur cet installeur, avant que la publication ne reconstruise le
+   paquet :
+   ```bash
+   bash scripts/distribution/bac-a-sable.sh
+   ```
+   Le script pose sous `.maestro/distribution/bac-a-sable/` l'installeur, le relevé `preuve.ps1` et
+   `maestro.wsb`, qui partage ce dossier avec le Bac à sable (`C:\preuve`). Il ne lance rien.
+4. **Publier la 0.1.0** (§6.3).
+5. **Ouvrir `maestro.wsb`** (double-clic). `preuve.ps1` relève le poste vierge, installe en
+   silence, ouvre Maestro et affiche `A-VOUS.txt`. Les gestes y sont dans l'ordre : connecter le
+   compte depuis l'écran, lancer un run de plusieurs minutes, presser « Redémarrer maintenant »
+   pendant qu'il travaille, puis « Reprendre ».
+
+Le relevé revient sous `.maestro/distribution/bac-a-sable/releve-<date>-<heure>/`. `rapport.txt`
+porte les constats. Chaque outil doit y être absent du poste, et aucun exécutable ne doit être
+signalé « hors de l'installation ». La version servie doit passer de 0.0.9 à 0.1.0. Le run doit
+être « arrêté avec Maestro », puis repris jusqu'au bout. `chronologie.tsv` en donne le détail
+toutes les 10 secondes. Chaque passage écrit son propre relevé, sans recouvrir le précédent.
+`tests/test_distribution.py` éprouve ce que le script prépare, sans Bac à sable : le `.wsb` qu'il
+écrit, ses refus et l'encodage du relevé. PowerShell 5.1 lit un script sans BOM dans la page de
+code du poste, donc le relevé reste en ASCII.
 
 ## 4. Construire le paquet
 
@@ -407,7 +461,7 @@ coût avant qu'on choisisse.
 | **Les versions sautées** | On va toujours à la plus récente, sans passer par les intermédiaires : les migrations du journal (§5) rattrapent l'écart |
 | **Le retour en arrière** | Jamais de lui-même : la mise à jour ne propose pas une version plus ancienne, ni une préversion. Pour revenir à une version précédente, on réinstalle son installeur. Un journal qu'une version plus récente a mis à niveau est alors **refusé** (§5) : sa sauvegarde, `commun.sqlite3-sauvegarde`, porte le fichier d'avant |
 | **Un clone du dépôt** | Il ne se met pas à jour par ce chemin. Un clone se met à jour par git |
-| **Une mise à jour qui échoue** | Si l'arrêt n'aboutit pas, la version n'est pas posée : une stack à moitié arrêtée tient encore des fichiers du dossier que l'installeur efface. La version reste téléchargée, et le prochain lancement la repropose. Tout se lit au journal de la fenêtre, sur les lignes `[mise à jour]` |
+| **Une mise à jour qui échoue** | Si l'arrêt n'aboutit pas, la version n'est pas posée : une stack à moitié arrêtée tient encore des fichiers du dossier que l'installeur efface. La version reste téléchargée, et le prochain lancement la repropose. Tout se lit au journal de la fenêtre, sur les lignes `[mise à jour]`, quand la fenêtre a une console pour l'écrire. Ouverte par son raccourci, elle n'en a pas (§3.4) |
 
 La variable `MAESTRO_MISES_A_JOUR_FLUX` remplace le canal par une autre adresse (HTTPS, ou HTTP
 vers le poste lui-même) ou l'éteint (`0`). Une valeur qui ne se lit pas **éteint** la mise à jour
@@ -430,8 +484,18 @@ bash scripts/distribution/publier.sh --essai
 bash scripts/distribution/publier.sh
 ```
 
-Le script refuse (code `4`) une branche autre que `main`, un arbre sale, un HEAD qui n'est pas
-`origin/main`, et une version déjà publiée : une publication ne se remplace pas. Il construit le
+Le script refuse (code `4`) une branche autre que `main`, un HEAD qui n'est pas `origin/main`, et
+une version déjà publiée : une publication ne se remplace pas. Il refuse aussi un arbre sale **là
+où le paquet lit**, et ce critère se règle sur ce que le paquet embarque. Le produit prend le
+contenu des fichiers suivis tel qu'il est sur le disque. Un fichier suivi modifié ou indexé est
+donc refusé, où qu'il soit. Deux étapes lisent un dossier entier : le build du front (`apps/web`)
+et electron-builder (`apps/desktop`). Un fichier non suivi y est refusé, puisqu'il partirait sans
+avoir été mergé. Ailleurs, un fichier non suivi n'entre pas dans le paquet. Il est donc nommé, sans
+bloquer : c'est le cas d'un bilan que `/milestone-bilan` laisse sous `docs/bilans/`, ou d'une
+sortie de démonstration. Il n'y a rien à déplacer avant de publier. La liste des dossiers lus en
+entier est confrontée à ceux que `construire.sh` nomme. Publier depuis une copie propre de `main`
+donnerait la même garantie, mais il faudrait réinstaller les dépendances du front et de la coque à
+chaque publication. Il construit le
 paquet, vérifie que `latest.yml` annonce cette version, nomme cet installeur et porte son empreinte,
 puis crée la publication `v<version>` avec ces deux fichiers (`gh release create --latest`).
 `--essai` joue tout sauf l'envoi. Ses refus et son envoi sont éprouvés contre un `gh` factice par

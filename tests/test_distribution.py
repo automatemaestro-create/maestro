@@ -700,11 +700,64 @@ def test_la_publication_part_de_main_et_de_main_seulement(depot_a_publier) -> No
 
 
 @sans_bash
-def test_la_publication_refuse_un_arbre_sale(depot_a_publier) -> None:
-    _ecrire(depot_a_publier["depot"] / "apps" / "desktop" / "main.js", "// non commité\n")
+@pytest.mark.parametrize(
+    ("salissure", "clause", "chemin"),
+    [
+        ("suivi-modifie", "changements non commités", ".gitignore"),
+        ("nouveau-indexe", "changements non commités", "maestro/moteur.py"),
+        ("non-suivi-coque", "là où la construction lit tout", "apps/desktop/main.js"),
+        ("non-suivi-front", "là où la construction lit tout", "apps/web/app/page.tsx"),
+    ],
+)
+def test_la_publication_refuse_ce_qui_partirait_sans_etre_merge(
+    depot_a_publier, salissure: str, clause: str, chemin: str
+) -> None:
+    """Le paquet prend le contenu des fichiers suivis tel qu'il est sur le disque, et deux dossiers
+    en entier : chaque façon d'y glisser ce qui n'a pas été mergé est refusée, et nommée."""
+    depot = depot_a_publier["depot"]
+    assert isinstance(depot, Path)
+    if salissure == "suivi-modifie":
+        with (depot / chemin).open("a", encoding="utf-8") as fichier:
+            fichier.write("# modifié\n")
+    else:
+        _ecrire(depot / chemin, "// pas mergé\n")
+    if salissure == "nouveau-indexe":
+        _git(depot, "add", chemin)
     sortie = _publier(depot_a_publier, "--essai", "--sans-construire")
-    assert sortie.returncode == 4
-    assert "non commités" in sortie.stderr
+    assert sortie.returncode == 4, sortie.stdout + sortie.stderr
+    assert clause in sortie.stderr
+    assert chemin in sortie.stderr, "le refus nomme ce qui le cause"
+    assert _demandes(depot_a_publier) == []
+
+
+@sans_bash
+def test_un_non_suivi_que_le_paquet_ne_lit_pas_se_nomme_sans_bloquer(depot_a_publier) -> None:
+    """`/milestone-bilan` et `/milestone-presentation` laissent leurs écrits sous `docs/` sans les
+    commiter : le produit n'y prend que du suivi, donc ils ne partent pas, et la publication
+    passe."""
+    depot = depot_a_publier["depot"]
+    assert isinstance(depot, Path)
+    _ecrire(depot / "docs" / "bilans" / "phase-9.md", "# Bilan\n")
+    _ecrire(depot / "sortie-demo" / "run-1" / "rapport.txt", "un run\n")
+    sortie = _publier(depot_a_publier, "--essai", "--sans-construire")
+    assert sortie.returncode == 0, sortie.stderr
+    assert "non suivis, hors du paquet" in sortie.stdout
+    assert "docs/" in sortie.stdout and "sortie-demo/" in sortie.stdout
+    assert "rien n'est envoyé" in sortie.stdout
+
+
+def test_les_dossiers_lus_en_entier_sont_ceux_que_la_construction_lit() -> None:
+    """`publier.sh` ne tolère un non-suivi que hors des dossiers que `construire.sh` lit en entier.
+    Un dossier d'`apps/` que la construction se mettrait à lire sans que la publication le garde y
+    laisserait passer du non-mergé : la liste de l'une se confronte aux lectures de l'autre."""
+    liste = re.search(r"^LUS_EN_ENTIER=\(([^)]*)\)", PUBLIER.read_text(encoding="utf-8"), re.M)
+    assert liste, "publier.sh ne déclare plus LUS_EN_ENTIER"
+    gardes = set(liste.group(1).split())
+    motif = re.compile(r"\$RACINE/(apps/[\w-]+)")
+    assert motif.findall('cd "$RACINE/apps/autre"') == ["apps/autre"], "la sonde voit un dossier"
+    lus = set(motif.findall(CONSTRUIRE.read_text(encoding="utf-8")))
+    assert lus, "la sonde ne voit plus rien dans construire.sh"
+    assert lus <= gardes, f"lus par la construction, non gardés par la publication : {lus - gardes}"
 
 
 @sans_bash
@@ -769,3 +822,79 @@ def test_la_publication_envoie_l_installeur_et_le_canal_sur_la_tete_de_main(
     assert "latest.yml" in creation
     assert f"--target {tete}" in creation
     assert "--latest" in creation
+
+
+BAC_A_SABLE = RACINE / "scripts" / "distribution" / "bac-a-sable.sh"
+PREUVE = RACINE / "scripts" / "distribution" / "bac-a-sable" / "preuve.ps1"
+
+
+@pytest.fixture
+def depot_du_bac_a_sable(tmp_path: Path) -> Path:
+    """Un dépôt qui ne porte que le script et son relevé : le dossier préparé y est le sien."""
+    depot = tmp_path / "depot de preuve & co"
+    scripts = depot / "scripts" / "distribution"
+    (scripts / "bac-a-sable").mkdir(parents=True)
+    shutil.copyfile(BAC_A_SABLE, scripts / "bac-a-sable.sh")
+    shutil.copyfile(PREUVE, scripts / "bac-a-sable" / "preuve.ps1")
+    return depot
+
+
+def _installeur(dossier: Path, version: str) -> Path:
+    chemin = dossier / f"Maestro-{version}-installation-x64.exe"
+    _ecrire(chemin, f"installeur {version}\n")
+    return chemin
+
+
+@sans_bash
+def test_le_bac_a_sable_partage_l_installeur_et_y_lance_le_releve(depot_du_bac_a_sable) -> None:
+    r"""Le `.wsb` est ce que le Bac à sable lit : un XML valide, qui partage le dossier préparé sous
+    `C:\preuve` et y joue `preuve.ps1` — même quand le chemin du dépôt porte un `&`."""
+    import xml.etree.ElementTree as ET
+
+    depot = depot_du_bac_a_sable
+    paquet = depot / ".maestro" / "distribution" / "paquet"
+    ancien = _installeur(depot / ".maestro" / "distribution" / "bac-a-sable", "0.0.8")
+    installeur = _installeur(paquet, "0.0.9")
+    sortie = _jouer(depot / "scripts" / "distribution" / "bac-a-sable.sh", cwd=depot)
+    assert sortie.returncode == 0, sortie.stdout + sortie.stderr
+
+    dossier = depot / ".maestro" / "distribution" / "bac-a-sable"
+    assert (dossier / installeur.name).read_bytes() == installeur.read_bytes()
+    assert not ancien.exists(), "preuve.ps1 prend le premier installeur : un seul reste"
+    assert (dossier / "preuve.ps1").read_bytes() == PREUVE.read_bytes()
+    racine = ET.fromstring((dossier / "maestro.wsb").read_text(encoding="utf-8"))
+    hote = racine.findtext("MappedFolders/MappedFolder/HostFolder")
+    assert hote and Path(hote.replace("\\", "/")).resolve() == dossier.resolve()
+    assert racine.findtext("MappedFolders/MappedFolder/SandboxFolder") == r"C:\preuve"
+    assert racine.findtext("MappedFolders/MappedFolder/ReadOnly") == "false", "le relevé en revient"
+    assert r"-File C:\preuve\preuve.ps1" in (racine.findtext("LogonCommand/Command") or "")
+
+
+@sans_bash
+@pytest.mark.parametrize(
+    ("installeurs", "argv", "motif"),
+    [
+        ([], [], "aucun installeur"),
+        (["0.0.9", "0.1.0"], [], "plusieurs installeurs"),
+        ([], ["--installeur", "absent.exe"], "n'existe pas"),
+    ],
+)
+def test_le_bac_a_sable_refuse_sans_un_installeur_designe(
+    depot_du_bac_a_sable, installeurs: list[str], argv: list[str], motif: str
+) -> None:
+    depot = depot_du_bac_a_sable
+    for version in installeurs:
+        _installeur(depot / ".maestro" / "distribution" / "paquet", version)
+    sortie = _jouer(depot / "scripts" / "distribution" / "bac-a-sable.sh", *argv, cwd=depot)
+    assert sortie.returncode == 4, sortie.stdout + sortie.stderr
+    assert motif in sortie.stderr
+    assert not (depot / ".maestro" / "distribution" / "bac-a-sable" / "maestro.wsb").exists()
+
+
+def test_le_releve_du_bac_a_sable_est_en_ascii() -> None:
+    """PowerShell 5.1, celui d'un Windows neuf, lit un script sans BOM dans la page de code du
+    poste : un accent y deviendrait une autre lettre, ou une erreur de syntaxe."""
+    octets = PREUVE.read_bytes()
+    assert not "é".encode().isascii(), "la sonde voit un accent"
+    assert octets.isascii(), [i for i, octet in enumerate(octets) if octet > 127][:5]
+    assert b"releve-" in octets, "chaque passage écrit son propre relevé"
