@@ -146,7 +146,7 @@ INTEGRITE_BASSE=""
 #: 1 quand le démon est injoignable parce que le filet est confiné — lue par `local.sh`.
 # shellcheck disable=SC2034  # lue par `local.sh` (lint fichier par fichier, #285)
 DOCKER_CONFINE=0
-DOCKER_RAISON_CONFINEMENT="ce filet tourne à l'intégrité basse, celle d'un agent confiné (docs/17 §7) : le moteur Docker n'admet pas ce niveau, qu'il tourne ou non, et démarrer Docker Desktop n'y changerait rien"
+DOCKER_RAISON_CONFINEMENT="ce filet tourne à l'intégrité basse, celle d'un agent confiné (docs/17 §7) : le moteur Docker n'admet pas ce niveau, qu'il tourne ou non, démarrer Docker Desktop n'y changerait rien, et la session n'a pas de courtier de conteneur (maestro-container, son adresse et son jeton)"
 
 # Le `whoami` de Windows, par son chemin : sous Git Bash, celui du `PATH` est le `whoami` de
 # coreutils, qui ne connaît pas `/groups`. Sans `SYSTEMROOT`, il n'y a pas de Windows, et le niveau
@@ -163,6 +163,93 @@ integrite_basse() {
     fi
   fi
   [ "$INTEGRITE_BASSE" = 1 ]
+}
+
+# --- Le conteneur, par le courtier de la session (#1727, docs/57) ---------------------------------
+# À l'intégrité basse, le tube du moteur reste fermé (#1714). Un agent de Maestro y reçoit en revanche
+# un COURTIER : il nomme une commande et un Dockerfile de son espace, et Maestro, au niveau de la
+# personne, construit l'image puis compose lui-même le conteneur sur l'espace de la session
+# (docs/17 §7). Le filet y joue pytest sur la même recette, `scripts/ci/pytest.Dockerfile` : même
+# image, même OS que la CI. Le régime reste « conteneur ».
+#
+# Le courtier se reconnaît sur un FAIT, jamais sur le texte d'une erreur : son programme est sur le
+# PATH, et l'adresse et le jeton de la session sont dans l'environnement. Les trois noms et le code
+# sont ceux de `maestro/sandbox/container_broker_client.py`, et tests/test_ci_local.py joue le filet
+# avec ceux du module : un nom qui changerait d'un côté seulement y rougit.
+COURTIER_PROGRAMME="maestro-container"
+COURTIER_ENV_ADRESSE="CONTAINER_BROKER_ADDRESS"
+COURTIER_ENV_JETON="CONTAINER_BROKER_TOKEN"
+#: Le code du programme quand rien n'a été joué : refus, courtier parti, conteneur non composé.
+#: pytest ne le rend jamais (0 à 5), donc il se lit sans ambiguïté sur ce chemin-là.
+# shellcheck disable=SC2034  # lue par `local.sh` et `pytest.sh` (lint fichier par fichier, #285)
+COURTIER_RIEN_JOUE=125
+#: 1 quand pytest joue au conteneur par le courtier — posé par la sonde et par le choix du régime.
+# shellcheck disable=SC2034  # lue par `local.sh` et `pytest.sh` (lint fichier par fichier, #285)
+PYTEST_COURTIER=0
+
+courtier_present() {
+  [ -n "${!COURTIER_ENV_ADRESSE:-}" ] && [ -n "${!COURTIER_ENV_JETON:-}" ] &&
+    command -v "$COURTIER_PROGRAMME" >/dev/null 2>&1
+}
+
+# La voie du courtier ne se prend que là où le moteur est fermé : un moteur qui répond garde le
+# conteneur direct, sans les plafonds du courtier (2 CPU, 2 Go).
+courtier_retenu() { # <0|1 : le moteur répond-il ?>
+  [ "$1" = 0 ] && integrite_basse && courtier_present
+}
+
+# Le script que le conteneur du courtier joue en `sh -c`. Rien d'autre que la commande ne passe le
+# courtier (ni variable, ni montage), donc il pose lui-même ce que `pytest_conteneur` donne à
+# `docker run` :
+#   · PYTHONPATH sur le répertoire de travail du conteneur, qui EST l'espace monté (docs/17 §3). Lu
+#     dans le conteneur, jamais recopié d'ici ;
+#   · aucune identité git, comme la CI (#333) : le conteneur du courtier porte celle des commits de
+#     l'agent, et elle remasquerait le bug de #332 ;
+#   · les workers ramenés aux CPU du conteneur (cgroup `cpu.max`), choix explicite compris, et dit :
+#     le courtier plafonne le conteneur à 2 CPU et 2 Go, et huit workers de ~230 Mo (#1558) y
+#     atteindraient le plafond de mémoire. `MAESTRO_PYTEST_CPU_MAX` désigne un autre fichier
+#     (les tests) ; le courtier ne la fait jamais entrer ;
+#   · le dossier temporaire d'un test qui passe rendu à sa fin (`tmp_path_retention_policy=failed`,
+#     celui d'un test qui échoue reste à lire). Le `/tmp` du conteneur est un tmpfs de 512 Mo, compté
+#     dans ses 2 Go, et pytest garde par défaut chaque dossier jusqu'à la fin de la session : le
+#     périmètre de #1688 l'a rempli, et chaque test suivant a échoué sur « No space left on device ».
+#     Placé avant les arguments, un choix explicite de l'appelant l'emporte.
+# shellcheck disable=SC2016  # le script se développe DANS le conteneur, jamais ici
+PYTEST_COURTIER_SCRIPT='unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+PYTHONPATH="$PWD"
+export PYTHONPATH
+cpu_max="${MAESTRO_PYTEST_CPU_MAX:-/sys/fs/cgroup/cpu.max}"
+cpus=""
+if [ -r "$cpu_max" ] && read -r quota periode < "$cpu_max" && [ "$quota" != max ]; then
+  cpus=$(( (quota + periode - 1) / periode ))
+fi
+suivant=0
+for mot do
+  shift
+  if [ "$suivant" = 1 ]; then
+    suivant=0
+    case "$mot" in
+      "" | *[!0-9]*) ;;
+      *)
+        if [ -n "$cpus" ] && [ "$mot" -gt "$cpus" ]; then
+          printf "%s : -n %s ramené à %s, les CPU du conteneur du courtier\n" "$0" "$mot" "$cpus" >&2
+          mot=$cpus
+        fi
+        ;;
+    esac
+  elif [ "$mot" = -n ]; then
+    suivant=1
+  fi
+  set -- "$@" "$mot"
+done
+exec pytest -o tmp_path_retention_policy=failed "$@"'
+
+# Le pytest du conteneur du courtier. Comme `pytest_conteneur`, NE REDIRIGE RIEN : l'appelant décide
+# où va la sortie. Rend le code de pytest, ou COURTIER_RIEN_JOUE quand rien n'a joué — la raison est
+# alors sur la sortie d'erreur, écrite par le programme du courtier.
+pytest_courtier() { # <args pytest…>
+  "$COURTIER_PROGRAMME" --dockerfile "$(chemin_natif "$RACINE/$PYTEST_DOCKERFILE_REL")" \
+    sh -c "$PYTEST_COURTIER_SCRIPT" maestro-pytest "$@"
 }
 
 #: Pourquoi le démon n'a pas pu être joint — posée par `docker_reveille`, lue par son appelant.
@@ -402,15 +489,30 @@ PYTEST_REGIME_REVEIL=0
 # minutes, ni le démarrage d'un Docker que personne n'a demandé à cet instant-là.
 # shellcheck disable=SC2034  # PYTEST_REGIME_REVEIL est lue par `local.sh` (lint fichier par fichier).
 regime_pytest_pressenti() {
+  local repond=0
   PYTEST_REGIME_REVEIL=0
+  PYTEST_COURTIER=0
   case "$PYTEST_REGIME_DEMANDE" in
     natif) PYTEST_REGIME=natif ;;
-    conteneur) PYTEST_REGIME=conteneur ;;
+    conteneur)
+      PYTEST_REGIME=conteneur
+      # Exigé, le régime ne se sonde pas ; la voie, si : `--list` dit par où il jouera.
+      if integrite_basse && courtier_present; then
+        docker_repond && repond=1
+        courtier_retenu "$repond" && PYTEST_COURTIER=1
+      fi
+      ;;
     *)
-      if docker_repond; then
+      docker_repond && repond=1
+      if [ "$repond" = 1 ]; then
         PYTEST_REGIME=conteneur
+      elif courtier_retenu "$repond"; then
+        # Le moteur est fermé à ce niveau, mais le courtier de la session compose le conteneur.
+        PYTEST_REGIME=conteneur
+        PYTEST_COURTIER=1
       elif integrite_basse; then
-        # Rien à réveiller : le confinement ferme le moteur (#1714), et `--list` le dit.
+        # Rien à réveiller : le confinement ferme le moteur (#1714), aucun courtier ne l'ouvre, et
+        # `--list` le dit.
         PYTEST_REGIME=natif
         DOCKER_CONFINE=1
       elif docker_reveillable; then
@@ -672,11 +774,21 @@ pytest_conteneur() { # <image> <args pytest…>
 # n'a pas vu ce que la CI verra.
 # shellcheck disable=SC2034  # PYTEST_IMAGE / PYTEST_REGIME_MOTIF sont lues par les APPELANTS.
 choisit_regime_pytest() {
-  local image raison=""
+  local image raison="" repond=0
   PYTEST_IMAGE=""
   PYTEST_REGIME_MOTIF=""
+  PYTEST_COURTIER=0
   if [ "$PYTEST_REGIME_DEMANDE" = natif ]; then
     PYTEST_REGIME=natif
+    return 0
+  fi
+  docker_repond && repond=1
+  # Le moteur fermé au confinement, le courtier de la session : il construit l'image et compose le
+  # conteneur, auto comme exigé. Rien n'est construit ni vérifié ici : c'est son travail, et ce
+  # qu'il n'a pas pu faire se dit par son code (COURTIER_RIEN_JOUE).
+  if courtier_retenu "$repond"; then
+    PYTEST_REGIME=conteneur
+    PYTEST_COURTIER=1
     return 0
   fi
   # `docker version` est posé ici et non dans la sonde : celle-ci répond « lequel des deux »,
@@ -686,7 +798,7 @@ choisit_regime_pytest() {
   # Et s'il ne répond pas, on essaie de le réveiller AVANT de conclure (#425) : sur un poste où
   # Docker Desktop est installé, « éteint » est une cause qui se répare, pas un verdict. C'est ici
   # et non dans la sonde, parce que c'est ici qu'on s'engage — la sonde, elle, reste gratuite.
-  if ! docker_repond && ! docker_reveille; then
+  if [ "$repond" = 0 ] && ! docker_reveille; then
     raison="$DOCKER_RAISON"
   elif ! image="$(pytest_image)"; then
     raison="empreinte de l'image incalculable (git ou $PYTEST_DOCKERFILE_REL manquant)"

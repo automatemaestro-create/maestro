@@ -3787,6 +3787,52 @@ Les points de conception, à comprendre avant d'y toucher :
   Le tube n'est pas ouvert à ce niveau, et c'est une décision : qui commande le moteur monte dans
   un conteneur n'importe quel dossier que la personne peut écrire. L'ouvrir défairait le
   confinement.
+- **Mais par le courtier de la session (#1727).** Un agent de Maestro reçoit un courtier de
+  conteneur ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
+  [docs/17 §7](./17-isolation-execution.md)). Il nomme un Dockerfile de son espace et une
+  commande. Maestro, au niveau de la personne, construit l'image et compose le conteneur sur
+  l'espace de la session. Le filet y joue pytest, sur la même recette `scripts/ci/pytest.Dockerfile`,
+  donc sur l'OS du verdict :
+  - **le choix se fait sur un fait** : le moteur ne répond pas, le filet est à l'intégrité basse,
+    le programme `maestro-container` est sur le PATH, et l'adresse et le jeton de la session sont
+    dans l'environnement (`CONTAINER_BROKER_ADDRESS`, `CONTAINER_BROKER_TOKEN`). Ce sont les noms de
+    `maestro/sandbox/container_broker_client.py`, et `tests/test_ci_local.py` joue le filet avec
+    ceux du module. Un moteur qui répond garde le conteneur direct. Sans courtier complet, le repli
+    natif de #1714 reste, et il nomme le courtier absent ;
+  - **`--list` annonce la commande du courtier** : `maestro-container --dockerfile
+    scripts/ci/pytest.Dockerfile pytest`. Le verdict dit « conteneur Linux, par le courtier de la
+    session » ;
+  - **le courtier ne fait passer que la commande**, ni variable ni montage. Le filet lui demande
+    donc un `sh -c` qui pose lui-même ce que `docker run` donnait au conteneur direct :
+    `PYTHONPATH` sur le répertoire de travail du conteneur, qui est l'espace monté. Il ôte aussi
+    l'identité git que le conteneur du courtier porte pour les commits de l'agent : la CI n'en a
+    aucune (#333) ;
+  - **les workers sont ramenés aux CPU du conteneur**, lus dans son cgroup (`cpu.max`), et c'est
+    dit. Le courtier plafonne son conteneur à 2 CPU et 2 Go. À huit workers de ~230 Mo (#1558), il
+    atteindrait son plafond de mémoire ;
+  - **le dossier temporaire d'un test qui passe est rendu à sa fin** (`-o
+    tmp_path_retention_policy=failed`, celui d'un échec reste à lire). Le `/tmp` du conteneur du
+    courtier est un tmpfs de 512 Mo, compté dans ses 2 Go, et pytest garde par défaut chaque dossier
+    jusqu'à la fin de la session. Le conteneur direct en a pris 777 Mo sur le périmètre de #1688,
+    et le premier passage par le courtier l'a rempli : 164 tests rouges, tous sur « No space left
+    on device ». Un `-o` de l'appelant l'emporte ;
+  - **ce que le courtier n'a pas joué ne rend ni vert ni rouge.** Son code 125 (« rien n'a été
+    joué ») rend le job non jouable, avec la dernière ligne de son programme pour raison. Aucun
+    repli natif ne se rejoue dans son dos. pytest ne rend jamais ce code.
+
+  Mesuré le 2026-11-18 sur le poste de référence, sur le périmètre de #1688 reconstitué dans une
+  copie versionnée du dépôt (les mêmes fichiers touchés, 56 suites : les 52 de #1688 et 4 nées
+  depuis, qui nomment `maestro.providers.claude`). Le filet était joué par la session basse d'un
+  agent, au SID `S-1-16-4096`, avec un vrai courtier :
+
+  | régime | verdict | job pytest |
+  |---|---|---|
+  | natif, confiné (#1688) | 52 suites | 35 min 26 s |
+  | conteneur par le courtier, 2 workers | 2948 passés, 26 sautés | 14 min 38 s |
+  | conteneur direct, personne, 8 workers | 2948 passés, 26 sautés | 5 min 29 s |
+
+  Le verdict est le même au conteneur, à l'intégrité basse comme au niveau de la personne. L'écart
+  de durée restant est celui des workers : 2 CPU contre 8.
 - **L'étiquette de l'image porte l'empreinte de `pyproject.toml` et de
   [`scripts/ci/pytest.Dockerfile`](../scripts/ci/pytest.Dockerfile).** Une dépendance ajoutée au
   dépôt change l'étiquette, donc l'image manque, donc elle est reconstruite : personne n'a à s'en

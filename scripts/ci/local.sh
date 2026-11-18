@@ -197,7 +197,10 @@ parce que les suites d'outillage sont faites de sous-processus shell et qu'un fo
 contre ~800 ms sous Windows (les six suites du périmètre scripts/** : 14 min 33 → 53 s). Si le
 démon dort et que Docker Desktop est là, il est DÉMARRÉ (#425, ~35 s, annoncé) ; s'il n'y a pas de
 Docker du tout, le filet retombe en NATIF et le DIT dans son verdict — c'est alors l'ancien régime,
-lent, et aveugle aux écarts Windows/Linux que la CI verra (docs/10 §8.7).
+lent, et aveugle aux écarts Windows/Linux que la CI verra (docs/10 §8.7). Joué par un agent
+confiné (intégrité basse), le moteur lui est fermé : si sa session a le courtier de conteneur de
+Maestro ($COURTIER_PROGRAMME, son adresse et son jeton), pytest joue au conteneur par lui (#1727),
+workers ramenés aux CPU de ce conteneur ; sinon, en natif, et le filet le dit (#1714).
 MAESTRO_PYTEST_REGIME=auto|conteneur|natif ; MAESTRO_PYTEST_IMAGE nomme l'image ;
 MAESTRO_DOCKER_DEMARRAGE=0 n'essaie jamais de démarrer le démon.
 
@@ -237,6 +240,11 @@ liste_jobs() {
   # console, qui mettrait le dossier du script dans `sys.path` au lieu du répertoire courant (#194).
   if [ "$PYTEST_REGIME" = conteneur ]; then
     ou="conteneur Linux ($PYTEST_DOCKERFILE_REL)"
+    # Confiné, le moteur est fermé, mais le courtier de la session compose le conteneur (#1727) :
+    # c'est lui qui joue, et la commande annoncée est la sienne.
+    if [ "$PYTEST_COURTIER" = 1 ]; then
+      ou="$ou — par le courtier de la session, le moteur étant fermé à l'intégrité basse d'un agent confiné ; workers ramenés aux CPU de son conteneur"
+    fi
     # Le démon dort, mais le lancement le réveillera (#425) : le dire ICI est la seule façon de
     # tenir le contrat de `--list`. Taire le démarrage annoncerait un régime gratuit là où il coûte
     # une demi-minute ; annoncer « natif » annoncerait un régime qui ne jouera pas.
@@ -246,12 +254,13 @@ liste_jobs() {
       [ "$MODE_PYTEST" = complet ] || ou="$ou, si une suite est concernée"
     fi
     lanceur="pytest"
+    [ "$PYTEST_COURTIER" = 1 ] && lanceur="$COURTIER_PROGRAMME --dockerfile $PYTEST_DOCKERFILE_REL pytest"
   else
     lanceur="python -m pytest"
     if [ "$PYTEST_REGIME_DEMANDE" = natif ]; then
       ou="venv du poste (--natif)"
     elif [ "$DOCKER_CONFINE" = 1 ]; then
-      ou="venv du poste — Docker injoignable à l'intégrité basse d'un agent confiné, régime dégradé"
+      ou="venv du poste — Docker injoignable à l'intégrité basse d'un agent confiné, sans courtier de conteneur dans la session, régime dégradé"
     else
       ou="venv du poste — Docker ne répond pas, régime dégradé"
     fi
@@ -1198,11 +1207,23 @@ EOF
     fi
   fi
   PYTEST_JOUE=1
-  if [ "$PYTEST_REGIME" = conteneur ]; then
+  if [ "$PYTEST_COURTIER" = 1 ]; then
+    # Le courtier construit l'image s'il le faut et le dit : sa sortie va au journal comme celle de
+    # `docker run`.
+    pytest_courtier "${args[@]}" >"$JOURNAL" 2>&1
+    code=$?
+    if [ "$code" -eq "$COURTIER_RIEN_JOUE" ]; then
+      # Rien n'a joué : ni vert ni rouge. La raison est la dernière ligne du programme du courtier,
+      # citée telle quelle ; c'est le code qui décide, jamais ce texte.
+      DETAIL="le courtier n'a pas joué pytest — $(grep -a "^$COURTIER_PROGRAMME : " "$JOURNAL" | tail -1)"
+      return 2
+    fi
+  elif [ "$PYTEST_REGIME" = conteneur ]; then
     # La redirection est ICI et non dans `pytest_conteneur` (#405) : le filet rend un verdict, donc
     # la trace va au journal et ne s'affiche qu'en cas d'échec. `pytest.sh`, lui, la laisse à
     # l'écran — même fonction, deux besoins, un seul endroit qui tranche.
     pytest_conteneur "$PYTEST_IMAGE" "${args[@]}" >"$JOURNAL" 2>&1
+    code=$?
   else
     # `python -m` et non le script console `pytest` : lui seul ajoute le répertoire courant à
     # `sys.path` (le script console, lui, y met le dossier du script — #194). Sans ça, dans un
@@ -1210,8 +1231,8 @@ EOF
     # `--cov=maestro` instrumente celui d'ici — d'où une couverture à 0 %, et surtout un verdict qui
     # ne porte pas sur la branche qu'on s'apprête à pousser.
     execute "$exe" -m pytest "${args[@]}"
+    code=$?
   fi
-  code=$?
   couverture="$(grep -E '^TOTAL' "$JOURNAL" 2>/dev/null | tail -1 | awk '{print $NF}')"
   tests="$(grep -oE '[0-9]+ (passed|failed|error)[^=]*' "$JOURNAL" 2>/dev/null | tail -1 | sed 's/[[:space:]]*$//')"
   DETAIL="${tests:-$(derniere_ligne)}${couverture:+ — couverture $couverture (seuil $COUVERTURE_MIN %)}"
@@ -1230,6 +1251,9 @@ EOF
     # Un démarrage de Docker Desktop se dit aussi quand il a réussi (#988) : c'est ce qui sépare
     # « le filet l'a démarré » de « il a fallu le relancer », que le seul régime ne distingue pas.
     DETAIL="$DETAIL — conteneur Linux${DOCKER_DEMARRAGE_ISSUE:+ (${DOCKER_DEMARRAGE_ISSUE})}"
+    # Par où : le courtier compose un autre conteneur que `docker run` (2 CPU, 2 Go, racine en
+    # lecture seule), et le verdict dit lequel l'a rendu (#1727).
+    [ "$PYTEST_COURTIER" = 1 ] && DETAIL="$DETAIL, par le courtier de la session (intégrité basse)"
   else
     DETAIL="$DETAIL — NATIF (${PYTEST_REGIME_MOTIF:-régime demandé})"
   fi
@@ -1681,10 +1705,12 @@ if [ "$PYTEST_JOUE" = 1 ] && [ "$PYTEST_REGIME" = natif ]; then
     printf '%spytest a joué en NATIF%s — %s.\n' "$C_Y" "$C_0" "$PYTEST_REGIME_MOTIF"
     printf 'Ce verdict ne porte donc que sur cette plateforme, et il a coûté dix à trente fois le\n'
     if [ "$DOCKER_CONFINE" = 1 ]; then
-      # Confiné (#1714), le filet ne peut rien rétablir d'ici : le remède est d'en sortir, pas de
-      # démarrer Docker Desktop, que le motif ci-dessus vient d'écarter.
-      printf 'régime nominal. Le confinement l'\''impose : le conteneur se rejoue hors confinement, par\n'
-      printf 'la personne ou par le pipeline de la PR (docs/17 §7).\n\n'
+      # Confiné (#1714) sans courtier, le filet ne peut rien rétablir d'ici : le remède est le
+      # courtier d'une session de Maestro (#1727), ou de sortir du confinement — jamais de démarrer
+      # Docker Desktop, que le motif ci-dessus vient d'écarter.
+      printf 'régime nominal. Le confinement l'\''impose : le conteneur se rejoue par le courtier d'\''une\n'
+      printf 'session de Maestro, ou hors confinement, par la personne ou par le pipeline de la PR\n'
+      printf '(docs/17 §7).\n\n'
     else
       # « Démarrer Docker suffit » n'est plus vrai depuis #425 : s'il était seulement éteint, le
       # filet vient de le démarrer lui-même. Arriver ici veut donc dire qu'il n'y en a pas, ou que
