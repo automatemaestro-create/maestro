@@ -188,7 +188,13 @@ args+=("$@")
 # --- Annonce, puis on joue ---------------------------------------------------------------------------
 # OÙ ça joue se dit AVANT et non après : sur une suite d'outillage l'écart est d'un facteur vingt,
 # donc qui voit « NATIF » sait tout de suite qu'il a le temps d'aller chercher un café — et pourquoi.
-if [ "$PYTEST_REGIME" = conteneur ]; then
+if [ "$PYTEST_COURTIER" = 1 ]; then
+  # Confiné, le moteur est fermé : le courtier de la session construit l'image et compose le
+  # conteneur (#1727). Son code dit si rien n'a joué, et sa raison est déjà sur la sortie d'erreur.
+  printf '%spytest — conteneur Linux, par le courtier de la session (%s)%s\n' \
+    "$C_D" "$PYTEST_DOCKERFILE_REL" "$C_0"
+  pytest_courtier "${args[@]}"
+elif [ "$PYTEST_REGIME" = conteneur ]; then
   printf '%spytest — conteneur Linux (%s)%s\n' "$C_D" "$PYTEST_IMAGE" "$C_0"
   # L'issue d'un démarrage se dit ici comme dans le filet (#988) : même plomberie, même phrase.
   [ -z "$DOCKER_DEMARRAGE_ISSUE" ] || printf '%s  %s%s\n' "$C_D" "$DOCKER_DEMARRAGE_ISSUE" "$C_0"

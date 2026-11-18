@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 
+from maestro.sandbox.container_broker_client import ENV_ADDRESS, ENV_TOKEN, NOT_RUN, PROGRAM
+
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
 GIT = shutil.which("git")
@@ -407,9 +409,20 @@ class Clone:
     # --- exécution ---
     def environnement(self, reglages: dict[str, str]) -> dict[str, str]:
         environnement = os.environ.copy()
+        # Jamais le courtier DE LA SESSION (#1727) : une suite jouée par un agent confiné hérite de
+        # son adresse et de son jeton, et chaque filet d'ici le prendrait. Un test qui en veut un
+        # pose les siens (`COURTIER`), et son programme (`equipe_courtier`) : celui de la session
+        # quitte le PATH.
+        for nom in (ENV_ADDRESS, ENV_TOKEN):
+            environnement.pop(nom, None)
+        chemins = [
+            dossier
+            for dossier in environnement.get("PATH", "").split(os.pathsep)
+            if not (dossier and (Path(dossier) / PROGRAM).exists())
+        ]
         environnement.update(
             {
-                "PATH": os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")]),
+                "PATH": os.pathsep.join([str(self.fauxbin), *chemins]),
                 "TMPDIR": str(self.tmp),
                 "MAESTRO_FAUX_JOURNAL": str(self.journal),
                 # L'image de repli n'est plus lue dans la CI (#344) : on la pose ici.
@@ -2852,6 +2865,304 @@ def test_le_lanceur_a_l_integrite_basse_dit_le_confinement(clone: Clone) -> None
     assert not demarrages_desktop(clone.appels())
     sortie = acheve.stdout + acheve.stderr
     assert "NATIF" in sortie and "intégrité basse" in sortie, sortie
+
+
+# --- Le conteneur, par le courtier de la session (#1727) ------------------------------------------
+# Confiné, le filet ne joint pas le moteur (#1714), mais une session de Maestro lui donne un
+# courtier : `maestro-container --dockerfile <Dockerfile> <commande>`, que Maestro joue dans un
+# conteneur composé sur l'espace de la session (docs/57). Le filet le choisit sur un fait — le
+# programme est sur le PATH, l'adresse et le jeton dans l'environnement —, et le DIT.
+#
+# Le programme factice porte le nom du module du courtier, et l'environnement ses deux variables :
+# un nom qui changerait d'un côté seulement ferait rougir ces tests, pas le poste d'un agent.
+
+#: Le programme du courtier, factice : il journalise sa demande — le script `sh -c` tient sur
+#: plusieurs lignes, rendues ici sur une seule —, rend la sortie et le code qu'on lui dicte.
+SHIM_COURTIER = """\
+#!/usr/bin/env bash
+printf '%s %s\\n' "$(basename "$0")" "${*//$'\\n'/ }" >> "$MAESTRO_FAUX_JOURNAL"
+printf '%b' "${MAESTRO_FAUX_COURTIER_SORTIE:-}"
+printf '%b' "${MAESTRO_FAUX_COURTIER_ERREUR:-}" >&2
+exit "${MAESTRO_FAUX_COURTIER_CODE:-0}"
+"""
+
+#: Une session qui a un courtier : son adresse et son jeton.
+COURTIER = {ENV_ADDRESS: "127.0.0.1:50999", ENV_TOKEN: "jeton-de-la-session"}
+
+SORTIE_PYTEST = "TOTAL 100 0 95%\\n12 passed in 1.2s\\n"
+
+
+def equipe_courtier(clone: Clone) -> None:
+    clone.pose_shim(PROGRAM, corps=SHIM_COURTIER)
+
+
+def demandes_au_courtier(appels: list[str]) -> list[str]:
+    return [appel for appel in appels if appel.startswith(f"{PROGRAM} ")]
+
+
+def test_a_l_integrite_basse_avec_le_courtier_pytest_joue_au_conteneur_par_lui(
+    clone: Clone,
+) -> None:
+    """Le cas de #1688 rejoué avec le courtier : moteur fermé, conteneur quand même."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_COURTIER_SORTIE=SORTIE_PYTEST,
+        **DEMON_ENDORMI, **CONFINE, **COURTIER,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    demandes = demandes_au_courtier(clone.appels())
+    assert len(demandes) == 1, clone.appels()
+    # Il nomme la recette du filet et la commande, rien d'autre : Maestro compose le conteneur.
+    assert re.search(r"--dockerfile \S*pytest\.Dockerfile sh -c ", demandes[0]), demandes[0]
+    assert "exec pytest" in demandes[0], demandes[0]
+    # Les arguments de pytest suivent le nom du script (`$0`), après le script lui-même.
+    arguments = demandes[0].split(" maestro-pytest ", 1)[1]
+    assert workers_pytest(arguments) is not None, "les suites d'outillage jouent en parallèle"
+    assert arguments.endswith("tests/test_outillage.py"), arguments
+    # Ni le moteur, ni Docker Desktop, ni le natif.
+    assert not lancements_conteneur(clone.appels()), clone.appels()
+    assert not demarrages_desktop(clone.appels())
+    assert not lancements_pytest(clone.appels()), "rien ne joue en natif"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "12 passed" in ligne and "conteneur Linux" in ligne and "courtier" in ligne, ligne
+    assert "NATIF" not in acheve.stdout, acheve.stdout
+
+
+def test_a_l_integrite_basse_la_sonde_annonce_le_courtier(clone: Clone) -> None:
+    """`--list` dit la commande réellement jouée (#194) : celle du courtier, et pourquoi."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    annonce = clone.lance("--list", **DEMON_ENDORMI, **CONFINE, **COURTIER)
+
+    assert annonce.returncode == 0, annonce.stderr
+    ligne = next(
+        ligne for ligne in annonce.stdout.splitlines() if ligne.strip().startswith("pytest ")
+    )
+    assert f"{PROGRAM} --dockerfile scripts/ci/pytest.Dockerfile pytest" in ligne, ligne
+    assert "courtier de la session" in ligne and "intégrité basse" in ligne, ligne
+    assert "venv du poste" not in ligne, ligne
+    assert not demandes_au_courtier(clone.appels()), "une sonde ne demande rien au courtier"
+
+
+@pytest.mark.parametrize(
+    "manque",
+    ["programme", ENV_ADDRESS, ENV_TOKEN],
+    ids=["sans-programme", "sans-adresse", "sans-jeton"],
+)
+def test_sans_courtier_complet_le_repli_natif_du_confinement_reste_nomme(
+    clone: Clone, manque: str
+) -> None:
+    """Le fait est le programme ET son jeton : à qui manque l'un, le repli de #1714, nommé."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    reglages = dict(COURTIER)
+    if manque != "programme":
+        equipe_courtier(clone)
+        reglages[manque] = ""
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", **DEMON_ENDORMI, **CONFINE, **reglages)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not demandes_au_courtier(clone.appels()), clone.appels()
+    assert lancements_pytest(clone.appels()), "le repli natif joue"
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "NATIF" in ligne and "intégrité basse" in ligne and "courtier" in ligne, ligne
+    annonce = clone.lance("--list", **DEMON_ENDORMI, **CONFINE, **reglages)
+    assert "venv du poste" in annonce.stdout and "sans courtier" in annonce.stdout, annonce.stdout
+
+
+def test_un_moteur_qui_repond_garde_le_conteneur_direct_meme_avec_un_courtier(
+    clone: Clone,
+) -> None:
+    """Le courtier sert là où le moteur est fermé, jamais à la place d'un moteur qui répond."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", **CONFINE, **COURTIER)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_conteneur(clone.appels()), clone.appels()
+    assert not demandes_au_courtier(clone.appels()), clone.appels()
+    assert "courtier" not in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_hors_confinement_un_courtier_ne_remplace_pas_le_reveil_de_docker(clone: Clone) -> None:
+    """Au niveau de la personne, un moteur muet se réveille (#425) : le courtier n'y a pas cours."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+        **DEMON_ENDORMI, **COURTIER,
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert demarrages_desktop(clone.appels()), clone.appels()
+    assert not demandes_au_courtier(clone.appels()), clone.appels()
+
+
+def test_ce_que_le_courtier_n_a_pas_joue_ne_rend_ni_vert_ni_rouge(clone: Clone) -> None:
+    """Son code de « rien joué » rend le job non jouable, sa raison citée, sans repli natif."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    raison = f"{PROGRAM} : refusé — ce jeton n'est celui d'aucune session vivante"
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_COURTIER_CODE=str(NOT_RUN),
+        MAESTRO_FAUX_COURTIER_ERREUR=raison + "\\n",
+        **DEMON_ENDORMI, **CONFINE, **COURTIER,
+    )
+
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "IGNORÉ" in ligne and "le courtier n'a pas joué pytest" in ligne, ligne
+    assert "aucune session vivante" in ligne, ligne
+    assert "Verdict : ÉCHEC" not in acheve.stdout, acheve.stdout
+    assert not lancements_pytest(clone.appels()), "rien ne rejoue en natif dans son dos"
+
+
+def test_un_rouge_rendu_par_le_courtier_est_un_rouge(clone: Clone) -> None:
+    """Le code de pytest traverse le courtier : un test rouge au conteneur rend le verdict rouge."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_COURTIER_CODE="1",
+        MAESTRO_FAUX_COURTIER_SORTIE="2 failed, 10 passed in 1.2s\\n",
+        **DEMON_ENDORMI, **CONFINE, **COURTIER,
+    )
+
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert "Verdict : ÉCHEC" in acheve.stdout
+    assert "2 failed" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_le_lanceur_a_l_integrite_basse_passe_par_le_courtier(clone: Clone) -> None:
+    """La plomberie est partagée (#405) : le lanceur d'itération prend la même voie."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    equipe_courtier(clone)
+    acheve = clone.lance_pytest(
+        "tests/test_horloge.py", "-q",
+        MAESTRO_FAUX_COURTIER_CODE="3",
+        **DEMON_ENDORMI, **CONFINE, **COURTIER,
+    )
+
+    assert acheve.returncode == 3, "le code de pytest, tel que le courtier le rend"
+    demandes = demandes_au_courtier(clone.appels())
+    assert len(demandes) == 1 and demandes[0].endswith("tests/test_horloge.py -q"), demandes
+    assert "courtier de la session" in acheve.stdout, acheve.stdout
+    assert not lancements_pytest(clone.appels())
+
+
+# Le script que le conteneur du courtier joue : rien d'autre que la commande ne passe le courtier,
+# il pose donc lui-même ce que `docker run` donnait au conteneur direct. Joué ici par le `sh` du
+# poste, devant un `pytest` factice qui dit ce qu'il reçoit — la décision, jamais l'outil.
+FAUX_PYTEST_DU_CONTENEUR = """\
+#!/bin/sh
+printf 'PYTHONPATH=%s\\n' "$PYTHONPATH"
+printf 'IDENTITE=%s\\n' "${GIT_AUTHOR_NAME-}${GIT_COMMITTER_EMAIL-}"
+printf 'ARGS='; for mot do printf '[%s]' "$mot"; done; echo
+"""
+
+
+def joue_le_script_du_courtier(
+    clone: Clone, cpu_max: str | None, *args: str
+) -> subprocess.CompletedProcess[str]:
+    assert BASH is not None
+    bin_ = clone.tmp / "conteneur-bin"
+    clone.pose_shim("pytest", bin_, corps=FAUX_PYTEST_DU_CONTENEUR)
+    fichier = clone.tmp / "cpu.max"
+    if cpu_max is None:
+        fichier.unlink(missing_ok=True)
+    else:
+        fichier.write_text(cpu_max, encoding="utf-8", newline="\n")
+    espace = clone.tmp / "espace"
+    espace.mkdir(exist_ok=True)
+    regime = clone.racine / "scripts" / "ci" / "pytest-regime.sh"
+    env = {
+        **os.environ,
+        "PATH": os.pathsep.join([str(bin_), os.environ.get("PATH", "")]),
+        "MAESTRO_PYTEST_CPU_MAX": str(fichier),
+        "GIT_AUTHOR_NAME": "Maestro",
+        "GIT_COMMITTER_EMAIL": "maestro@exemple.invalid",
+    }
+    return subprocess.run(  # noqa: S603
+        [BASH, "-c", '. "$1"; shift; exec sh -c "$PYTEST_COURTIER_SCRIPT" maestro-pytest "$@"',
+         "_", str(regime), *args],
+        cwd=str(espace),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+
+
+def test_le_conteneur_du_courtier_joue_pytest_sans_identite_git_sur_son_espace(
+    clone: Clone,
+) -> None:
+    """PYTHONPATH est le répertoire de travail du conteneur, et l'identité de l'agent est ôtée."""
+    joue = joue_le_script_du_courtier(clone, None, "-q", "tests/a b.py")
+
+    assert joue.returncode == 0, joue.stderr
+    lignes = joue.stdout.splitlines()
+    assert lignes[0].startswith("PYTHONPATH=") and lignes[0].endswith("espace"), lignes
+    assert "IDENTITE=" in lignes, "aucune identité git, comme la CI (#333)"
+    assert f"ARGS={RETENTION}[-q][tests/a b.py]" in lignes, lignes
+
+
+#: Ce que le script place devant les arguments : le dossier d'un test qui passe est rendu à sa fin.
+RETENTION = "[-o][tmp_path_retention_policy=failed]"
+
+
+def test_le_conteneur_du_courtier_rend_le_dossier_d_un_test_qui_passe(clone: Clone) -> None:
+    """Le `/tmp` du courtier est un tmpfs de 512 Mo : pytest n'y garde que les dossiers des échecs.
+
+    L'option précède les arguments de l'appelant, dont le choix explicite l'emporte (pytest retient
+    le dernier `-o` d'une même clé).
+    """
+    joue = joue_le_script_du_courtier(clone, None, "-o", "tmp_path_retention_policy=all", "tests/")
+
+    assert joue.returncode == 0, joue.stderr
+    assert (
+        f"ARGS={RETENTION}[-o][tmp_path_retention_policy=all][tests/]" in joue.stdout.splitlines()
+    ), joue.stdout
+
+
+@pytest.mark.parametrize(
+    ("cpu_max", "attendu", "dit"),
+    [
+        ("200000 100000\n", "[-n][2]", True),
+        ("max 100000\n", "[-n][8]", False),
+        ("900000 100000\n", "[-n][8]", False),
+        (None, "[-n][8]", False),
+    ],
+    ids=["deux-cpu", "sans-quota", "plus-que-demande", "sans-cgroup"],
+)
+def test_le_conteneur_du_courtier_ramene_les_workers_a_ses_cpu(
+    clone: Clone, cpu_max: str | None, attendu: str, dit: bool
+) -> None:
+    """Le courtier plafonne son conteneur : au-delà de ses CPU, -n est ramené, et c'est dit."""
+    joue = joue_le_script_du_courtier(clone, cpu_max, "-n", "8", "tests/")
+
+    assert joue.returncode == 0, joue.stderr
+    assert f"ARGS={RETENTION}{attendu}[tests/]" in joue.stdout.splitlines(), joue.stdout
+    assert ("ramené à" in joue.stderr) is dit, joue.stderr
 
 
 # --- Le lanceur d'itération serrée (#405) ---------------------------------------------------------

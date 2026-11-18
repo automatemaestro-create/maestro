@@ -438,7 +438,8 @@ d'une autre session n'a pas rendu la main dans les 300 s, et est resté « à v�
 
 **Docker n'est pas joignable de l'intégrité basse** (#1714). Le moteur de Docker Desktop n'ouvre
 pas son tube à ce niveau : `docker` y est refusé, que le moteur tourne ou non (mesuré le
-2026-11-17). Le filet du dépôt de Maestro le dit et joue en natif, sans attendre un démarrage qui ne
+2026-11-17). Le filet du dépôt de Maestro joue alors pytest au conteneur par le courtier de la
+session (#1727). Sans courtier, il le dit et joue en natif, sans attendre un démarrage qui ne
 rendrait rien ([docs/10 §8.4](./10-workflow-git.md)). Le tube n'est pas ouvert à l'agent : qui
 commande le moteur monte dans un conteneur n'importe quel dossier que la personne peut écrire, et y
 écrit. Ce serait une sortie générale du confinement, pas un aménagement.
@@ -543,8 +544,8 @@ les dossiers étiquetés bas des autres agents.
 - **un constructeur à part** : l'agent construit sur le moteur et le cache de la personne. Un
   constructeur dédié fermerait le partage du cache des couches, et celui des caches montés par un
   frontend tiers ;
-- **le filet du dépôt de Maestro**, joué par un agent, et **la vérification d'une tâche** ne passent
-  pas encore par lui (#1727, #1728) ;
+- **la vérification d'une tâche** ne passe pas encore par lui (#1728). Le filet du dépôt de
+  Maestro, joué par un agent, y passe depuis #1727 ;
 - **Linux et macOS** : rien n'y est abaissé, et le courtier n'y est pas offert.
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py`,

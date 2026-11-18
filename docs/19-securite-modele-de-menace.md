@@ -385,7 +385,8 @@ Ce qu'il **ne couvre pas** :
 - un commit fait dans le conteneur, qui n'en revient pas ;
 - un filet qui commande docker lui-même ;
 - un constructeur à part, qui fermerait le partage du cache de construction ;
-- le filet du dépôt de Maestro joué par un agent (#1727) et la vérification d'une tâche (#1728).
+- la vérification d'une tâche (#1728). Le filet du dépôt de Maestro joué par un agent y passe
+  depuis #1727, sans rien demander de plus qu'une commande et son Dockerfile.
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
 n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.
