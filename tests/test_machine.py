@@ -125,11 +125,12 @@ def test_presents_absents_et_versions_lues_par_leur_version() -> None:
     machine = constater(("npm", "uv", "node", "pytest"), interprete=BASH, joueur=joueur)
 
     assert [p.nom for p in machine.programmes] == ["npm", "uv", "node", "pytest"]
-    assert _programme(machine, "npm") == Programme("npm", PRESENT, "10.9.2")
-    assert _programme(machine, "node") == Programme("node", PRESENT, "22.11.0")
+    assert _programme(machine, "npm") == Programme("npm", PRESENT, "10.9.2", code_version=0)
+    assert _programme(machine, "node") == Programme("node", PRESENT, "22.11.0", code_version=0)
     assert _programme(machine, "uv") == Programme("uv", ABSENT)
-    # Un `--version` qui rend la main en erreur : présent, version inconnue — jamais devinée.
-    assert _programme(machine, "pytest") == Programme("pytest", PRESENT, None)
+    # Un `--version` qui rend la main en erreur : présent, version inconnue — jamais devinée —,
+    # et son code est gardé : le banc comparatif le dit à son lecteur de commandes (#1746).
+    assert _programme(machine, "pytest") == Programme("pytest", PRESENT, None, code_version=2)
 
 
 def test_seul_un_programme_present_est_lance_et_avec_version_seulement() -> None:
