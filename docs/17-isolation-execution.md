@@ -87,8 +87,8 @@ Tout ce qui entre ou sort est énuméré ici — et nulle part ailleurs
 |---|---|---|
 | **Système de fichiers** | `/workspace` : l'espace de travail de la tâche, monté en lecture-écriture — c'est là que l'agent produit ses livrables. Sans projet, c'est le répertoire **jetable** créé vide (`maestro.sandbox.workspace`) ; rattachée à un projet (#224), la tâche y voit l'espace **dérivé** de ce projet — worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, ou, pour un projet **non versionné**, **la racine elle-même** montée **avec ses masques** (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)). Projet versionné : son **dépôt du conteneur** (#1602), monté en lecture-écriture sur `/maestro/depot`, et `/workspace/.git` recouvert en lecture seule d'un pointeur `gitdir: /maestro/depot` — l'agent y committe et y branche (§3.1). Deux tmpfs jetables : `/tmp` (512 Mo) et `/home/agent` (1 Go — état du CLI, caches npm/npx) | tout le reste : racine de l'image en **lecture seule** (`--read-only`), aucun autre chemin de l'hôte monté — **la racine d'un projet versionné en particulier n'est jamais montée**, ni son `.git` (#226, EF-36 : vérifié deux fois, au câblage du protocole puis au dernier mètre avant `docker run`, qui refuse aussi un dépôt du conteneur posé dans la racine ; depuis #839 la restriction vaut pour le projet **versionné**, la racine d'un projet non versionné étant son espace de travail), et les chemins **exclus** du périmètre (`.env`, `**/secrets/**`…) sont recouverts d'un montage vide en lecture seule |
 | **Réseau** | sortant seul (`bridge`, défaut) : nécessaire pour joindre l'API du fournisseur et les serveurs MCP distants ; `none` le coupe entièrement (diagnostic) | tout entrant (aucun port publié), réseau de l'hôte |
-| **Environnement** | 3 variables d'authentification : `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (telles que posées par le fournisseur, y compris vides — la neutralisation de #30 est préservée). S'y ajoutent deux déclarations que la commande pose elle-même, sans rien prendre à l'hôte : `/workspace` est sûr pour git (`safe.directory`, portée « commande », #1599) — le montage d'un dossier de Windows appartient à root dans le conteneur, et git refuserait sans elle d'y committer —, et l'identité de Maestro pour les commits de l'agent (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, #1507) | tout le reste de l'environnement hôte. Pour git, tout autre dépôt du conteneur : seul le point de montage est déclaré, jamais `*`. Les secrets MCP (#104) ne transitent pas par l'environnement du conteneur : résolus en mémoire côté hôte, ils voyagent dans la config MCP passée en argument au CLI |
-| **Privilèges** | utilisateur non-root `agent` (uid 10001) | toutes les capabilities (`--cap-drop ALL`), l'escalade (`no-new-privileges`) |
+| **Environnement** | 3 variables d'authentification : `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (telles que posées par le fournisseur, y compris vides — la neutralisation de #30 est préservée). S'y ajoutent des déclarations que la commande pose elle-même, sans rien prendre à l'hôte : le home de l'utilisateur `agent` (`HOME=/home/agent`, #1725), qu'une image sans compte à son uid n'aurait pas ; `/workspace` est sûr pour git (`safe.directory`, portée « commande », #1599) — le montage d'un dossier de Windows appartient à root dans le conteneur, et git refuserait sans elle d'y committer —, et l'identité de Maestro pour les commits de l'agent (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, #1507) | tout le reste de l'environnement hôte. Pour git, tout autre dépôt du conteneur : seul le point de montage est déclaré, jamais `*`. Les secrets MCP (#104) ne transitent pas par l'environnement du conteneur : résolus en mémoire côté hôte, ils voyagent dans la config MCP passée en argument au CLI |
+| **Privilèges** | utilisateur non-root `agent` (uid 10001), forcé par `--user` sur toute image (#1725) : une image que l'agent nomme ne choisit pas root | toutes les capabilities (`--cap-drop ALL`), l'escalade (`no-new-privileges`) |
 | **Ressources** | 256 pids, 2 Go de mémoire, 2 CPU (plafonds fixes du POC) | au-delà : le conteneur est tué, l'échec consigné comme les autres |
 
 ### 3.1 Le dépôt du conteneur d'un projet versionné (#1602)
@@ -443,14 +443,61 @@ rendrait rien ([docs/10 §8.4](./10-workflow-git.md)). Le tube n'est pas ouvert 
 commande le moteur monte dans un conteneur n'importe quel dossier que la personne peut écrire, et y
 écrit. Ce serait une sortie générale du confinement, pas un aménagement.
 
-**Le régime conteneur reviendra à l'agent par un courtier** ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
-décidé le 2026-11-18, chantier #1724). L'agent demandera une commande dans un conteneur. Maestro le
-composera lui-même, au niveau de la personne, sur le contrat du §3 et sur l'espace de la session, et
-le code de l'agent ne jouera que dedans. Ce qu'il ouvre et ce qu'il ne couvre pas sont écrits
-là-bas, au §4. Tant que le chantier n'est pas livré, le natif reste le régime de l'agent.
+**Le conteneur, par le courtier de Maestro** (#1725, décision de
+[docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md)). L'agent demande une
+commande dans un conteneur, et Maestro compose lui-même ce conteneur, au niveau de la personne
+(`maestro/sandbox/container_broker.py`). Le code de l'agent ne joue que dedans.
+- **Ce que l'agent nomme** : une image et une commande, par `maestro-container IMAGE COMMANDE
+  [ARGUMENT...]`, ou par un script qui le lance. Rien d'autre. Une demande qui nomme un montage, un
+  réseau, un privilège ou un dossier est refusée, et le refus dit pourquoi. Le code 125 dit que
+  rien n'a été joué, et la raison suit sur stderr.
+- **Ce que Maestro compose**, par le code du mode isolé et sur le contrat du §3, jamais par un
+  second contrat :
+  - l'espace de la session sur `/workspace`, avec ses masques ;
+  - pour un projet versionné, le dépôt du conteneur (§3.1), construit pour la commande et retiré
+    après elle ;
+  - une racine en lecture seule, l'utilisateur `agent` forcé, aucune capacité, les plafonds ;
+  - le réseau sortant seul.
 
-**Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py` et
-`tests/test_verification_low_integrity.py`, sous Windows, marqueur `integrite_basse`) :
+  Rien de l'environnement de la personne n'y entre, pas même les variables d'authentification : la
+  commande n'a pas à joindre le modèle.
+- **Ce qui lie la demande à l'espace** : le jeton de la session. Le fournisseur ouvre le courtier
+  quand le CLI naît abaissé, et le ferme avec la session. Un jeton qui n'est pas celui d'une session
+  vivante est refusé. Jeton et adresse voyagent sous `CONTAINER_BROKER_TOKEN` et
+  `CONTAINER_BROKER_ADDRESS`, hors de `MAESTRO_*`, que le lanceur retient (§8).
+- **Le canal** est une socket TCP sur le bouclage, que l'intégrité basse joint. Le processus qui
+  fait tourner les sessions des agents la tient.
+- **Un conteneur à la fois par session** : une seconde demande attend la première, et le sait. Un
+  conteneur dont la demande s'en va est retiré.
+- **Le fait qui choisit le régime** : le programme `docker` est sur le poste. Si le moteur ne tourne
+  pas, c'est docker qui le répond, avec son code.
+
+**Ce que le courtier ouvre** ([docs/57 §4](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md)) :
+- **un verbe** : l'agent fait naître des conteneurs sur le moteur de la personne. Un autre agent
+  abaissé peut lire le jeton. Il n'obtient alors que l'espace de l'autre, qu'il peut déjà écrire ;
+- **le disque du moteur** : une image que l'agent nomme est tirée sur le moteur de la personne, et
+  y reste ;
+- **la frontière du conteneur** : une évasion par le noyau ou le runtime atterrit dans la VM de
+  Docker Desktop, l'hypothèse que le mode isolé fait déjà (§1) ;
+- **le réseau** sortant, comme celui de l'agent.
+
+Le conteneur ferme mieux que l'intégrité basse ce qu'il ne monte pas : le profil de la personne, et
+les dossiers étiquetés bas des autres agents.
+
+**Ce que le courtier ne couvre pas** :
+- **un commit fait dans le conteneur** : le dépôt du conteneur est retiré après la commande, sans
+  rapatriement. L'agent committe depuis son shell ;
+- **un filet qui commande docker lui-même** (testcontainers, compose) : il ne passe par le courtier
+  que s'il sait le demander ;
+- **une image construite depuis un Dockerfile de l'espace** : le courtier ne joue qu'une image
+  nommée (#1726) ;
+- **le filet du dépôt de Maestro**, joué par un agent, et **la vérification d'une tâche** ne passent
+  pas encore par lui (#1727, #1728) ;
+- **Linux et macOS** : rien n'y est abaissé, et le courtier n'y est pas offert.
+
+**Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py`,
+`tests/test_verification_low_integrity.py` et `tests/test_container_broker.py`, sous Windows,
+marqueur `integrite_basse`) :
 - `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
   l'agent ne le trouve pas, et le témoin vit ;
 - la commande de #1502 (`taskkill //IM python.exe //F`), lancée directement ou par un script :
@@ -470,6 +517,10 @@ là-bas, au §4. Tant que le chantier n'est pas livré, le natif reste le régim
 - une commande de vérification qui remplit son cache sous `LOCALAPPDATA`, comme un gestionnaire de
   paquets, l'écrit à l'intégrité basse. La vérification suivante du même projet le trouve, celle
   d'un autre projet non, dans une copie comme dans un clone neuf ;
+- un processus abaissé lance `maestro-container` depuis le bash de la copie de Git, sur l'espace
+  d'un projet versionné, et reçoit la sortie et le code du conteneur, stderr compris. Le conteneur
+  tourne sous l'uid 10001, sans capacité, racine en lecture seule, plafonné à 256 processus et 2 Go.
+  Il voit l'espace, le `.env` versionné masqué (zéro octet) et le pointeur vers son propre dépôt ;
 - une suite jouée elle-même à l'intégrité basse, comme celle d'un agent confiné, saute ces tests et
   dit pourquoi : leur témoin y naîtrait bas lui aussi, et ils rougiraient sans rien dire du code
   (`tests/conftest.py`, #1714).
@@ -540,6 +591,8 @@ le même lanceur, sous le même filtre.
 **Ce que ce filtre ne couvre pas :**
 - le **mode isolé** a sa propre liste blanche, plus étroite : les variables d'authentification
   seules (§3) ;
+- le **conteneur du courtier** (§7) n'en reçoit aucune : rien de l'environnement de la personne
+  n'y entre ;
 - une session **non confinée** — lanceur absent, CLI introuvable — reçoit l'environnement entier,
   et la ligne « session non confinée » du journal le dit ;
 - les **chemins texte** (`generate`) : ils n'exposent aucun outil, rien n'y lit l'environnement ;

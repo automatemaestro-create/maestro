@@ -643,6 +643,16 @@ class ModelProvider(ABC):
         """
         return False
 
+    @property
+    def courtier_conteneur(self) -> bool:
+        """Une session abaissée reçoit-elle le courtier de conteneur (#1725, docs/57) ?
+
+        C'est ce qui fait dire à l'agent, sous « La machine », comment jouer une commande
+        dans un conteneur sans ouvrir le moteur (`maestro.machine.LIGNE_COURTIER`). Faux
+        par défaut.
+        """
+        return False
+
     def versions_du_fournisseur(self) -> Mapping[str, str]:
         """Ce sur quoi tourne cet adaptateur, lu maintenant : une ligne par composant (#1312).
 

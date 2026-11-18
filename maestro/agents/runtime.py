@@ -567,7 +567,9 @@ class AgentRuntime:
                 outillage.consigne(espace=espace),
                 machine=(
                     machine.consigne(
-                        port_d_essai=port, integrite_basse=self._provider.integrite_basse
+                        port_d_essai=port,
+                        integrite_basse=self._provider.integrite_basse,
+                        courtier=self._provider.courtier_conteneur,
                     )
                     if machine is not None and sur_le_poste
                     else ""

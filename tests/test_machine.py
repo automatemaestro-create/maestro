@@ -405,6 +405,33 @@ def test_sans_constat_le_message_est_celui_d_avant_a_la_ligne_pres() -> None:
     assert avec.replace(f"\n\n{section}", "") == sans
 
 
+class _TemoinBas(_Temoin):
+    """Un agent abaissé (#1515), avec ou sans le courtier de conteneur (#1725)."""
+
+    def __init__(self, *, courtier: bool) -> None:
+        super().__init__()
+        self._courtier = courtier
+
+    @property
+    def integrite_basse(self) -> bool:
+        return True
+
+    @property
+    def courtier_conteneur(self) -> bool:
+        return self._courtier
+
+
+def test_un_agent_abaisse_qui_a_le_courtier_apprend_comment_lui_demander_un_conteneur() -> None:
+    from maestro.machine import LIGNE_COURTIER, LIGNE_INTEGRITE_BASSE
+
+    avec = _execute(_TemoinBas(courtier=True), MACHINE)
+    sans = _execute(_TemoinBas(courtier=False), MACHINE)
+
+    assert LIGNE_INTEGRITE_BASSE in avec and LIGNE_COURTIER in avec
+    assert LIGNE_INTEGRITE_BASSE in sans and LIGNE_COURTIER not in sans
+    assert LIGNE_COURTIER not in _execute(_Temoin(), MACHINE)
+
+
 def test_un_agent_qui_travaille_ailleurs_ne_recoit_pas_les_faits_du_poste() -> None:
     """Le conteneur du mode isolé (#108) : dire Windows à un agent sous Linux, pire que rien."""
     assert TITRE_MACHINE not in _execute(_Temoin(sur_le_poste=False), MACHINE)
