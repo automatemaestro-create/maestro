@@ -79,7 +79,10 @@ from maestro.outillage.clients import version_de
 from maestro.outillage.generation import verifications_declarees
 from maestro.outillage.verification import Joueur, programmes, sondable, sonde
 from maestro.projets.modele import Projet
+from maestro.sandbox import container
 from maestro.sandbox import verification as execution
+from maestro.sandbox.container_broker_client import NOT_RUN as RIEN_N_A_ETE_JOUE
+from maestro.sandbox.container_broker_client import PROGRAM as PROGRAMME_DU_COURTIER
 
 #: Le titre de la section, dans le message de la tâche.
 TITRE_MACHINE = "## La machine"
@@ -97,6 +100,27 @@ LIGNE_INTEGRITE_BASSE = (
     "pas borné : tu lis ce que la personne lit, hors ce qui est à Maestro ; tu joins ce qui "
     "écoute sur la machine, `127.0.0.1` compris ; et un autre agent du poste écrit là où "
     "tu écris."
+)
+
+#: Comment une commande de l'agent abaissé joue dans un conteneur (#1725, docs/57 §4) : par
+#: le courtier de Maestro, qui compose lui-même le conteneur, jamais par le moteur, que
+#: l'intégrité basse ne joint pas. Ce que la demande peut nommer, ce que Maestro compose,
+#: et ce qui n'en revient pas.
+LIGNE_COURTIER = (
+    "- **Un conteneur, par le courtier de Maestro** : `docker` ne répond pas à l'intégrité "
+    f"basse. Pour jouer une commande dans un conteneur Linux, lance `{PROGRAMME_DU_COURTIER} "
+    "IMAGE COMMANDE [ARGUMENT...]` : tu nommes l'image et la commande, rien d'autre. Maestro "
+    "compose le conteneur sur ton espace de travail, monté sur `/workspace` avec les masques "
+    "du périmètre (et un dépôt Git à lui pour un projet versionné), le joue, puis te rend sa "
+    "sortie et son code de retour. Sa racine est en lecture seule, il tourne sous "
+    f"l'utilisateur {container.UID_AGENT} sans aucun privilège, avec {container.CPUS_MAX} CPU, "
+    f"{container.MEMOIRE_MAX.removesuffix('g')} Go de mémoire et {container.PIDS_MAX} processus "
+    "au plus, "
+    "et son réseau sort sans rien recevoir. Un montage, un réseau, un privilège ou un dossier "
+    "que tu demanderais sont refusés, avec leur raison. Un commit fait dans le conteneur "
+    "n'en revient pas : committe depuis ton shell. Un outil qui commande docker lui-même n'y "
+    f"passe pas. Le code {RIEN_N_A_ETE_JOUE} dit que rien n'a été joué, et la raison suit sur "
+    "stderr."
 )
 
 #: Ce qu'un programme est sur le poste, tel que le constat le dit.
@@ -171,7 +195,13 @@ class Machine:
     windows: bool = False
     processus_maestro: str = ""
 
-    def consigne(self, *, port_d_essai: int | None = None, integrite_basse: bool = False) -> str:
+    def consigne(
+        self,
+        *,
+        port_d_essai: int | None = None,
+        integrite_basse: bool = False,
+        courtier: bool = False,
+    ) -> str:
         """La section « La machine » du message de la tâche.
 
         Toujours rendue : le système et le temporaire sont toujours connus. Les
@@ -189,6 +219,10 @@ class Machine:
         propre à la session — son chemin n'est pas celui que Maestro a constaté —, et
         une ligne dit ce que le poste borne et ce qu'il ne borne pas : l'agent n'a
         pas à découvrir un refus pour apprendre où il peut écrire.
+
+        `courtier` (#1725) : une session abaissée reçoit le courtier de conteneur
+        (`maestro.sandbox.container_broker`). Sa ligne dit comment l'appeler, ce qu'il
+        compose et ce qu'il refuse. Sans intégrité basse, il n'y a pas de courtier.
         """
         lignes = [
             TITRE_MACHINE,
@@ -210,6 +244,8 @@ class Machine:
             lignes.append(self._maestro())
         if integrite_basse:
             lignes.append(LIGNE_INTEGRITE_BASSE)
+            if courtier:
+                lignes.append(LIGNE_COURTIER)
         if port_d_essai is not None:
             lignes.append(
                 f"- **Ton port d'essai** : `{port_d_essai}`. Maestro le réserve à ta tâche "
@@ -362,6 +398,8 @@ def _version(resultat: execution.Execution | None) -> str | None:
 
 __all__ = [
     "ABSENT",
+    "LIGNE_COURTIER",
+    "LIGNE_INTEGRITE_BASSE",
     "NON_SONDE",
     "PRESENT",
     "TITRE_MACHINE",
