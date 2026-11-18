@@ -30,10 +30,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from redis_factice import brancher
 
 from maestro.config import ConfigError, Settings
 from maestro.controltower import (
@@ -42,7 +44,9 @@ from maestro.controltower import (
     BusDurable,
     ControlTowerState,
     Event,
+    EventLog,
     InMemoryEventBus,
+    InMemoryEventLog,
     RedisEventLog,
     RegistreBattementsMemoire,
     SqliteEventLog,
@@ -194,6 +198,118 @@ def test_ce_qu_une_instance_consigne_une_autre_le_relit(tmp_path: Path) -> None:
     consigner(SqliteEventLog(fichier), statut_tache("t2", titre="API", cout_usd=0.2))
 
     assert [event.tache_id for event in relire(SqliteEventLog(fichier))] == ["t1", "t2"]
+
+
+# ── ①bis Le contrat de la couche d'accès, à l'identique sur les trois supports ──
+#
+# Les tests ci-dessus éprouvent le fichier ; celui-ci éprouve le **contrat** (`EventLog`)
+# tel que le rejeu le lit, joué tel quel sur la mémoire, Redis et SQLite (#645). Une sonde
+# qui ne rougit jamais ne prouve rien : le même contrat est d'abord joué sur des journaux
+# **fautifs**, un par clause, et chacun doit le faire rougir.
+
+
+def _jouer_le_contrat(fabrique: Callable[[], EventLog], *, durable: bool) -> None:
+    """Le contrat du journal durable, joué sur une implémentation — lève s'il est rompu.
+
+    Les clauses sont celles que le rejeu du lifespan suppose : un journal neuf est vide,
+    il rend **tout** ce qu'il a consigné, **dans l'ordre**, champ pour champ (le JSON de
+    l'événement, `Event.to_json`), et relire ne consomme rien. Un journal **durable** le
+    rend aussi à une autre instance ouverte sur le même support : c'est un redémarrage.
+    """
+    evenements = (
+        statut_tache("t2", titre="Schéma & clés « uniques »", cout_usd=0.4),
+        Event(type=EVENEMENT_AGENT_ACTIVITE, run_id=RUN, agent="developpeur", detail="écrit"),
+        statut_tache("t1", titre="API", cout_usd=0.0),
+    )
+    attendus = [Event.from_json(event.to_json()) for event in evenements]
+
+    async def _jouer() -> tuple[list[Event], list[Event], list[Event], list[Event]]:
+        journal = fabrique()
+        neuf = await journal.relire()
+        for event in evenements:
+            await journal.consigner(event)
+        premiere = await journal.relire()
+        seconde = await journal.relire()
+        await journal.close()
+        autre = fabrique()
+        ailleurs = await autre.relire()
+        await autre.close()
+        return neuf, premiere, seconde, ailleurs
+
+    neuf, premiere, seconde, ailleurs = asyncio.run(_jouer())
+
+    assert neuf == [], "un journal neuf n'a pas d'histoire"
+    assert [event.tache_id for event in premiere] == [e.tache_id for e in attendus], "l'ordre"
+    assert premiere == attendus, "chaque champ fait l'aller-retour"
+    assert seconde == attendus, "relire ne consomme rien"
+    if durable:
+        assert ailleurs == attendus, "une autre instance relit tout : c'est un redémarrage"
+
+
+class _JournalQuiInverse(InMemoryEventLog):
+    """Fautif : rend l'histoire à l'envers — un rejeu qui finirait par le début."""
+
+    async def relire(self) -> list[Event]:
+        return list(reversed(await super().relire()))
+
+
+class _JournalQuiPerdLaMesure(InMemoryEventLog):
+    """Fautif : laisse la mesure en route — le grand livre reviendrait sans coût."""
+
+    async def consigner(self, event: Event) -> None:
+        await super().consigner(dataclasses.replace(event, usage=None))
+
+
+class _JournalQuiConsomme(InMemoryEventLog):
+    """Fautif : relire vide la liste — une file, pas un journal."""
+
+    async def relire(self) -> list[Event]:
+        relus = await super().relire()
+        self._evenements.clear()
+        return relus
+
+
+@pytest.mark.parametrize(
+    ("fautif", "durable", "clause"),
+    [
+        pytest.param(_JournalQuiInverse, False, "l'ordre", id="ordre"),
+        pytest.param(_JournalQuiPerdLaMesure, False, "chaque champ", id="champ-perdu"),
+        pytest.param(_JournalQuiConsomme, False, "ne consomme rien", id="relecture-qui-consomme"),
+        # Chaque instance a sa mémoire : déclaré durable, il oublie au redémarrage.
+        pytest.param(InMemoryEventLog, True, "une autre instance", id="sans-lendemain"),
+    ],
+)
+def test_le_contrat_du_journal_rougit_sur_un_journal_fautif(
+    fautif: type[EventLog], durable: bool, clause: str
+) -> None:
+    """La sonde prouvée d'abord : chaque clause du contrat attrape le défaut qu'elle vise."""
+    with pytest.raises(AssertionError, match=clause):
+        _jouer_le_contrat(fautif, durable=durable)
+
+
+@pytest.mark.parametrize("support", ["memoire", "redis", "sqlite"])
+def test_les_trois_supports_tiennent_le_meme_contrat(
+    support: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le mode local tient le contrat du mode serveur, et la mémoire des tests aussi.
+
+    C'est ce qui permet au rejeu du lifespan de ne pas savoir sur quoi il tourne. Redis
+    est le double partagé du dépôt (`tests/redis_factice.py`) : une instance, que deux
+    clients voient ensemble, comme une vraie. La mémoire tient le contrat **sans** le
+    redémarrage, et c'est ce qu'elle promet (`InMemoryEventLog`).
+    """
+    serveur = brancher(monkeypatch)
+    fabriques: dict[str, tuple[Callable[[], EventLog], bool]] = {
+        "memoire": (InMemoryEventLog, False),
+        "redis": (lambda: RedisEventLog("redis://factice", cle="contrat"), True),
+        "sqlite": (lambda: SqliteEventLog(tmp_path / "contrat.sqlite3"), True),
+    }
+    fabrique, durable = fabriques[support]
+
+    _jouer_le_contrat(fabrique, durable=durable)
+
+    if support == "redis":
+        assert set(serveur.listes) == {"contrat"}, "la clé nommée, et elle seule"
 
 
 def test_le_regime_de_concurrence_est_pose_sur_le_fichier(tmp_path: Path) -> None:

@@ -467,6 +467,46 @@ navigateur.
 que le mode local. Les **comptes** d'un mode serveur multi-utilisateur viendront derrière cette même
 couche, jamais dans une branche de code parallèle.
 
+### 2.6 Ce que le paquet d'installation ajoute *(en vigueur — #641, #644, [docs/54](./54-le-paquet-d-installation.md))*
+
+Une installation par double-clic tient la frontière de §2.5 sans qu'on la règle : le régime durci
+est le défaut, et rien dans le paquet ne la desserre. Ce qui change est **d'où vient le code qui
+tourne**, et la question se pose à trois endroits.
+
+**Le jeton ne voyage pas dans le paquet.** Il est engendré au premier démarrage de l'installation,
+sous le profil de la personne (`%USERPROFILE%\.maestro\jeton-api`). Deux installations n'ont donc
+jamais le même. L'interface le reçoit **au démarrage**, du lanceur (`apps/web/lib/configPoste.ts`),
+jamais au moment où le paquet est construit. L'assembleur cherche octet par octet le jeton du poste
+qui construit dans le front embarqué, et le trouver arrête l'assemblage (docs/54 §4). La fermeture
+de la fenêtre porte ce même jeton pour solder les runs en vol (`/api/extinction`). Un refus y est
+dit comme un refus, jamais lu comme « aucun run en vol » (#1355).
+
+**Le paquet ne s'ouvre pas au poste.** Le Python de l'installation est en mode isolé
+(`python313._pth`) : il ignore `PYTHONPATH`, `PYTHONHOME` et le registre. Le lanceur prend le Node
+du paquet avant celui du `PATH`. La vérification du paquet relève chaque processus né de
+l'installation avec son exécutable, et un seul pris au poste la fait échouer (docs/54 §3.3). Ce
+qui est installé l'est **par utilisateur**, sans élévation, sous `%LOCALAPPDATA%\Programs\Maestro`.
+Un programme qui tourne sous le compte de la personne peut donc réécrire ces fichiers. C'est le
+même périmètre de confiance que le jeton (§2.5) : le poste est réputé de confiance.
+
+**La mise à jour vérifie l'intégrité, pas l'éditeur.** Le canal est celui des publications GitHub
+du dépôt, en HTTPS. L'installeur téléchargé n'est posé que s'il porte l'empreinte **sha512** que
+`latest.yml` annonce (docs/54 §6.2). Les deux fichiers viennent pourtant de la **même publication**.
+L'empreinte arrête donc un téléchargement tronqué ou altéré en route. Elle n'arrête pas une
+publication malveillante, que quiconque peut faire en écrivant dans les publications du dépôt.
+Trois choses bornent ce risque, et aucune n'est un contrôle cryptographique :
+
+- **publier est un geste humain**, fait depuis `main` à jour et refusé sur un arbre sale
+  (`scripts/distribution/publier.sh`, docs/54 §6.3). La CI ne publie jamais, et un run non plus ;
+- **une version publiée ne se remplace pas** : le script refuse une étiquette qui existe déjà ;
+- **rien ne s'installe sans un geste** de la personne (docs/54 §6).
+
+L'installeur n'est **pas signé** : Windows SmartScreen le signale comme une application d'éditeur
+inconnu, et ni la première installation ni la mise à jour ne savent qui l'a construit. Le canal se
+remplace par `MAESTRO_MISES_A_JOUR_FLUX`, en HTTPS ou en HTTP vers le poste lui-même. Qui peut
+écrire les variables d'environnement de la personne peut donc détourner sa mise à jour. C'est
+encore le même périmètre : celui-là pouvait déjà réécrire le dossier d'installation.
+
 ## 3. Activation (récapitulatif)
 
 Chaque mécanisme est **opt-in** et détaillé dans sa page ; l'ensemble tient
@@ -527,7 +567,11 @@ engendré au premier démarrage, persisté hors du dépôt et idempotent ; `401`
 une lecture comme sur une écriture, sur un mauvais jeton et sur un jeton passé
 en paramètre d'URL côté REST ; poignée de main WebSocket refusée sans jeton, avec
 un mauvais jeton, et depuis une origine tierce ; préflight `OPTIONS` laissé
-passer ; aucune en-tête CORS pour une origine hors liste. Côté front,
+passer ; aucune en-tête CORS pour une origine hors liste. Un balayage frappe
+sans jeton chaque opération que l'API publie (son schéma OpenAPI, plus `/docs`
+et un chemin qu'aucune route ne sert) : toutes rendent le `401` du portier. Il est
+prouvé d'abord sur un portier fautif qui exempte une seule route, et il la nomme
+(#645). Côté front,
 `apps/web/tests/jeton-api.test.ts` : l'en-tête part sur une lecture, une écriture
 JSON et un téléversement, le flux le porte par l'URL — et rien de tout cela en
 régime ouvert. Le jeton **hors des journaux** (#1292), `tests/test_jeton_hors_des_journaux.py` :
@@ -591,6 +635,11 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   IPC servent tout ce qui s'exécute dans la page. Ce qui rend cela tenable est une
   hypothèse à quatre termes — une fenêtre, une origine, pas de `<webview>`, pas
   d'iframe tierce — et non un contrôle ;
+- **l'installeur n'est pas signé, et la mise à jour fait confiance aux publications du dépôt**
+  (§2.6) : l'empreinte `sha512` arrête un téléchargement altéré, pas une publication malveillante.
+  Signer l'installeur est une décision d'éditeur (un certificat de signature de code) que la
+  Phase 9 n'a pas prise. Le refus d'un installeur à l'empreinte fausse appartient à
+  `electron-updater`, et n'a pas été provoqué (docs/54 §3.4) ;
 - ~~**l'API locale n'a ni jeton ni liste d'origines**~~ — **levé par #638** (§2.5) : elle a les
   deux, et le régime durci est le défaut. Ce qui reste assumé est écrit là-bas — le poste est
   toujours réputé de confiance (qui lit `~/.maestro/jeton-api` a le jeton), le transport local

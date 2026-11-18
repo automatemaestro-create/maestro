@@ -14,8 +14,8 @@
 # apps/desktop/package.json ; une fois mergée, on publie depuis le clone principal, sur `main` à
 # jour. Le script le vérifie et refuse autrement :
 #
-#   - la branche est `main`, l'arbre est propre, et HEAD est `origin/main` (relu à l'instant) —
-#     ce qui part est ce qui a été vérifié et mergé, rien d'autre ;
+#   - la branche est `main`, l'arbre est propre là où le paquet lit, et HEAD est `origin/main`
+#     (relu à l'instant) — ce qui part est ce qui a été vérifié et mergé, rien d'autre ;
 #   - la version n'est pas déjà publiée — une publication ne se remplace pas : les installations
 #     qui l'ont prise ne la reprendraient pas, et deux paquets porteraient le même numéro ;
 #   - le paquet construit dit cette version (`latest.yml`), nomme cet installeur, et son empreinte
@@ -49,10 +49,26 @@ refus() {
 
 cd "$RACINE" || exit 1
 
-# --- le dépôt : main, propre, à jour ---------------------------------------------------------------
+# --- le dépôt : main, propre là où le paquet lit, à jour --------------------------------------------
 branche="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ "$branche" = main ] || refus "on publie depuis main, pas depuis « ${branche:-?} »"
-[ -z "$(git status --porcelain)" ] || refus "l'arbre porte des changements non commités"
+
+# Un fichier suivi se publie tel qu'il est sur le disque (assembler.py copie le contenu de
+# `git ls-files`) : modifié ou indexé, il partirait sans avoir été vérifié ni mergé.
+changes="$(git status --porcelain --untracked-files=no | cut -c4- | head -n 5 | tr '\n' ' ')"
+[ -z "$changes" ] || refus "l'arbre porte des changements non commités : ${changes% }"
+
+# Un fichier non suivi, lui, n'entre dans le paquet que là où la construction lit un dossier en
+# entier : le build du front (apps/web) et electron-builder (apps/desktop). Partout ailleurs, le
+# produit ne prend que du code suivi. Un bilan sous docs/bilans/ ou une sortie de démonstration
+# ne part donc pas, et ne bloque pas : on le nomme. Ces dossiers sont ceux que construire.sh
+# nomme ; tests/test_distribution.py garde la correspondance.
+LUS_EN_ENTIER=(apps/web apps/desktop)
+dedans="$(git ls-files --others --exclude-standard -- "${LUS_EN_ENTIER[@]}" | head -n 5 | tr '\n' ' ')"
+[ -z "$dedans" ] ||
+  refus "fichiers non suivis là où la construction lit tout (${LUS_EN_ENTIER[*]}) : ${dedans% }"
+ailleurs="$(git status --porcelain --untracked-files=normal | sed -n 's/^?? //p' | tr '\n' ' ')"
+[ -z "$ailleurs" ] || echo "[publication] non suivis, hors du paquet : ${ailleurs% }"
 git fetch --quiet origin main 2>/dev/null || refus "origin/main ne se relit pas"
 tete="$(git rev-parse HEAD)"
 [ "$tete" = "$(git rev-parse origin/main)" ] || refus "HEAD n'est pas origin/main — bash scripts/gitlab/lib.sh sync-main"

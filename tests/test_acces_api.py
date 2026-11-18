@@ -26,14 +26,17 @@ Trois familles :
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower.acces import (
+    MOTIF_REFUS,
     PORT_UI_DEFAUT,
     REGIME_JETON,
     REGIME_OUVERT,
@@ -173,6 +176,82 @@ def test_le_refus_couvre_les_ecritures_pas_seulement_les_lectures(client_durci):
     )
 
     assert reponse.status_code == 401
+
+
+#: Les verbes d'une opération OpenAPI que le balayage frappe — `head` et `options`
+#: exceptés : le second est le préflight, que CORS tranche avant le portier.
+VERBES_BALAYES = ("get", "post", "put", "patch", "delete")
+
+
+def _portes_ouvertes_sans_jeton(app: Any, publiee: Any) -> list[str]:
+    """Chaque porte HTTP de `publiee`, frappée sans jeton sur `app` : celles qui laissent passer.
+
+    Les portes sont celles que l'API **publie** (son schéma OpenAPI, plus les routes de
+    premier niveau comme `/docs`) et un chemin qu'aucune route ne sert — le portier est
+    devant le routage, pas sur chaque route, et c'est ce que ce dernier chemin dit. Un
+    paramètre de chemin reçoit une valeur quelconque : le refus tombe avant qu'on le lise.
+    """
+    portes = {
+        (verbe.upper(), chemin)
+        for chemin, operations in publiee.openapi()["paths"].items()
+        for verbe in operations
+        if verbe in VERBES_BALAYES
+    }
+    portes |= {
+        (verbe, route.path)
+        for route in publiee.routes
+        if isinstance(getattr(route, "path", None), str) and getattr(route, "methods", None)
+        for verbe in route.methods
+        if verbe.lower() in VERBES_BALAYES
+    }
+    portes.add(("GET", "/aucune-route-ne-sert-ce-chemin"))
+    ouvertes = []
+    with TestClient(app) as client:
+        for verbe, chemin in sorted(portes):
+            reponse = client.request(verbe, re.sub(r"\{[^}]+\}", "x", chemin))
+            if reponse.status_code != 401 or reponse.json().get("detail") != MOTIF_REFUS:
+                ouvertes.append(f"{verbe} {chemin}")
+    return ouvertes
+
+
+class _PortierQuiExempte:
+    """Fautif : une route exemptée du jeton — le précédent que `GardeAcces` refuse d'ouvrir.
+
+    Il pose le bon jeton sur les requêtes d'un seul chemin avant de passer la main,
+    exactement ce que ferait une exemption écrite dans le portier.
+    """
+
+    def __init__(self, app: Any, chemin: str, jeton: str) -> None:
+        self._app = app
+        self._chemin = chemin
+        self._entete = (b"authorization", f"Bearer {jeton}".encode("latin-1"))
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") == "http" and scope.get("path") == self._chemin:
+            scope = {**scope, "headers": [*scope.get("headers", ()), self._entete]}
+        await self._app(scope, receive, send)
+
+
+def test_le_balayage_du_refus_voit_une_route_exemptee(politique):
+    """La sonde prouvée sur un échantillon fautif : une seule porte ouverte, et c'est elle."""
+    app = create_app(acces=politique)
+
+    ouvertes = _portes_ouvertes_sans_jeton(
+        _PortierQuiExempte(app, "/api/sante", str(politique.jeton)), app
+    )
+
+    assert ouvertes == ["GET /api/sante"]
+
+
+def test_aucune_porte_publiee_ne_repond_sans_le_jeton(politique):
+    """Toutes les routes que l'API publie, lectures et écritures, refusent en `401` (#638).
+
+    Le portier est un middleware sans exemption : ce balayage le vérifie sur l'app telle
+    qu'elle sort de `create_app`, si bien qu'une route ajoutée demain y entre d'office.
+    """
+    app = create_app(acces=politique)
+
+    assert _portes_ouvertes_sans_jeton(app, app) == []
 
 
 def test_le_jeton_ne_passe_pas_en_parametre_d_url_sur_le_rest(client_durci, politique):

@@ -22,6 +22,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -1196,6 +1197,132 @@ def test_le_systeme_demarre_puis_eteint_un_vrai_process(tmp_path: Path) -> None:
             break
         time.sleep(0.05)
     assert processus.code() is not None
+
+
+# Un service qui a une descendance, comme l'API (ses hôtes de run) et le front (ses
+# ouvriers) : le père lance un enfant, écrit son pid, et dort ; l'enfant dort. Le pid
+# s'écrit par renommage, si bien qu'un témoin présent est un témoin complet.
+_SERVICE_A_DESCENDANCE = (
+    "import os, subprocess, sys, time\n"
+    "enfant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+    "with open(sys.argv[1] + '.tmp', 'w') as f:\n"
+    "    f.write(str(enfant.pid))\n"
+    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
+    "time.sleep(120)\n"
+)
+
+
+def _vivant_pour_de_bon(pid: int) -> bool:
+    """La sonde d'orphelin : ce pid travaille-t-il encore ? Un zombie ne travaille plus.
+
+    Sous Linux, un process tué attend qu'on le ramasse, et `Systeme.vivant` (`kill 0`)
+    le voit jusque-là : c'est l'état du process qu'on lit, `Z` voulant dire mort.
+    """
+    if sys.platform == "linux":
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+    return Systeme().vivant(pid)
+
+
+def _survivants(pids: list[int], delai: float) -> list[int]:
+    """Ceux de `pids` qui vivent encore au bout de `delai` — dès qu'aucun ne vit, aucun."""
+    fin = time.monotonic() + delai
+    while True:
+        vivants = [pid for pid in pids if _vivant_pour_de_bon(pid)]
+        if not vivants or time.monotonic() >= fin:
+            return vivants
+        time.sleep(0.1)
+
+
+def _demarrer_un_service_a_descendance(tmp_path: Path) -> tuple[Processus, int]:
+    """Le service, démarré par le vrai `Systeme`, et le pid de son enfant.
+
+    Le test est le **père** du service, ce que le lanceur n'est jamais (celui qui arrête
+    n'est pas celui qui a démarré) : un fil le ramasse dès sa mort, sans quoi un zombie
+    passerait pour vivant aux yeux de l'arrêt et le ferait attendre pour rien.
+    """
+    script = tmp_path / "service_a_descendance.py"
+    script.write_text(_SERVICE_A_DESCENDANCE, encoding="utf-8")
+    temoin = tmp_path / "enfant.pid"
+    processus = Systeme().demarrer(
+        [sys.executable, str(script), str(temoin)],
+        cwd=tmp_path,
+        journal=tmp_path / "service.log",
+        environ=dict(os.environ),
+    )
+
+    def _ramasser() -> None:
+        while processus.code() is None:
+            time.sleep(0.05)
+
+    threading.Thread(target=_ramasser, daemon=True).start()
+    for _ in range(300):
+        if temoin.exists():
+            break
+        time.sleep(0.05)
+    assert temoin.exists(), (tmp_path / "service.log").read_text(encoding="utf-8")
+    return processus, int(temoin.read_text(encoding="utf-8"))
+
+
+def test_la_sonde_d_orphelin_voit_l_enfant_d_un_pere_tue_seul(tmp_path: Path) -> None:
+    """La sonde prouvée sur un échantillon fautif : tuer le père seul laisse son enfant.
+
+    C'est l'arrêt que le lanceur ne doit jamais faire — un `terminate()` sur le pid
+    inscrit. Si la sonde ne voyait pas cet enfant-là, son silence sur l'arrêt réel ne
+    prouverait rien.
+    """
+    processus, enfant = _demarrer_un_service_a_descendance(tmp_path)
+    try:
+        os.kill(processus.pid, signal.SIGTERM)  # le père seul : sous Windows, TerminateProcess
+        assert _survivants([processus.pid], delai=10.0) == [], "le père est bien mort"
+        assert _survivants([enfant], delai=1.0) == [enfant], "et son enfant travaille encore"
+    finally:
+        Systeme().eteindre(enfant)
+        _survivants([enfant], delai=10.0)
+
+
+def test_l_arret_du_lanceur_ne_laisse_aucun_orphelin(
+    tmp_path: Path, emplacement: Emplacement
+) -> None:
+    """Le vrai arrêt, sur un vrai service : reconnu à sa ligne de commande, éteint avec
+    sa descendance, et plus rien ne travaille ensuite — ni lui, ni son enfant (#640)."""
+    processus, enfant = _demarrer_un_service_a_descendance(tmp_path)
+    systeme = Systeme()
+    port = systeme.port_libre_depuis("127.0.0.1", 47_645)
+    assert port is not None
+    inscrite = Session(demarre_a=time.time(), url=f"http://127.0.0.1:{port}").avec(
+        Service(
+            nom="api",
+            pid=processus.pid,
+            hote="127.0.0.1",
+            port=port,
+            marqueur="service_a_descendance.py",
+            journal="service.log",
+            sonde=f"http://127.0.0.1:{port}/api/sante",
+        )
+    )
+    etat_session.ecrire(emplacement.session, inscrite)
+    sortie = SortieDouble()
+    try:
+        code = lanceur.arreter(
+            _options(action="arreter"),
+            emplacement=emplacement,
+            systeme=systeme,
+            sortie=sortie,
+            # Aucune API n'écoute : le solde des runs est éprouvé plus haut, sur ses doubles.
+            environ={"MAESTRO_EXTINCTION": "0"},
+        )
+        assert code == 0, sortie.tout
+        assert "arrêté avec sa descendance" in sortie.tout
+        assert _survivants([processus.pid, enfant], delai=10.0) == []
+        assert not emplacement.session.exists()
+    finally:
+        for pid in (processus.pid, enfant):
+            if _vivant_pour_de_bon(pid):
+                systeme.eteindre(pid)
 
 
 def test_le_journal_repart_a_zero_a_chaque_demarrage(tmp_path: Path) -> None:

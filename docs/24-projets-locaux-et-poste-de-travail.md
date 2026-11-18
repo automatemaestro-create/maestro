@@ -854,6 +854,9 @@ le persona principal — le fondateur qui ne code pas ([docs/00 §3.1](./00-cahi
 | **Mises à jour** applicatives | `git pull` |
 | Notifications système, ouverture dans l'éditeur/l'explorateur | absent |
 
+> La colonne « Aujourd'hui » est celle du cadrage (2026-08-04). Chaque ligne a depuis reçu sa
+> réponse, et §4.9 dit laquelle.
+
 Concrètement, une **enveloppe de bureau** est **une fenêtre native qui affiche le site web local** et
 démarre le backend en arrière-plan : la même interface, dans une fenêtre au lieu d'un onglet.
 
@@ -967,6 +970,42 @@ Deux raisons de ne pas basculer « tout bureau » :
 l'ingestion (§3) : empaqueter aujourd'hui livrerait une application installable qui ne sait
 toujours ni ouvrir un dossier ni lire un document — et il faudrait tout ré-empaqueter juste
 après.
+
+### 4.9 Ce que la Phase 9 a livré : les options devenues des faits
+
+L'ordre de §4.8 a été tenu : la Phase 9 a empaqueté un produit qui ouvre un dossier et lit un
+document. Les options 1 et 3 de §4.5 sont livrées, l'une dans l'autre. L'installeur pose la
+fenêtre Electron, et la fenêtre démarre le lanceur. L'option 2 est écartée, et les options 0 et 4
+ne sont plus en jeu.
+
+| Ce que §4.4 attendait du bureau | Ce qui est livré | Où le lire |
+|---|---|---|
+| **Installation en un double-clic** | Un installeur Windows x64 par utilisateur, sans droit d'administrateur. Il pèse **285 Mo** à télécharger et **921 Mo** installé. Il n'y a rien d'autre à installer : ni Python, ni Node, ni Redis, ni clone (#641) | [docs/54 §1, §3.1](./54-le-paquet-d-installation.md) |
+| **Cycle de vie du backend** | La fenêtre démarre l'API et l'interface, déplace un port pris en le disant, et les arrête à sa fermeture. L'arrêt solde d'abord les runs en vol, puis éteint chaque service avec sa descendance, et il ne tue rien qu'il n'ait reconnu (#640) | [docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md), [docs/54 §1](./54-le-paquet-d-installation.md) |
+| **Mises à jour applicatives** | L'installation cherche la version suivante sur les publications GitHub du dépôt et la télécharge en vérifiant son empreinte. Elle ne la pose que sur un geste de la personne, « Redémarrer maintenant » ou la prochaine fermeture. Les quatre composants (front, backend, dépendances Python, CLI) suivent le paquet ensemble (#644, #1622) | [docs/54 §2bis, §6](./54-le-paquet-d-installation.md) |
+| Un `.env` à remplir à la main (§6, point 5) | Le premier lancement fait choisir et éprouver le modèle, puis le dossier des projets, et finit sur le premier projet. Aucun fichier n'est à éditer (#642, #1609, #1610) | [docs/05 §2.0.3](./05-interface-control-tower.md) |
+| La persistance (§6, point 2) | En mode local, SQLite garde le journal des runs et leur état acquis, sans service, et migre son schéma d'une version à l'autre (#639, #1621). Ce que la personne règle vit sous son profil et survit à la réinstallation (#1620) | [docs/54 §1, §5](./54-le-paquet-d-installation.md) |
+| L'authentification (§6, point 3) | Un jeton propre au poste est exigé sur chaque requête et chaque WebSocket, et les origines sont limitées à celle du front (#638) | [docs/19 §2.5, §2.6](./19-securite-modele-de-menace.md) |
+| Le mode isolé, qu'un double-clic ne peut pas exiger (§4.6) | Docker est **optionnel**. Le défaut d'une installation Windows est l'**intégrité basse**, un mécanisme natif qui ne demande ni Docker ni élévation (#1515) | [docs/17 §7](./17-isolation-execution.md) |
+
+**Les limites assumées, avec leur raison :**
+
+- **Windows 10/11 x64 seulement.** C'est le poste des personnes visées, et le seul où le paquet a
+  été vérifié. L'assembleur refuse de construire macOS et Linux plutôt que de produire un paquet
+  faux. Le mode web, lui, tourne partout où un clone tourne (D3).
+- **Le mode isolé par conteneur est devenu une option.** Une application qu'on double-clique ne
+  peut pas exiger Docker, et l'intégrité basse borne déjà l'écriture et l'arrêt. Elle ne borne pas
+  la lecture : la limite est écrite en [docs/19 §5](./19-securite-modele-de-menace.md).
+- **Ce qui n'est pas empaqueté** : Git for Windows, dont un projet versionné a besoin, et le
+  compte du modèle, que la personne connecte elle-même. Ni l'un ni l'autre ne se pose à la place
+  de quelqu'un ([docs/54 §2](./54-le-paquet-d-installation.md)).
+- **Un installeur non signé.** Windows SmartScreen le signale au premier lancement. La mise à jour
+  vérifie l'empreinte de ce qu'elle télécharge, pas l'identité de qui l'a publié
+  ([docs/19 §2.6](./19-securite-modele-de-menace.md)).
+- **Ce qui n'a pas été vérifié sur une installation réelle** est tenu à jour en
+  [docs/54 §3.4](./54-le-paquet-d-installation.md), et non ici. La preuve sur une machine
+  vierge, avec une version publiée sur le vrai canal, y est différée, et prête à être jouée
+  (§3.5) : elle attend deux gestes de la personne.
 
 ---
 
