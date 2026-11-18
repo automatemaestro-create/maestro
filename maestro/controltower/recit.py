@@ -144,7 +144,7 @@ from maestro.controltower.state import (
     EtatExecution,
 )
 from maestro.engine.recette import recette_en_texte
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers.base import ModelProvider
 from maestro.sources.extraction import (
     ExtractionGuardrails,
@@ -278,7 +278,7 @@ class Livrable:
 
 def lire_le_livrable(
     racine: Path,
-    perimetre: Perimetre | None = None,
+    perimetre: Perimeter | None = None,
     *,
     garde_fous: ExtractionGuardrails | None = None,
     fichiers_max: int = FICHIERS_OFFERTS_MAX,
@@ -301,7 +301,7 @@ def lire_le_livrable(
         rapport = extract_sources(
             [source],
             guardrails=garde_fous or GARDE_FOUS_LIVRABLE,
-            perimeter=perimetre or Perimetre(),
+            perimeter=perimetre or Perimeter(),
         )
     except Exception:  # noqa: BLE001 — une racine illisible n'est pas une panne
         _LOGGER.exception("Livrable illisible : %s", racine)
@@ -425,7 +425,7 @@ class RedacteurModele:
 class ProjetDuRun(Protocol):
     """Où travaille un run — la seule chose que le conteur demande aux projets."""
 
-    def __call__(self, projet_id: str | None) -> Projet | None: ...
+    def __call__(self, projet_id: str | None) -> Project | None: ...
 
 
 class RevueDeLOutillage(Protocol):
@@ -641,17 +641,17 @@ class ConteurDeFin:
             )
             return None
 
-    async def _lire(self, projet: Projet | None) -> Livrable | None:
+    async def _lire(self, projet: Project | None) -> Livrable | None:
         """Le livrable du run — `None` quand le run ne relève d'aucun projet lisible.
 
         Dans un fil d'exécution à part : lire un dossier ouvre des fichiers, et
         la boucle de l'API ne doit pas le porter — même règle que la lecture des
         sources d'un message (`ServiceChat._lire`).
         """
-        if projet is None or not projet.racine:
+        if projet is None or not projet.root:
             return None
         return await asyncio.to_thread(
-            lire_le_livrable, projet.racine_chemin, projet.perimetre
+            lire_le_livrable, projet.root_path, projet.perimeter
         )
 
 

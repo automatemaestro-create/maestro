@@ -1,23 +1,22 @@
-"""Tests du **répertoire des projets** : où naît un projet neuf (#1022, EF-38).
+"""Tests of the **projects directory**: where a new project is born (#1022, EF-38).
 
-Les trois critères du ticket, dans cet ordre :
+The ticket's three criteria, in this order:
 
-① le **réglage** (`maestro.projets.reglages`) : un défaut nommé `~/Maestro` — que
-   `valider_racine` admet là où elle refuse le dossier personnel nu —, créé à la
-   première utilisation et **dit** quand il l'est, stocké résolu, revenu au
-   défaut par `None`, et un dépôt absent ou corrompu qui rend les défauts plutôt
-   que de lever ;
-② la **lecture et l'écriture par l'API** (`GET`/`PUT /api/projets/repertoire`) :
-   un réglage refusé n'écrit rien, un répertoire devenu indéclarable revient en
-   200 avec son motif, et le répertoire réglé devient explorable — un parent
-   proposé que l'explorateur refuserait serait un cul-de-sac ;
-③ ce que le réglage **ne fait pas** : il n'entre pas dans le dépôt des
-   déclarations (`MAESTRO_PROJETS_DIR`), et déclarer un projet ne le touche pas.
+① the **setting** (`maestro.projects.settings`): a named default `~/Maestro` — which
+   `validate_root` accepts where it rejects the bare home folder —, created on first
+   use and **said** when it is, stored resolved, back to the default through `None`,
+   and a missing or corrupt store that returns the defaults rather than raising;
+② **reading and writing through the API** (`GET`/`PUT /api/projets/repertoire`):
+   a rejected setting writes nothing, a directory that can no longer be declared comes
+   back as 200 with its reason, and the set directory becomes explorable — a proposed
+   parent that the explorer would refuse would be a dead end;
+③ what the setting **does not do**: it does not enter the declarations store
+   (`MAESTRO_PROJETS_DIR`), and declaring a project does not touch it.
 
-Ni réseau, ni Redis : l'app FastAPI tourne sur le bus mémoire via le TestClient,
-sur des dépôts jetables et un dossier personnel factice — sans quoi le `tmp_path`
-de pytest, qui vit sous `AppData/Local/Temp` sous Windows, serait refusé à raison
-mais pas pour la raison mesurée (même isolation qu'en #221).
+No network, no Redis: the FastAPI app runs on the in-memory bus through the TestClient,
+on throwaway stores and a fake home folder — without which pytest's `tmp_path`, which
+lives under `AppData/Local/Temp` on Windows, would be rejected rightly but not for the
+reason under test (same isolation as in #221).
 """
 
 from __future__ import annotations
@@ -31,52 +30,52 @@ from fastapi.testclient import TestClient
 from maestro.config import Settings
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import ProjetStore, RacineRefusee
-from maestro.projets.reglages import (
-    NOM_DEFAUT,
-    ReglagesProjetsStore,
-    repertoire_par_defaut,
+from maestro.projects import ProjectStore, RootRejected
+from maestro.projects.settings import (
+    DEFAULT_NAME,
+    ProjectSettingsStore,
+    default_directory,
 )
 
 
 @pytest.fixture(autouse=True)
-def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un dossier personnel factice — même raison qu'en #221 et #223."""
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    return maison
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake home folder — same reason as in #221 and #223."""
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
 
 
 @pytest.fixture()
-def maison(_maison_isolee: Path) -> Path:
-    """Le dossier personnel factice, sous un nom lisible en argument de test."""
-    return _maison_isolee
+def home(_isolated_home: Path) -> Path:
+    """The fake home folder, under a readable name as a test argument."""
+    return _isolated_home
 
 
 @pytest.fixture()
-def reglages(tmp_path: Path) -> ReglagesProjetsStore:
-    """Un dépôt de réglages sur un dossier jetable."""
-    return ReglagesProjetsStore(tmp_path / "reglages")
+def settings_store(tmp_path: Path) -> ProjectSettingsStore:
+    """A settings store on a throwaway folder."""
+    return ProjectSettingsStore(tmp_path / "reglages")
 
 
 @pytest.fixture()
-def atelier(tmp_path: Path) -> Path:
-    """Un dossier explorable, hors du dossier personnel."""
-    atelier = tmp_path / "atelier"
-    atelier.mkdir()
-    return atelier
+def workshop(tmp_path: Path) -> Path:
+    """An explorable folder, outside the home folder."""
+    workshop = tmp_path / "atelier"
+    workshop.mkdir()
+    return workshop
 
 
 @pytest.fixture()
-def service(tmp_path: Path, reglages: ReglagesProjetsStore) -> ServiceProjets:
-    """Le service sans restriction d'exploration — la configuration nominale."""
-    return ServiceProjets(ProjetStore(tmp_path / "depot"), reglages=reglages)
+def service(tmp_path: Path, settings_store: ProjectSettingsStore) -> ServiceProjets:
+    """The service without any exploration restriction — the nominal configuration."""
+    return ServiceProjets(ProjectStore(tmp_path / "depot"), reglages=settings_store)
 
 
 @pytest.fixture()
 def client(service: ServiceProjets) -> TestClient:
-    """TestClient de l'app, branché sur ce service-là."""
+    """The app's TestClient, wired to that service."""
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
@@ -86,279 +85,279 @@ def client(service: ServiceProjets) -> TestClient:
         yield client
 
 
-# --- ① Le réglage : défaut nommé, création à la première utilisation ---------
+# --- ① The setting: a named default, created on first use --------------------
 
 
-def test_le_defaut_est_un_sous_dossier_nomme_du_dossier_personnel(maison: Path) -> None:
-    """`~/Maestro`, jamais `~` : le dossier personnel nu est refusé par EF-38."""
-    assert repertoire_par_defaut() == maison / NOM_DEFAUT
-    # Le contre-test qui donne son sens au précédent : le dossier personnel nu,
-    # lui, ne passerait pas — c'est la nuance sur laquelle le défaut repose.
-    with pytest.raises(RacineRefusee) as refus:
-        ReglagesProjetsStore(maison / "vide").ecrire(maison)
-    assert refus.value.motif == "dossier-utilisateur-nu"
+def test_the_default_is_a_named_subfolder_of_the_home_folder(home: Path) -> None:
+    """`~/Maestro`, never `~`: the bare home folder is rejected by EF-38."""
+    assert default_directory() == home / DEFAULT_NAME
+    # The counter-test that gives the previous one its meaning: the bare home folder
+    # itself would not pass — that is the nuance the default rests on.
+    with pytest.raises(RootRejected) as rejected:
+        ProjectSettingsStore(home / "vide").write(home)
+    assert rejected.value.reason == "dossier-utilisateur-nu"
 
 
-def test_sans_reglage_le_repertoire_est_le_defaut_et_n_existe_pas_encore(
-    reglages: ReglagesProjetsStore, maison: Path
+def test_without_a_setting_the_directory_is_the_default_and_does_not_exist_yet(
+    settings_store: ProjectSettingsStore, home: Path
 ) -> None:
-    """Lire le réglage ne crée rien : c'est `creer=True` qui le fait, et lui seul."""
-    with pytest.raises(RacineRefusee) as refus:
-        reglages.resoudre()
-    assert refus.value.motif == "dossier-absent"
-    assert not (maison / NOM_DEFAUT).exists()
+    """Reading the setting creates nothing: `create=True` does, and it alone."""
+    with pytest.raises(RootRejected) as rejected:
+        settings_store.resolve()
+    assert rejected.value.reason == "dossier-absent"
+    assert not (home / DEFAULT_NAME).exists()
 
 
-def test_la_premiere_utilisation_cree_le_dossier_et_le_dit(
-    reglages: ReglagesProjetsStore, maison: Path
+def test_the_first_use_creates_the_folder_and_says_so(
+    settings_store: ProjectSettingsStore, home: Path
 ) -> None:
-    """`cree` distingue « je viens de le créer » de « il était là » — jamais en silence."""
-    chemin, par_defaut, cree = reglages.resoudre(creer=True)
-    assert chemin == (maison / NOM_DEFAUT).resolve()
-    assert (par_defaut, cree) == (True, True)
-    # Idempotent, et la seconde fois ne prétend plus l'avoir créé.
-    _, _, encore = reglages.resoudre(creer=True)
-    assert encore is False
+    """`created` tells « I just created it » from « it was there » — never silently."""
+    path, by_default, created = settings_store.resolve(create=True)
+    assert path == (home / DEFAULT_NAME).resolve()
+    assert (by_default, created) == (True, True)
+    # Idempotent, and the second time no longer claims to have created it.
+    _, _, again = settings_store.resolve(create=True)
+    assert again is False
 
 
-def test_un_repertoire_regle_est_stocke_resolu(
-    reglages: ReglagesProjetsStore, atelier: Path
+def test_a_set_directory_is_stored_resolved(
+    settings_store: ProjectSettingsStore, workshop: Path
 ) -> None:
-    """C'est le chemin **résolu** qui est stocké, jamais la saisie (EF-38)."""
-    cible = atelier / "ailleurs"
-    cible.mkdir()
-    ecrit = reglages.ecrire(atelier / "ailleurs" / "." / ".." / "ailleurs")
-    assert ecrit.repertoire == cible.resolve().as_posix()
-    assert ecrit.modifie_le != ""
-    chemin, par_defaut, _ = reglages.resoudre()
-    assert chemin == cible.resolve()
-    assert par_defaut is False
+    """The **resolved** path is what is stored, never the input (EF-38)."""
+    target = workshop / "ailleurs"
+    target.mkdir()
+    written = settings_store.write(workshop / "ailleurs" / "." / ".." / "ailleurs")
+    assert written.directory == target.resolve().as_posix()
+    assert written.updated_at != ""
+    path, by_default, _ = settings_store.resolve()
+    assert path == target.resolve()
+    assert by_default is False
 
 
-def test_regler_cree_le_dossier_qui_manque(
-    reglages: ReglagesProjetsStore, atelier: Path
+def test_setting_creates_the_missing_folder(
+    settings_store: ProjectSettingsStore, workshop: Path
 ) -> None:
-    """Un réglage posé est toujours un dossier déclarable, jamais une intention."""
-    cible = atelier / "a-creer"
-    reglages.ecrire(cible)
-    assert cible.is_dir()
+    """A setting once set is always a declarable folder, never an intention."""
+    target = workshop / "a-creer"
+    settings_store.write(target)
+    assert target.is_dir()
 
 
-def test_revenir_au_defaut_efface_le_reglage(
-    reglages: ReglagesProjetsStore, atelier: Path, maison: Path
+def test_going_back_to_the_default_clears_the_setting(
+    settings_store: ProjectSettingsStore, workshop: Path, home: Path
 ) -> None:
-    """`None` ne veut pas dire « aucun répertoire » mais « celui que Maestro propose »."""
-    (atelier / "ailleurs").mkdir()
-    reglages.ecrire(atelier / "ailleurs")
-    reglages.ecrire(None)
-    chemin, par_defaut, _ = reglages.resoudre(creer=True)
-    assert (chemin, par_defaut) == ((maison / NOM_DEFAUT).resolve(), True)
+    """`None` does not mean « no directory » but « the one Maestro proposes »."""
+    (workshop / "ailleurs").mkdir()
+    settings_store.write(workshop / "ailleurs")
+    settings_store.write(None)
+    path, by_default, _ = settings_store.resolve(create=True)
+    assert (path, by_default) == ((home / DEFAULT_NAME).resolve(), True)
 
 
-def test_un_reglage_refuse_n_ecrit_rien(
-    reglages: ReglagesProjetsStore, atelier: Path, maison: Path
+def test_a_rejected_setting_writes_nothing(
+    settings_store: ProjectSettingsStore, workshop: Path, home: Path
 ) -> None:
-    """Le réglage précédent reste en place : refuser n'est pas remettre à zéro."""
-    (atelier / "bon").mkdir()
-    reglages.ecrire(atelier / "bon")
-    with pytest.raises(RacineRefusee):
-        reglages.ecrire(maison)  # dossier personnel nu
-    assert reglages.lire().repertoire == (atelier / "bon").resolve().as_posix()
+    """The previous setting stays in place: rejecting is not resetting."""
+    (workshop / "bon").mkdir()
+    settings_store.write(workshop / "bon")
+    with pytest.raises(RootRejected):
+        settings_store.write(home)  # bare home folder
+    assert settings_store.read().directory == (workshop / "bon").resolve().as_posix()
 
 
-def test_un_depot_corrompu_rend_les_defauts(
-    reglages: ReglagesProjetsStore, maison: Path
+def test_a_corrupt_store_returns_the_defaults(
+    settings_store: ProjectSettingsStore, home: Path
 ) -> None:
-    """Un réglage qu'on ne sait pas lire n'empêche pas de déclarer un projet."""
-    reglages.racine.mkdir(parents=True, exist_ok=True)
-    (reglages.racine / "projets.json").write_text("{ pas du json", encoding="utf-8")
-    assert reglages.lire().repertoire is None
-    chemin, par_defaut, _ = reglages.resoudre(creer=True)
-    assert (chemin, par_defaut) == ((maison / NOM_DEFAUT).resolve(), True)
+    """A setting that cannot be read does not prevent declaring a project."""
+    settings_store.root.mkdir(parents=True, exist_ok=True)
+    (settings_store.root / "projets.json").write_text("{ pas du json", encoding="utf-8")
+    assert settings_store.read().directory is None
+    path, by_default, _ = settings_store.resolve(create=True)
+    assert (path, by_default) == ((home / DEFAULT_NAME).resolve(), True)
 
 
-def test_le_depot_des_reglages_vient_de_l_environnement(
+def test_the_settings_store_comes_from_the_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`MAESTRO_REGLAGES_DIR`, sinon `core/reglages/` du dépôt — jamais `core/projets/`."""
+    """`MAESTRO_REGLAGES_DIR`, else the repository's `core/reglages/` — never `core/projets/`."""
     monkeypatch.setenv("MAESTRO_REGLAGES_DIR", str(tmp_path / "ailleurs"))
-    assert ReglagesProjetsStore.default(Settings.from_env()).racine == tmp_path / "ailleurs"
+    assert ProjectSettingsStore.default(Settings.from_env()).root == tmp_path / "ailleurs"
 
     monkeypatch.delenv("MAESTRO_REGLAGES_DIR", raising=False)
-    defaut = ReglagesProjetsStore.default(Settings.from_env()).racine
-    assert defaut.name == "reglages"
-    assert defaut.parent.name == "core"
+    default = ProjectSettingsStore.default(Settings.from_env()).root
+    assert default.name == "reglages"
+    assert default.parent.name == "core"
 
 
-# --- ② L'API : lire, poser, et rester explorable ----------------------------
+# --- ② The API: read, set, and stay explorable --------------------------------
 
 
-def test_lire_le_repertoire_rend_le_defaut_et_le_cree(
-    client: TestClient, maison: Path
+def test_reading_the_directory_returns_the_default_and_creates_it(
+    client: TestClient, home: Path
 ) -> None:
-    """La lecture crée le dossier — « créé à la première utilisation » — et le dit."""
-    corps = client.get("/api/projets/repertoire").json()
-    assert corps["par_defaut"] is True
-    assert corps["cree"] is True
-    assert corps["refus"] is None
-    assert Path(corps["chemin"]) == (maison / NOM_DEFAUT).resolve()
-    assert (maison / NOM_DEFAUT).is_dir()
-    # Le second appel ne prétend plus l'avoir créé : `cree` est un fait, pas un état.
+    """Reading creates the folder — « created on first use » — and says so."""
+    body = client.get("/api/projets/repertoire").json()
+    assert body["par_defaut"] is True
+    assert body["cree"] is True
+    assert body["refus"] is None
+    assert Path(body["chemin"]) == (home / DEFAULT_NAME).resolve()
+    assert (home / DEFAULT_NAME).is_dir()
+    # The second call no longer claims to have created it: `cree` is a fact, not a state.
     assert client.get("/api/projets/repertoire").json()["cree"] is False
 
 
-def test_poser_un_repertoire_le_relit(client: TestClient, atelier: Path) -> None:
-    """`PUT` puis `GET` disent la même chose — un seul support de la vérité."""
-    cible = atelier / "mes-projets"
-    corps = client.put("/api/projets/repertoire", json={"chemin": str(cible)}).json()
-    assert corps["par_defaut"] is False
-    assert Path(corps["chemin"]) == cible.resolve()
-    assert client.get("/api/projets/repertoire").json()["chemin"] == corps["chemin"]
+def test_setting_a_directory_reads_it_back(client: TestClient, workshop: Path) -> None:
+    """`PUT` then `GET` say the same thing — a single holder of the truth."""
+    target = workshop / "mes-projets"
+    body = client.put("/api/projets/repertoire", json={"chemin": str(target)}).json()
+    assert body["par_defaut"] is False
+    assert Path(body["chemin"]) == target.resolve()
+    assert client.get("/api/projets/repertoire").json()["chemin"] == body["chemin"]
 
 
-def test_le_chemin_est_rendu_en_posix_comme_les_autres_racines(
-    client: TestClient, atelier: Path
+def test_the_path_is_returned_in_posix_like_the_other_roots(
+    client: TestClient, workshop: Path
 ) -> None:
-    """Un seul dossier, une seule écriture — sinon l'écran ne sait plus les reconnaître.
+    """One folder, one spelling — otherwise the screen can no longer recognize them.
 
-    L'explorateur rend ses chemins en POSIX (`_fiche_dossier`), et l'écran
-    **compare** le dossier choisi au répertoire réglé pour savoir s'il est
-    « hors » de lui. Deux écritures du même dossier lui faisaient annoncer le
-    contraire de ce qu'il affichait (relecture visuelle de #1022).
+    The explorer returns its paths in POSIX (`_fiche_dossier`), and the screen
+    **compares** the chosen folder with the set directory to know whether it is
+    « outside » it. Two spellings of the same folder would make it announce the
+    opposite of what it shows (#1022).
     """
-    cible = atelier / "mes-projets"
-    pose = client.put("/api/projets/repertoire", json={"chemin": str(cible)}).json()
-    assert pose["chemin"] == cible.resolve().as_posix()
+    target = workshop / "mes-projets"
+    stored = client.put("/api/projets/repertoire", json={"chemin": str(target)}).json()
+    assert stored["chemin"] == target.resolve().as_posix()
     assert "\\" not in client.get("/api/projets/repertoire").json()["chemin"]
-    # Et le défaut suit la même règle : `~/Maestro` n'échappe pas à la forme.
-    defaut = client.put("/api/projets/repertoire", json={"chemin": None}).json()
-    assert "\\" not in defaut["chemin"]
-    # Le même dossier, énuméré par l'explorateur, s'écrit exactement pareil.
-    vue = client.get("/api/projets/explorateur", params={"chemin": str(cible)}).json()
-    assert vue["chemin"] == pose["chemin"]
+    # And the default follows the same rule: `~/Maestro` does not escape the form.
+    default = client.put("/api/projets/repertoire", json={"chemin": None}).json()
+    assert "\\" not in default["chemin"]
+    # The same folder, listed by the explorer, is spelled exactly the same.
+    view = client.get("/api/projets/explorateur", params={"chemin": str(target)}).json()
+    assert view["chemin"] == stored["chemin"]
 
 
-def test_poser_null_revient_au_defaut(
-    client: TestClient, atelier: Path, maison: Path
+def test_setting_null_goes_back_to_the_default(
+    client: TestClient, workshop: Path, home: Path
 ) -> None:
-    """`chemin: null` revient au défaut — ce n'est pas « plus de répertoire »."""
-    (atelier / "mes-projets").mkdir()
-    client.put("/api/projets/repertoire", json={"chemin": str(atelier / "mes-projets")})
-    corps = client.put("/api/projets/repertoire", json={"chemin": None}).json()
-    assert corps["par_defaut"] is True
-    assert Path(corps["chemin"]) == (maison / NOM_DEFAUT).resolve()
+    """`chemin: null` goes back to the default — it does not mean « no directory »."""
+    (workshop / "mes-projets").mkdir()
+    client.put("/api/projets/repertoire", json={"chemin": str(workshop / "mes-projets")})
+    body = client.put("/api/projets/repertoire", json={"chemin": None}).json()
+    assert body["par_defaut"] is True
+    assert Path(body["chemin"]) == (home / DEFAULT_NAME).resolve()
 
 
-def test_un_repertoire_refuse_rend_un_motif_et_ne_change_rien(
-    client: TestClient, atelier: Path, maison: Path
+def test_a_rejected_directory_returns_a_reason_and_changes_nothing(
+    client: TestClient, workshop: Path, home: Path
 ) -> None:
-    """Le refus d'EF-38 traverse l'API motivé, et le réglage précédent tient."""
-    (atelier / "bon").mkdir()
-    client.put("/api/projets/repertoire", json={"chemin": str(atelier / "bon")})
-    reponse = client.put("/api/projets/repertoire", json={"chemin": str(maison)})
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "dossier-utilisateur-nu"
+    """The EF-38 rejection crosses the API with its reason, and the previous setting holds."""
+    (workshop / "bon").mkdir()
+    client.put("/api/projets/repertoire", json={"chemin": str(workshop / "bon")})
+    response = client.put("/api/projets/repertoire", json={"chemin": str(home)})
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "dossier-utilisateur-nu"
     assert (
         Path(client.get("/api/projets/repertoire").json()["chemin"])
-        == (atelier / "bon").resolve()
+        == (workshop / "bon").resolve()
     )
 
 
-def test_un_repertoire_devenu_indisponible_rend_200_avec_son_motif(
-    client: TestClient, atelier: Path
+def test_a_directory_that_became_unavailable_returns_200_with_its_reason(
+    client: TestClient, workshop: Path
 ) -> None:
-    """Un disque débranché n'empêche pas de déclarer un projet ailleurs."""
-    cible = atelier / "sur-un-disque"
-    client.put("/api/projets/repertoire", json={"chemin": str(cible)})
-    cible.rmdir()
-    cible.write_text("plus un dossier", encoding="utf-8")
-    corps = client.get("/api/projets/repertoire").json()
-    assert corps["existe"] is False
-    assert corps["refus"]["motif"] == "pas-un-dossier"
-    # Le chemin réglé reste rendu, et dans la même forme que d'habitude : on
-    # corrige ce qu'on voit, et on doit le reconnaître.
-    assert corps["chemin"] == cible.resolve().as_posix()
+    """An unplugged disk does not prevent declaring a project elsewhere."""
+    target = workshop / "sur-un-disque"
+    client.put("/api/projets/repertoire", json={"chemin": str(target)})
+    target.rmdir()
+    target.write_text("plus un dossier", encoding="utf-8")
+    body = client.get("/api/projets/repertoire").json()
+    assert body["existe"] is False
+    assert body["refus"]["motif"] == "pas-un-dossier"
+    # The set path is still returned, and in its usual form: the person fixes what
+    # they see, and must recognize it.
+    assert body["chemin"] == target.resolve().as_posix()
 
 
-def test_le_repertoire_regle_est_un_point_d_entree_de_l_explorateur(
-    client: TestClient, atelier: Path
+def test_the_set_directory_is_an_entry_point_of_the_explorer(
+    client: TestClient, workshop: Path
 ) -> None:
-    """Le premier endroit à regarder est celui d'où l'on vient (#1022)."""
-    cible = atelier / "mes-projets"
-    client.put("/api/projets/repertoire", json={"chemin": str(cible)})
-    dossiers = client.get("/api/projets/explorateur").json()["dossiers"]
-    par_origine = {d["origine"]: d["chemin"] for d in dossiers}
-    assert par_origine["repertoire"] == cible.resolve().as_posix()
-    assert dossiers[0]["origine"] == "repertoire"
+    """The first place to look is the one you come from (#1022)."""
+    target = workshop / "mes-projets"
+    client.put("/api/projets/repertoire", json={"chemin": str(target)})
+    folders = client.get("/api/projets/explorateur").json()["dossiers"]
+    by_origin = {d["origine"]: d["chemin"] for d in folders}
+    assert by_origin["repertoire"] == target.resolve().as_posix()
+    assert folders[0]["origine"] == "repertoire"
 
 
-def test_le_repertoire_regle_reste_explorable_malgre_une_restriction(
-    tmp_path: Path, reglages: ReglagesProjetsStore, atelier: Path
+def test_the_set_directory_stays_explorable_despite_a_restriction(
+    tmp_path: Path, settings_store: ProjectSettingsStore, workshop: Path
 ) -> None:
-    """Un parent prérempli que l'explorateur refuserait d'ouvrir serait un cul-de-sac.
+    """A prefilled parent that the explorer would refuse to open would be a dead end.
 
-    `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction** : elle ne s'élargit
-    pas d'elle-même. Mais le répertoire des projets est un dossier que l'écran
-    **propose** — et proposer un dossier qu'on refusera au clic est pire que ne
-    rien proposer.
+    `MAESTRO_EXPLORATEUR_RACINES` stays a **restriction**: it does not widen by
+    itself. But the projects directory is a folder the screen **proposes** — and
+    proposing a folder that will be refused on click is worse than proposing
+    nothing.
     """
-    hors_atelier = tmp_path / "hors-atelier"
-    hors_atelier.mkdir()
-    reglages.ecrire(hors_atelier)
+    outside_workshop = tmp_path / "hors-atelier"
+    outside_workshop.mkdir()
+    settings_store.write(outside_workshop)
     service = ServiceProjets(
-        ProjetStore(tmp_path / "depot"),
-        racines_exploration=(atelier,),
-        reglages=reglages,
+        ProjectStore(tmp_path / "depot"),
+        racines_exploration=(workshop,),
+        reglages=settings_store,
     )
-    vue = service.explorer(str(hors_atelier))
-    assert vue["chemin"] == hors_atelier.resolve().as_posix()
+    view = service.explorer(str(outside_workshop))
+    assert view["chemin"] == outside_workshop.resolve().as_posix()
 
 
-def test_un_repertoire_absent_n_est_pas_un_point_d_entree(
-    client: TestClient, atelier: Path
+def test_a_missing_directory_is_not_an_entry_point(
+    client: TestClient, workshop: Path
 ) -> None:
-    """Un point d'entrée qui refuserait au clic serait pire que son absence."""
-    cible = atelier / "mes-projets"
-    client.put("/api/projets/repertoire", json={"chemin": str(cible)})
-    cible.rmdir()
-    origines = {
+    """An entry point that would refuse on click would be worse than its absence."""
+    target = workshop / "mes-projets"
+    client.put("/api/projets/repertoire", json={"chemin": str(target)})
+    target.rmdir()
+    origins = {
         d["origine"] for d in client.get("/api/projets/explorateur").json()["dossiers"]
     }
-    assert "repertoire" not in origines
+    assert "repertoire" not in origins
 
 
-# --- ③ Ce que le réglage ne fait pas ----------------------------------------
+# --- ③ What the setting does not do -------------------------------------------
 
 
-def test_le_reglage_ne_se_melange_pas_aux_declarations(
-    client: TestClient, service: ServiceProjets, atelier: Path
+def test_the_setting_does_not_mix_with_the_declarations(
+    client: TestClient, service: ServiceProjets, workshop: Path
 ) -> None:
-    """Deux « racines » se croisent ici, et elles ne partagent pas un dossier.
+    """Two « roots » meet here, and they do not share a folder.
 
-    Le dépôt des déclarations (`MAESTRO_PROJETS_DIR`) ne contient que des
-    `<id>.json` : un `projets.json` de réglages glissé dedans serait relu comme
-    un projet illisible de plus.
+    The declarations store (`MAESTRO_PROJETS_DIR`) holds only `<id>.json` files:
+    a settings `projets.json` slipped into it would be read back as one more
+    unreadable project.
     """
-    cible = atelier / "mes-projets"
-    client.put("/api/projets/repertoire", json={"chemin": str(cible)})
-    declarations = service.store.racine
-    assert declarations != service.reglages.racine
+    target = workshop / "mes-projets"
+    client.put("/api/projets/repertoire", json={"chemin": str(target)})
+    declarations = service.store.root
+    assert declarations != service.reglages.root
     assert not (declarations / "projets.json").exists()
     assert client.get("/api/projets").json() == []
 
 
-def test_declarer_un_projet_ne_touche_pas_au_reglage(
-    client: TestClient, reglages: ReglagesProjetsStore, atelier: Path
+def test_declaring_a_project_does_not_touch_the_setting(
+    client: TestClient, settings_store: ProjectSettingsStore, workshop: Path
 ) -> None:
-    """Choisir un autre parent pour **ce** projet ne règle rien (critère 2)."""
-    client.put("/api/projets/repertoire", json={"chemin": str(atelier / "mes-projets")})
-    avant = json.loads((reglages.racine / "projets.json").read_text(encoding="utf-8"))
-    ailleurs = atelier / "ailleurs"
-    ailleurs.mkdir()
-    reponse = client.post(
+    """Choosing another parent for **this** project sets nothing (criterion 2)."""
+    client.put("/api/projets/repertoire", json={"chemin": str(workshop / "mes-projets")})
+    before = json.loads((settings_store.root / "projets.json").read_text(encoding="utf-8"))
+    elsewhere = workshop / "ailleurs"
+    elsewhere.mkdir()
+    response = client.post(
         "/api/projets",
-        json={"nom": "Dépensio", "racine": str(ailleurs / "depensio"), "origine": "nouveau"},
+        json={"nom": "Dépensio", "racine": str(elsewhere / "depensio"), "origine": "nouveau"},
     )
-    assert reponse.status_code == 201
-    apres = json.loads((reglages.racine / "projets.json").read_text(encoding="utf-8"))
-    assert apres == avant
+    assert response.status_code == 201
+    after = json.loads((settings_store.root / "projets.json").read_text(encoding="utf-8"))
+    assert after == before

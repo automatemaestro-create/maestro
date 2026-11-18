@@ -38,9 +38,9 @@ from maestro.outillage import analyser, lire_le_projet
 from maestro.outillage.exploration import CADRE_LECTURE
 from maestro.outillage.modele import ORIGINE_PRESCRITE, Analyse
 from maestro.outillage.verification import ECHOUEE, Verificateur, Verification
-from maestro.projets import ProjetStore
-from maestro.projets.modele import Perimetre
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.model import Perimeter
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 
@@ -161,7 +161,7 @@ def read(root: Path, answer: str, failures: Sequence[Verification] = ()) -> Anal
     return asyncio.run(
         lire_le_projet(
             analyser(root),
-            perimetre=Perimetre(),
+            perimetre=Perimeter(),
             provider=reader,
             modele="fake",
             echecs=failures,
@@ -306,7 +306,7 @@ def test_the_review_tells_the_model_which_usages_it_looks_for(tmp_path: Path) ->
     asyncio.run(
         lire_le_projet(
             analyser(repository(tmp_path)),
-            perimetre=Perimetre(),
+            perimetre=Perimeter(),
             provider=reader,
             modele="fake",
             echecs=(START_FAILED,),
@@ -331,7 +331,7 @@ PRESCRIBED_FAILS = {PRESCRIBED: execution.Execution(code=1, sortie="1 failed", d
 def _pieces(tmp_path: Path, reader: _Reader, runner: _Runner) -> tuple[ServicePieces, str, Path]:
     """The tooling of an imported repository, piece by piece, read by `reader`."""
     projects = ServiceProjets(
-        ProjetStore(tmp_path / "store"), reglages=ReglagesProjetsStore(tmp_path / "settings")
+        ProjectStore(tmp_path / "store"), reglages=ProjectSettingsStore(tmp_path / "settings")
     )
     root = repository(Path.home() / "depots" / "depot")
     project_id = str(projects.creer("depot", str(root))["id"])

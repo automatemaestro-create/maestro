@@ -26,7 +26,7 @@ from maestro.controltower.routes.requetes import (
     QuestionnaireOutillageRequete,
 )
 from maestro.outillage.questionnaire import ComprehensionIllisible
-from maestro.projets import ApplicationRefusee
+from maestro.projects import ApplyRejected
 from maestro.sandbox import EspaceProjetIndisponible
 
 router = APIRouter()
@@ -173,7 +173,7 @@ async def generer_outillage_du_projet(
     except (
         ValueError,
         ProjetInconnu,
-        ApplicationRefusee,
+        ApplyRejected,
         EspaceProjetIndisponible,
     ) as exc:
         raise _refus_projet(exc) from exc

@@ -5,7 +5,7 @@ Un exercice (`maestro.scenarios.exercice`) comme un comparatif
 sème dans son **atelier**, et rien n'est joué sur un projet de l'utilisateur.
 
 **Où.** Sous `~/.maestro/ateliers/scenarios/<horodatage>/<projet>` (#1457), et
-pas ailleurs pour deux raisons qui se cumulent : `valider_racine` refuse le dépôt
+pas ailleurs pour deux raisons qui se cumulent : `validate_root` refuse le dépôt
 de Maestro lui-même (EF-38) et refuse `AppData`, donc le `TMPDIR` d'un poste
 Windows (mesuré en #221). L'état du poste passe les deux, et c'est l'une des trois
 racines où Maestro pose quelque chose (`maestro.emplacements`, #1454) — l'atelier
@@ -45,7 +45,7 @@ from pathlib import Path
 
 from maestro.emplacements import maison, occupant, racine_ateliers, se_nommer_occupant
 from maestro.fichiers import retirer_arbre
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.sandbox.ramassage import (
     PREFIXE_COMMUN,
     pid_dans,
@@ -422,7 +422,7 @@ def retenir(  # noqa: C901
     Les **déclarations** des projets d'un passage parti partent avec lui (#1477) : dans
     chaque dépôt de `declarations` — l'appelant les nomme, `maestro.menage.depots_de_
     declarations` pour `retenir_le_poste` —, celles dont la racine vit dans un passage
-    qui n'existe plus sont oubliées par `ProjetStore.supprimer`, le verbe de
+    qui n'existe plus sont oubliées par `ProjectStore.delete`, le verbe de
     `DELETE /api/projets`.
     Un passage déjà parti compte : c'est ce qui solde celles que les rétentions d'avant
     ont laissées. Rien d'autre n'est touché — ni un passage gardé, occupé ou résistant
@@ -555,18 +555,18 @@ def _oublier_les_declarations(
     oubliees = 0
     resistantes: list[str] = []
     for depot in depots:
-        store = ProjetStore(depot)
+        store = ProjectStore(depot)
         for id_ in store.ids():
             try:
-                projet = store.lire(id_)
+                projet = store.read(id_)
             except (OSError, ValueError, TypeError, KeyError):
                 continue
-            if projet is None or not passage_disparu(projet.racine, racines):
+            if projet is None or not passage_disparu(projet.root, racines):
                 continue
             try:
-                store.supprimer(id_)
+                store.delete(id_)
             except OSError:
-                resistantes.append(str(store.fichier(id_)))
+                resistantes.append(str(store.file(id_)))
                 continue
             oubliees += 1
     return oubliees, tuple(resistantes)

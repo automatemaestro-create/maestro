@@ -43,8 +43,8 @@ from maestro.engine.verification import (
 from maestro.orchestrator.schema import Task
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.portee import PorteeProjet
-from maestro.projets import ProjetStore
-from maestro.projets.application import commiter_en_attente, message_de_sauvegarde
+from maestro.projects import ProjectStore
+from maestro.projects.apply import commit_pending, save_commit_message
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import etat_de_la_branche
 from maestro.sandbox.verification import Execution
@@ -357,7 +357,7 @@ def test_une_sauvegarde_de_maestro_est_marquee_a_garder(tmp_path: Path) -> None:
     copie = tmp_path / "copie"
     _git(racine, "worktree", "add", "-q", "-b", "maestro/page", str(copie))
     (copie / "accueil.tsx").write_text("export {}\n", encoding="utf-8")
-    commiter_en_attente(copie, "maestro/page")  # ce que fait l'extinction
+    commit_pending(copie, "maestro/page")  # ce que fait l'extinction
     (copie / "style.css").write_text("body {}\n", encoding="utf-8")
     _commiter(copie, "feat(accueil): ajoute le style")
 
@@ -365,7 +365,7 @@ def test_une_sauvegarde_de_maestro_est_marquee_a_garder(tmp_path: Path) -> None:
 
     assert "- feat(accueil): ajoute le style\n" in etat + "\n"
     assert (
-        f"- {message_de_sauvegarde('maestro/page')} — commit de Maestro (sauvegarde du "
+        f"- {save_commit_message('maestro/page')} — commit de Maestro (sauvegarde du "
         "travail), à garder tel quel" in etat
     )
     assert "ne se réécrit jamais" in " ".join(SYSTEME.split())
@@ -472,15 +472,15 @@ def _projet_outille(
             encoding="utf-8",
         )
     _commiter(racine, "chore: outillage")
-    depot = ProjetStore(tmp_path / "depot")
-    return depot, depot.creer("Recettes", racine)
+    depot = ProjectStore(tmp_path / "depot")
+    return depot, depot.create("Recettes", racine)
 
 
 async def _accord(demande):
     return True
 
 
-def _verifie(depot: ProjetStore, projet_id: str) -> _Reponses:
+def _verifie(depot: ProjectStore, projet_id: str) -> _Reponses:
     juge = _Reponses(_une_lecture_tenue())
     executeur = LocalExecutor(
         _Ecrivain(),

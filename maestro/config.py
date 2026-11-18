@@ -162,13 +162,13 @@ class Settings:
     #: dépôt (cf. maestro.agents.permissions, #110 — allow/deny par outil).
     permissions_dir: str | None = None
     #: Racine du dépôt des projets déclarés (`MAESTRO_PROJETS_DIR`), ou None :
-    #: le dossier `core/projets/` du dépôt (cf. maestro.projets.store, #221 —
+    #: le dossier `core/projets/` du dépôt (cf. maestro.projects.store, #221 —
     #: un fichier <id>.json par projet : racine sur le disque, origine, vcs,
     #: périmètre). Ce sont les projets de l'utilisateur, jamais versionnés.
     projets_dir: str | None = None
     #: Racine du dépôt des **réglages du poste** (`MAESTRO_REGLAGES_DIR`), ou
     #: None : le dossier `core/reglages/` du dépôt (cf.
-    #: maestro.projets.reglages, #1022 — un `projets.json` unique, qui porte le
+    #: maestro.projects.settings, #1022 — un `projets.json` unique, qui porte le
     #: **répertoire des projets**). ⚠ À ne pas confondre avec `projets_dir`,
     #: qui est le dépôt des **déclarations** : celui-ci dit *où naît* un projet
     #: neuf, celui-là *ce qu'on sait* des projets déclarés.

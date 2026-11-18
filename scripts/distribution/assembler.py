@@ -108,7 +108,7 @@ PYTHON_EMBARQUE = Embarquable(
 #: que le code compose depuis son propre emplacement.
 CONTENU_DU_PRODUIT: tuple[tuple[str, str], ...] = (
     ("maestro", "le moteur, l'API et le lanceur"),
-    ("core", "la configuration des agents (`maestro/agents/*`, `maestro/projets/*`)"),
+    ("core", "la configuration des agents (`maestro/agents/*`, `maestro/projects/*`)"),
     ("agents", "les fiches des agents"),
     ("packages/shared/schemas", "les schémas du plan (`maestro/orchestrator/schema.py`)"),
     ("docs/*.md", "le corpus de l'assistant (`maestro/controltower/documentation.py`)"),

@@ -67,7 +67,7 @@ from maestro.controltower.progression import STATUT_INTERROMPUE
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import STATUT_EN_COURS
 from maestro.plan_run import NoeudPlan
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry.usage import StepUsage, report_usage
 
@@ -527,7 +527,7 @@ def test_un_geste_d_atelier_entre_au_grand_livre_du_projet_par_la_vraie_route(
     maison = tmp_path / "maison"
     (maison / "recettes").mkdir(parents=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projets = ServiceProjets(ProjectStore(tmp_path / "depot"))
     projets.creer("recettes", str(maison / "recettes"))
     projet = projets.lister()[0]["id"]
 

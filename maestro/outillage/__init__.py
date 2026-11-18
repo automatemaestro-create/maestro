@@ -93,7 +93,7 @@ là où c'est le sujet* : seuls `generation` et `ecriture` ouvrent un fichier en
 à la **frontière d'écriture** de `maestro.sandbox.en_place` — la même que celle
 des agents (#839), jamais une seconde. *L'analyse n'exécute rien* : aucun module
 n'importe `subprocess` — le VCS lui-même est lu dans `.git/HEAD` et
-`.git/config` (`maestro.projets.racine.detecter_vcs`, #221) plutôt qu'obtenu
+`.git/config` (`maestro.projects.root.detect_vcs`, #221) plutôt qu'obtenu
 d'un `git remote`. Les processus que ce paquet fait lancer le sont par
 `maestro.sandbox`, et à **l'écriture** seulement, après le geste qui la
 déclenche : le Git qui monte un worktree (`maestro.sandbox.projet`), et depuis

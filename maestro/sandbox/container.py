@@ -52,7 +52,7 @@ conséquences, portées ici :
   seule. La fin de session rapatrie la branche de la tâche (`rapatrier`).
 
 La rédaction des secrets du projet, elle, ne dépend pas du mode isolé (une tâche
-sur l'hôte fuit tout autant) : elle vit dans `maestro.projets.secrets` et est
+sur l'hôte fuit tout autant) : elle vit dans `maestro.projects.secrets` et est
 armée par `maestro.agents.runtime`.
 
 Choix d'implémentation (notes du ticket) : conteneur durci plutôt que micro-VM —
@@ -73,9 +73,9 @@ from pathlib import Path
 
 from maestro.config import ConfigError, Settings
 from maestro.emplacements import jetable
-from maestro.projets.modele import ENV_IDENTITE_GIT, Projet
-from maestro.projets.perimetre import Exclu, exclusions
-from maestro.projets.racine import canonique
+from maestro.projects.model import GIT_IDENTITY_ENV, Project
+from maestro.projects.perimeter import ExcludedPath, exclusions
+from maestro.projects.root import canonical
 from maestro.sandbox import low_integrity
 from maestro.sandbox.depot_conteneur import (
     POINT_DEPOT,
@@ -220,7 +220,7 @@ class IsolationConfig:
             shim=_chemin_shim(),
         )
 
-    def env_sandbox(self, workspace: Path, *, projet: Projet | None = None) -> dict[str, str]:
+    def env_sandbox(self, workspace: Path, *, projet: Project | None = None) -> dict[str, str]:
         """Les variables `MAESTRO_SANDBOX_*` à poser sur le sous-processus shim.
 
         `workspace` est l'espace de travail de la tâche (`maestro.sandbox`) : le
@@ -269,7 +269,7 @@ class IsolationConfig:
 
 
 def protocole_sandbox(
-    workspace: Path, *, image: str, reseau: str, projet: Projet | None = None
+    workspace: Path, *, image: str, reseau: str, projet: Project | None = None
 ) -> dict[str, str]:
     """Le protocole `MAESTRO_SANDBOX_*` d'un conteneur sur `workspace` : le contrat de docs/17 §3.
 
@@ -286,11 +286,11 @@ def protocole_sandbox(
     }
     if projet is None:
         return protocole
-    racine = canonique(projet.racine_chemin)
-    if projet.versionne:
+    racine = canonical(projet.root_path)
+    if projet.versioned:
         _refuse_la_racine(workspace, racine)
         protocole[ENV_PROJET] = str(racine)
-    masques = exclusions(workspace, projet.perimetre)
+    masques = exclusions(workspace, projet.perimeter)
     if len(masques) > _MASQUES_MAX:
         raise ConfigError(
             f"Périmètre du projet {projet.id} : {len(masques)} chemins exclus "
@@ -299,8 +299,8 @@ def protocole_sandbox(
             "que ses fichiers) — l'exécution est refusée plutôt que de monter "
             "une partie de ce qui est exclu."
         )
-    if projet.versionne:
-        protocole[ENV_DEPOT] = str(preparer(workspace, projet.perimetre))
+    if projet.versioned:
+        protocole[ENV_DEPOT] = str(preparer(workspace, projet.perimeter))
     return protocole | {
         ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
     }
@@ -333,7 +333,7 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
       `ENV_TRANSMISES` entrent — jamais l'environnement hôte entier ; s'y ajoutent
       les déclarations que la commande pose elle-même : le home de `agent`,
       `/workspace` sûr pour git (`_git_tient_pour_sur`), et l'identité de Maestro
-      pour les commits de l'agent (`ENV_IDENTITE_GIT`, #1507).
+      pour les commits de l'agent (`GIT_IDENTITY_ENV`, #1507).
 
     Lève `ConfigError` si le protocole `MAESTRO_SANDBOX_*` est absent : le shim
     ne s'invoque que via le mode isolé du fournisseur, pas à la main. Et si le
@@ -424,7 +424,7 @@ def _durci(
         commande += _montages_depot(depot)
     commande += ["--env", f"HOME={_HOME_AGENT}"]
     commande += _git_tient_pour_sur(POINT_MONTAGE)
-    for variable, valeur in ENV_IDENTITE_GIT.items():
+    for variable, valeur in GIT_IDENTITY_ENV.items():
         commande += ["--env", f"{variable}={valeur}"]
     return image, commande
 
@@ -511,9 +511,9 @@ def _resolu(chemin: Path) -> Path:
         return Path(os.path.normcase(chemin))
 
 
-def _encode(masque: Exclu) -> str:
+def _encode(masque: ExcludedPath) -> str:
     """Une entrée de `ENV_MASQUES` : `d:<chemin>` pour un dossier, `f:` pour un fichier."""
-    return f"{'d' if masque.dossier else 'f'}:{masque.chemin}"
+    return f"{'d' if masque.is_dir else 'f'}:{masque.path}"
 
 
 def _montages_masques(masques: str, *, sans_git: bool = False) -> list[str]:

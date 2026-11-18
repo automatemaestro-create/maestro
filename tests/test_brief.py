@@ -96,7 +96,7 @@ from maestro.orchestrator import (
 )
 from maestro.orchestrator.prompt import orchestrator_prompt, tooling_block
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sources.extraction import STATE_READ, Reading, ReadingReport
 from maestro.telemetry import RunJournal, StepUsage
@@ -784,7 +784,7 @@ def test_sans_source_les_prompts_sont_ceux_d_avant():
 AGENTS_MD = "# AGENTS.md\n\n- **Intégration continue** : `.github/workflows/ci.yml`, prévu.\n"
 
 
-def _projet_outille(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ProjetStore, str]:
+def _projet_outille(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ProjectStore, str]:
     """Un projet déclaré dont le manifeste déclare un `AGENTS.md` (#1507)."""
     maison = tmp_path / "maison"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
@@ -801,8 +801,8 @@ def _projet_outille(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pr
         ),
         encoding="utf-8",
     )
-    depot = ProjetStore(tmp_path / "depot")
-    return depot, depot.creer("Recettes", racine).id
+    depot = ProjectStore(tmp_path / "depot")
+    return depot, depot.create("Recettes", racine).id
 
 
 def test_l_outillage_du_projet_nourrit_le_brief_et_le_plan(tmp_path, monkeypatch):

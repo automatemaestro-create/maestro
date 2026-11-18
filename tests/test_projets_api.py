@@ -62,7 +62,7 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import MESSAGE_PREMIER_COMMIT, ProjetStore, versionnement
+from maestro.projects import FIRST_COMMIT_MESSAGE, ProjectStore, versioning
 
 
 @pytest.fixture(autouse=True)
@@ -99,13 +99,13 @@ def atelier(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def store(tmp_path: Path) -> ProjetStore:
+def store(tmp_path: Path) -> ProjectStore:
     """Un dépôt de projets sur un dossier jetable."""
-    return ProjetStore(tmp_path / "depot")
+    return ProjectStore(tmp_path / "depot")
 
 
 @pytest.fixture()
-def client(store: ProjetStore, atelier: Path) -> TestClient:
+def client(store: ProjectStore, atelier: Path) -> TestClient:
     """TestClient de l'app, service des projets borné à l'atelier."""
     app = create_app(
         bus=InMemoryEventBus(),
@@ -124,7 +124,7 @@ def _dossier(parent: Path, nom: str) -> Path:
 
 
 def _depot_git(racine: Path, *, branche: str = "main", distant: str | None = None) -> Path:
-    """Un `.git` minimal — ce que `detecter_vcs` lit réellement (aucun `git` appelé)."""
+    """Un `.git` minimal — ce que `detect_vcs` lit réellement (aucun `git` appelé)."""
     git = racine / ".git"
     git.mkdir(parents=True, exist_ok=True)
     (git / "HEAD").write_text(f"ref: refs/heads/{branche}\n", encoding="utf-8")
@@ -287,11 +287,11 @@ def test_la_suppression_oublie_la_declaration_sans_toucher_au_disque(
 
 
 def test_un_projet_illisible_saute_du_listing_mais_s_explique_au_detail(
-    client: TestClient, atelier: Path, store: ProjetStore
+    client: TestClient, atelier: Path, store: ProjectStore
 ) -> None:
     """Un JSON corrompu ne doit pas rendre l'écran Projets inutilisable."""
     lisible = _declarer(client, "Lisible", _dossier(atelier, "lisible"))
-    (store.racine / "prj-casse.json").write_text("{ pas du json", encoding="utf-8")
+    (store.root / "prj-casse.json").write_text("{ pas du json", encoding="utf-8")
 
     assert [f["id"] for f in client.get("/api/projets").json()] == [lisible["id"]]
 
@@ -474,9 +474,9 @@ def test_le_parent_est_nul_au_bord_des_racines(client: TestClient, atelier: Path
 
 
 def test_la_racine_d_un_projet_declare_devient_explorable(
-    tmp_path: Path, store: ProjetStore, atelier: Path
+    tmp_path: Path, store: ProjectStore, atelier: Path
 ) -> None:
-    """Une racine déclarée a passé `valider_racine` : elle est explorable par construction."""
+    """Une racine déclarée a passé `validate_root` : elle est explorable par construction."""
     ailleurs = _dossier(tmp_path / "ailleurs", "depensio")
     _dossier(ailleurs, "src")
     app = create_app(
@@ -533,7 +533,7 @@ def test_une_zone_sensible_dans_une_racine_reste_refusee(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
         projets=ServiceProjets(
-            ProjetStore(atelier / "depot"), racines_exploration=(_maison_isolee,)
+            ProjectStore(atelier / "depot"), racines_exploration=(_maison_isolee,)
         ),
     )
     with TestClient(app) as explorable:
@@ -616,7 +616,7 @@ def test_un_refus_de_l_explorateur_ecrit_ses_chemins_en_posix(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(maison,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(maison,)),
     )
     with TestClient(app) as explorable:
         reponse = explorable.get("/api/projets/explorateur", params={"chemin": str(cible)})
@@ -628,7 +628,7 @@ def test_un_refus_de_l_explorateur_ecrit_ses_chemins_en_posix(
 
 
 def test_sans_aucune_racine_explorable_le_refus_le_dit(
-    tmp_path: Path, store: ProjetStore
+    tmp_path: Path, store: ProjectStore
 ) -> None:
     """Aucune racine n'est **pas** « le disque entier » : c'est un refus motivé."""
     app = create_app(
@@ -680,11 +680,11 @@ def test_le_depot_des_projets_vient_de_l_environnement(
 
     service = ServiceProjets.default()
 
-    assert service.store.racine == (tmp_path / "depot-a-moi")
+    assert service.store.root == (tmp_path / "depot-a-moi")
 
 
 def test_le_fichier_stocke_et_la_reponse_http_ont_la_meme_forme(
-    client: TestClient, atelier: Path, store: ProjetStore
+    client: TestClient, atelier: Path, store: ProjectStore
 ) -> None:
     """Aucune seconde définition du contrat, donc aucune dérive possible (docs/24 §2.3).
 
@@ -700,7 +700,7 @@ def test_le_fichier_stocke_et_la_reponse_http_ont_la_meme_forme(
     fiche = _declarer(client, "Dépensio", _dossier(atelier, "depensio"))
 
     sur_disque = json.loads(
-        (store.racine / f"{fiche['id']}.json").read_text(encoding="utf-8")
+        (store.root / f"{fiche['id']}.json").read_text(encoding="utf-8")
     )
 
     assert fiche["outillage"] == {"reporte_le": "", "genere": False, "a_faire": False}
@@ -717,7 +717,7 @@ def test_le_fichier_stocke_et_la_reponse_http_ont_la_meme_forme(
 
 
 @pytest.fixture()
-def service_defaut(store: ProjetStore) -> ServiceProjets:
+def service_defaut(store: ProjectStore) -> ServiceProjets:
     """Le service **sans** racines configurées : le cas par défaut, celui de #278.
 
     Le `client` ci-dessus borne l'exploration à l'atelier — indispensable pour
@@ -828,7 +828,7 @@ def test_un_point_d_entree_n_est_jamais_propose_deux_fois(
 
 
 def test_les_racines_configurees_restent_une_restriction(
-    store: ProjetStore, atelier: Path
+    store: ProjectStore, atelier: Path
 ) -> None:
     """`MAESTRO_EXPLORATEUR_RACINES` **restreint**, il n'élargit pas — l'invariant de #278.
 
@@ -859,7 +859,7 @@ def test_une_zone_interdite_n_est_jamais_un_point_d_entree(
 
 
 def test_la_page_d_entree_rend_les_points_avec_leur_origine(
-    store: ProjetStore, maison: Path
+    store: ProjectStore, maison: Path
 ) -> None:
     """La forme JSON de la page d'entrée (docs/05 §6.7) : `origine` sur chaque dossier."""
     app = create_app(
@@ -884,13 +884,13 @@ def test_un_sous_dossier_enumere_n_a_pas_d_origine(client: TestClient, atelier: 
 
 
 def test_la_frontiere_elargie_refuse_toujours_les_zones_interdites(
-    store: ProjetStore, maison: Path
+    store: ProjectStore, maison: Path
 ) -> None:
     """Le critère du lot, énoncé à l'envers : élargir l'explorable n'ouvre **aucune** brèche.
 
     `.ssh` est sous le dossier utilisateur, donc sous le volume, donc dans la
     frontière depuis #278 — et pourtant refusé, avec le motif d'EF-38 et son
-    403. C'est `verifier_zone_interdite` qui tient, pas la frontière.
+    403. C'est `check_forbidden_zone` qui tient, pas la frontière.
     """
     zone_sensible = _dossier(maison, ".ssh")
     app = create_app(
@@ -906,7 +906,7 @@ def test_la_frontiere_elargie_refuse_toujours_les_zones_interdites(
 
 
 def test_un_chemin_saisi_hors_atelier_reste_explorable_par_defaut(
-    store: ProjetStore, tmp_path: Path
+    store: ProjectStore, tmp_path: Path
 ) -> None:
     """Le geste que #278 rend possible : taper un chemin lointain et que l'API l'accepte.
 
@@ -984,7 +984,7 @@ def test_versionner_met_le_projet_sous_git_et_rend_la_fiche_relue(
     Ce que la confirmation de l'écran promet est vérifié ici sur le disque : le
     commit porte la racine telle qu'elle est, `.gitignore` **respecté** — un
     fichier ignoré n'entre pas dans l'index —, et la racine ressort **propre**,
-    condition pour que `maestro.projets.application` accepte d'y fusionner.
+    condition pour que `maestro.projects.apply` accepte d'y fusionner.
     """
     racine, fiche = _projet_nu(client, atelier)
     (racine / ".gitignore").write_text("secret.txt\n", encoding="utf-8")
@@ -1000,7 +1000,7 @@ def test_versionner_met_le_projet_sous_git_et_rend_la_fiche_relue(
     # La fiche rendue est celle du dépôt, relue : `GET` dit exactement la même chose.
     assert client.get(f"/api/projets/{fiche['id']}").json() == corps
     # Sur le disque : un seul commit, celui de Maestro, qui porte la racine — sauf l'ignoré.
-    assert _git(racine, "log", "--format=%s").splitlines() == [MESSAGE_PREMIER_COMMIT]
+    assert _git(racine, "log", "--format=%s").splitlines() == [FIRST_COMMIT_MESSAGE]
     suivis = _git(racine, "ls-files").split()
     assert "README.md" in suivis and ".gitignore" in suivis
     assert "secret.txt" not in suivis
@@ -1059,7 +1059,7 @@ def test_versionner_un_projet_inconnu_rend_404_motive(client: TestClient) -> Non
 def test_une_racine_disparue_est_refusee_avec_son_motif_avant_toute_commande(
     client: TestClient, atelier: Path
 ) -> None:
-    """`RacineRefusee` (EF-38) remonte comme un refus, jamais un 500 — et rien n'est créé.
+    """`RootRejected` (EF-38) remonte comme un refus, jamais un 500 — et rien n'est créé.
 
     La racine est **revalidée** avant d'écrire chez l'utilisateur : le fichier du
     dépôt s'édite à la main, et un dossier déclaré peut avoir disparu depuis.
@@ -1095,7 +1095,7 @@ def test_une_racine_dans_un_autre_depot_est_refusee_en_409_motive(
     racine = _dossier(monorepo, "paquets/agenda")
     (racine / "app.py").write_text("x\n", encoding="utf-8")
     fiche = _declarer(client, "Agenda", racine)
-    assert fiche["vcs"] is None  # `detecter_vcs` ne regarde que `<racine>/.git`
+    assert fiche["vcs"] is None  # `detect_vcs` ne regarde que `<racine>/.git`
 
     reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
 
@@ -1151,7 +1151,7 @@ def test_un_poste_sans_git_repond_503_motive(
     def _pas_de_git(*_args: object, **_kwargs: object) -> None:
         raise FileNotFoundError(2, "git introuvable")
 
-    monkeypatch.setattr(versionnement.subprocess, "run", _pas_de_git)
+    monkeypatch.setattr(versioning.subprocess, "run", _pas_de_git)
 
     reponse = client.post(f"/api/projets/{fiche['id']}/versionner")
 

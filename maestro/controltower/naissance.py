@@ -11,7 +11,7 @@ moitié, celle que le modèle ne tient pas : *Maestro juge, l'exécution vérifi
   déclarés, si Git est là, et le projet de la fenêtre. Sans eux, il inventerait un
   dossier ou proposerait un nom déjà pris ;
 - `verifier` — la proposition du modèle confrontée au disque **avant** d'être
-  montrée : la frontière d'EF-38 (`valider_racine`), un dossier neuf qui existe déjà
+  montrée : la frontière d'EF-38 (`validate_root`), un dossier neuf qui existe déjà
   et n'est pas vide, un nom ou une racine déjà déclarés, Git absent. Ce qui se
   corrige se corrige en le **disant** (`DemandeProjet.ajustements` : l'alternative et
   pourquoi) ; ce qui ne se corrige pas refuse (`NaissanceRefusee`), et le fil le dit
@@ -48,7 +48,7 @@ from maestro.controltower.chat import (
     ProjetCree,
 )
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import RacineRefusee, canonique, detecter_vcs, valider_racine
+from maestro.projects import RootRejected, canonical, detect_vcs, validate_root
 
 #: Combien de projets déclarés entrent dans les faits, au plus. Au-delà, le compte
 #: est dit : le modèle n'en a besoin que pour ne pas reprendre un nom ou un dossier,
@@ -169,7 +169,7 @@ class ServiceNaissance:
         if origine == ORIGINE_EXISTANT:
             racine = self._dossier_existant(dossier, declares)
             nom = nom or racine.name
-            deja_versionne = detecter_vcs(racine) is not None
+            deja_versionne = detect_vcs(racine) is not None
         else:
             racine = self._dossier_neuf(dossier, nom, declares, ajustements)
             nom = nom or racine.name
@@ -208,9 +208,9 @@ class ServiceNaissance:
                 "aucun dossier n'est nommé pour l'import : il me faut son chemin",
             )
         try:
-            racine = valider_racine(dossier)
-        except RacineRefusee as refus:
-            raise NaissanceRefusee(refus.motif, str(refus)) from refus
+            racine = validate_root(dossier)
+        except RootRejected as refus:
+            raise NaissanceRefusee(refus.reason, str(refus)) from refus
         proprietaire = _declare_sur(racine, declares)
         if proprietaire is not None:
             raise NaissanceRefusee(
@@ -310,7 +310,7 @@ class ServiceNaissance:
         if refus is None:
             return Path(lu["chemin"]), ""
         if refus["motif"] == "dossier-absent" and lu["chemin"]:
-            return canonique(lu["chemin"]), ""
+            return canonical(lu["chemin"]), ""
         return None, str(refus["message"])
 
     # --- La déclaration ------------------------------------------------------
@@ -332,7 +332,7 @@ class ServiceNaissance:
         if demande.versionner and fiche.get("vcs") is None:
             try:
                 fiche = await asyncio.to_thread(self._projets.versionner, str(fiche["id"]))
-            except ValueError as echec:  # VersionnementRefuse, RacineRefusee : motivés
+            except ValueError as echec:  # VersioningRejected, RootRejected : motivés
                 refus = str(echec)
         return ProjetCree(
             id=str(fiche["id"]),
@@ -399,15 +399,15 @@ def _nom_de_dossier(nom: str) -> str:
 def _admissible(candidat: Path) -> Path:
     """`candidat` résolu s'il passe les frontières d'EF-38 — sans rien créer.
 
-    `valider_racine` sans création refuse un dossier absent, et c'est le seul refus
+    `validate_root` sans création refuse un dossier absent, et c'est le seul refus
     qu'un dossier **neuf** a le droit de passer : il naîtra à l'accord.
     """
     try:
-        return valider_racine(candidat)
-    except RacineRefusee as refus:
-        if refus.motif == "dossier-absent":
-            return canonique(candidat)
-        raise NaissanceRefusee(refus.motif, str(refus)) from refus
+        return validate_root(candidat)
+    except RootRejected as refus:
+        if refus.reason == "dossier-absent":
+            return canonical(candidat)
+        raise NaissanceRefusee(refus.reason, str(refus)) from refus
 
 
 def _dossier_qui_suit(
@@ -449,7 +449,7 @@ def _declare_sur(racine: Path, declares: Sequence[Mapping[str, Any]]) -> str | N
     """Le nom du projet déjà déclaré sur `racine`, `None` s'il n'y en a pas."""
     for fiche in declares:
         try:
-            if canonique(str(fiche["racine"])) == racine:
+            if canonical(str(fiche["racine"])) == racine:
                 return str(fiche["nom"])
         except OSError:  # pragma: no cover - racine déclarée devenue illisible
             continue

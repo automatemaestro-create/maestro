@@ -68,7 +68,7 @@ from maestro.espace import (
     nom_redis,
 )
 from maestro.messaging.mailbox import MESSAGE_NOTIFICATION, AgentMessage, RedisMailbox
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.queue import celery_app
 
 # ── ① Le nom ─────────────────────────────────────────────────────────────────
@@ -391,4 +391,4 @@ def test_fils_et_projets_vivent_dans_la_copie_dont_l_espace_est_deduit(
         monkeypatch.delenv(variable, raising=False)
     racine = espace_module.racine_de_la_copie()
     assert ChatStore.default().racine == racine / "core" / "chat"
-    assert ProjetStore.default().racine == racine / "core" / "projets"
+    assert ProjectStore.default().root == racine / "core" / "projets"

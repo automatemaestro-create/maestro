@@ -44,9 +44,9 @@ from maestro.emplacements import (
     racine_projets,
     repertoire_temporaire,
 )
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.racine import detecter_vcs, valider_racine
-from maestro.projets.reglages import repertoire_par_defaut
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.root import detect_vcs, validate_root
+from maestro.projects.settings import default_directory
 from maestro.sandbox import espace_de_travail, isolated_workspace
 from maestro.sandbox.ramassage import pid_dans
 from maestro.sandbox.verification import copie_de_verification, dossier_de_sonde
@@ -83,7 +83,7 @@ INVENTAIRE: dict[str, str] = {
         "propose le dossier personnel comme racine de parcours du sélecteur de "
         "dossier ; n'y crée rien"
     ),
-    "maestro/projets/racine.py": (
+    "maestro/projects/root.py": (
         "juge une racine déclarée contre le dossier personnel (racine nue refusée) ; "
         "n'y crée rien"
     ),
@@ -214,7 +214,7 @@ def _git(racine: Path, *arguments: str) -> None:
     subprocess.run([GIT or "git", *arguments], cwd=racine, check=True, capture_output=True)
 
 
-def _projet_versionne(maison: Path) -> Projet:
+def _projet_versionne(maison: Path) -> Project:
     racine = maison / "projets" / "depensio"
     racine.mkdir(parents=True)
     (racine / "app.py").write_text("print('salut')\n", encoding="utf-8")
@@ -222,12 +222,12 @@ def _projet_versionne(maison: Path) -> Projet:
     _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
     _git(racine, "add", "-A")
     _git(racine, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "--quiet", "-m", "socle")
-    return Projet(
+    return Project(
         id="prj-0000dead",
-        nom="Dépensio",
-        racine=racine.as_posix(),
-        vcs=detecter_vcs(racine),
-        perimetre=Perimetre(),
+        name="Dépensio",
+        root=racine.as_posix(),
+        vcs=detect_vcs(racine),
+        perimeter=Perimeter(),
     )
 
 
@@ -259,7 +259,7 @@ def test_un_run_ne_cree_rien_hors_de_la_racine_jetable_et_chaque_dossier_nomme_s
     with (
         isolated_workspace(prefix="maestro-dev-") as sans_projet,
         espace_de_travail(projet, tache_id="t-1455", prefix="maestro-integrateur-css-") as tache,
-        copie_de_verification(Path(projet.racine)) as copie,
+        copie_de_verification(Path(projet.root)) as copie,
         dossier_de_sonde() as sonde,
     ):
         assert [enfant.name for enfant in temporaire.iterdir()] == [NOM_JETABLE]
@@ -326,7 +326,7 @@ def test_les_caches_de_la_verification_vivent_sous_la_racine_de_letat(maison: Pa
 
 
 def test_le_repertoire_des_projets_propose_est_la_racine_des_projets(maison: Path) -> None:
-    assert repertoire_par_defaut() == racine_projets() == maison / "Maestro"
+    assert default_directory() == racine_projets() == maison / "Maestro"
 
 
 def test_les_ateliers_du_banc_et_de_la_relecture_vivent_sous_la_racine_de_letat(
@@ -337,7 +337,7 @@ def test_les_ateliers_du_banc_et_de_la_relecture_vivent_sous_la_racine_de_letat(
     banc = racine_atelier({})
     assert banc == racine_ateliers() / "scenarios"
     projet = banc / "20261009-101010" / "s1-vider"
-    assert valider_racine(projet, creer=True) == projet.resolve()
+    assert validate_root(projet, create=True) == projet.resolve()
 
     script = (RACINE_DEPOT / "scripts" / "design" / "relecture-visuelle.sh").read_text(
         encoding="utf-8"

@@ -62,7 +62,7 @@ MAX_NAME_LENGTH = 255
 class SourceRejected(ValueError):
     """A rejected source, **with its reason**: never a silent rejection (#315).
 
-    Same contract as `RacineRefusee` (#221), whose reasons it takes over when the
+    Same contract as `RootRejected` (#221), whose reasons it takes over when the
     refusal comes from root validation: `reason` is a stable, short code
     (`type-inconnu`, `url-non-suivable`, `source-trop-volumineuse`,
     `chemin-sensible`…), the message remaining the readable sentence. `index`

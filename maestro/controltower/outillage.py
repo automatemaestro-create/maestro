@@ -126,12 +126,12 @@ traduire en codes HTTP.
 ajoute qu'une chose : il **résout le projet** avant de regarder le disque. C'est
 ce qui fait que la route n'analyse jamais un chemin qu'on lui apporte, mais
 seulement la racine d'un projet déjà déclaré, donc déjà passée par
-`valider_racine` (EF-38). Une route qui accepterait un chemin libre serait une
+`validate_root` (EF-38). Une route qui accepterait un chemin libre serait une
 seconde porte d'entrée sur le disque à côté de l'explorateur, avec ses propres
 frontières à tenir d'accord — exactement ce que `POST /api/projets/racine`
 (#938) a rassemblé en une porte unique.
 
-**Le périmètre du projet s'applique.** `Projet.perimetre` retire d'office
+**Le périmètre du projet s'applique.** `Project.perimeter` retire d'office
 `.env` et `**/secrets/**` (docs/24 §2.5) : l'analyse ne peut donc pas lire les
 deux gisements de secrets d'un dépôt d'utilisateur, et ce n'est pas une
 précaution prise ici mais une propriété de ce qui est déclaré.
@@ -235,7 +235,7 @@ from maestro.outillage.questionnaire import (
     sujet_de,
 )
 from maestro.outillage.verification import Verificateur, Verification
-from maestro.projets import Projet
+from maestro.projects import Project
 from maestro.providers.base import ModelProvider
 
 if TYPE_CHECKING:  # `pieces` importe ce module : cycle à l'exécution seulement
@@ -1496,7 +1496,7 @@ class ServiceOutillage:
 
         Lève `ProjetInconnu`/`ProjetIllisible` **avant de toucher au disque** —
         un projet qu'on ne sait pas lire n'a pas de racine à parcourir —, et
-        `RacineRefusee` motivée si la racine déclarée n'est plus un dossier
+        `RootRejected` motivée si la racine déclarée n'est plus un dossier
         lisible (`dossier-absent`, `pas-un-dossier`). Les trois portent un
         `motif` : c'est ce que `statut_http`/`detail_refus` traduisent, jamais
         un 500.
@@ -1570,8 +1570,8 @@ class ServiceOutillage:
 
         Rend le rapport dans les deux régimes, `application` portant le verdict
         de la validation quand il y en a eu une. Lève les refus **motivés** de
-        ses couches (`ProjetInconnu`, `RacineRefusee`, `EspaceProjetIndisponible`,
-        `ApplicationRefusee`) — jamais un 500 : écrire chez quelqu'un peut être
+        ses couches (`ProjetInconnu`, `RootRejected`, `EspaceProjetIndisponible`,
+        `ApplyRejected`) — jamais un 500 : écrire chez quelqu'un peut être
         refusé, ce n'est pas une panne.
         """
         projet = self._projet(id_projet)
@@ -1606,15 +1606,15 @@ class ServiceOutillage:
             tache_id=preparation.tache_id,
             validateur=self._validateur,
             branche=preparation.branche,
-            titre=f"Écrire l'outillage dans {projet.nom}",
+            titre=f"Écrire l'outillage dans {projet.name}",
             run_id=run_id,
         )
-        if resultat.approuvee and preparation.manifeste is not None:
+        if resultat.approved and preparation.manifeste is not None:
             await asyncio.to_thread(preparation.manifeste.poser)
         reponse["application"] = resultat.to_dict()
         return reponse
 
-    async def _analyse(self, projet: Projet) -> Analyse:
+    async def _analyse(self, projet: Project) -> Analyse:
         """L'analyse du projet : les indices des tables, puis la lecture par le modèle.
 
         Le seul lecteur du disque de ce module. La lecture gardée est rendue
@@ -1631,7 +1631,7 @@ class ServiceOutillage:
         except Exception as exc:  # noqa: BLE001 — sans fournisseur, les tables seules
             return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
         analyse = await lire_le_projet(
-            indices, perimetre=projet.perimetre, provider=fournisseur, modele=modele
+            indices, perimetre=projet.perimeter, provider=fournisseur, modele=modele
         )
         if analyse.lecture is not None and analyse.lecture.etat == "lue":
             self._lues[projet.id] = await asyncio.to_thread(
@@ -1639,12 +1639,12 @@ class ServiceOutillage:
             )
         return analyse
 
-    def _indices(self, projet: Projet) -> Analyse:
+    def _indices(self, projet: Project) -> Analyse:
         """Le relevé des tables — **bloquant**, joué hors de la boucle d'événements."""
         return analyser(
-            projet.racine_chemin,
+            projet.root_path,
             projet_id=projet.id,
-            perimetre=projet.perimetre,
+            perimetre=projet.perimeter,
             bornes=self._bornes,
         )
 
@@ -1739,7 +1739,7 @@ class ServiceOutillage:
             "recommandation": recommandation_depuis_choix(acquis, poste=poste).to_dict(),
         }
 
-    def entite(self, id_projet: str) -> Projet:
+    def entite(self, id_projet: str) -> Project:
         """Le projet déclaré — la porte que l'outillage pièce par pièce emprunte (#1161).
 
         Publique pour `maestro.controltower.pieces`, qui écrit dans le **même** projet
@@ -1747,7 +1747,7 @@ class ServiceOutillage:
         """
         return self._projet(id_projet)
 
-    async def analyse_de(self, projet: Projet) -> Analyse:
+    async def analyse_de(self, projet: Project) -> Analyse:
         """L'analyse de `projet` — la lecture gardée tant qu'il n'a pas bougé (#1158, #1161).
 
         La même que `analyser` rend à l'écran, sous sa forme d'objet : l'outillage
@@ -1755,7 +1755,7 @@ class ServiceOutillage:
         """
         return await self._analyse(projet)
 
-    async def relire_pour(self, projet: Projet, echecs: Sequence[Verification]) -> Analyse:
+    async def relire_pour(self, projet: Project, echecs: Sequence[Verification]) -> Analyse:
         """Le projet **construit** relu pour ses commandes en échec — revue d'après un run (#1381).
 
         La lecture de #1158, les échecs dits au modèle (`lire_le_projet(echecs=…)`) : il
@@ -1771,13 +1771,13 @@ class ServiceOutillage:
             return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
         return await lire_le_projet(
             indices,
-            perimetre=projet.perimetre,
+            perimetre=projet.perimeter,
             provider=fournisseur,
             modele=modele,
             echecs=echecs,
         )
 
-    def _projet(self, id_projet: str) -> Projet:
+    def _projet(self, id_projet: str) -> Project:
         """Le projet déclaré, relu par le service des projets — jamais un second lecteur.
 
         `ServiceProjets.detail` rend un dict ; ici il faut l'entité (sa racine

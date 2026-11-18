@@ -143,7 +143,7 @@ def maison() -> Path:
     """Le dossier personnel — lève `RuntimeError`/`OSError` quand l'OS ne sait pas le dire.
 
     Chaque appelant traduit l'échec dans sa propre langue (`ConfigError`,
-    `RacineRefusee`…) : c'est lui qui sait quel réglage nommer à la place.
+    `RootRejected`…) : c'est lui qui sait quel réglage nommer à la place.
     """
     return Path.home()
 
@@ -162,7 +162,7 @@ def racine_ateliers() -> Path:
     """`~/.maestro/ateliers` — où les passages et la relecture sèment leurs projets. Non créé.
 
     Sous l'état du poste et non dans le jetable : un atelier porte des **racines de
-    projet**, que `valider_racine` refuse sous `AppData` (#221), donc sous le
+    projet**, que `validate_root` refuse sous `AppData` (#221), donc sous le
     répertoire temporaire d'un poste Windows. Voisiner avec le jeton de l'API n'en
     approche aucun agent : sa frontière est la racine de son projet (#839,
     `maestro.portee`), et le jeton en est aussi loin d'ici que de `~/maestro-scenarios`.
@@ -218,7 +218,7 @@ def configuration_du_poste() -> Path:
 def racine_configuration(environnement: Mapping[str, str] | None = None) -> Path:
     """Où le produit écrit sa configuration : `core/` d'un clone, l'état du poste installé.
 
-    Chaque dépôt (`ProjetStore`, `SecretStore`, `ChatStore`…) y prend son dossier
+    Chaque dépôt (`ProjectStore`, `SecretStore`, `ChatStore`…) y prend son dossier
     (`depot_configuration`), à moins que sa propre variable `MAESTRO_*_DIR` ne le
     déplace — elle passe devant, dans les deux cas.
     """

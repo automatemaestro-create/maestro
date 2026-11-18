@@ -110,7 +110,7 @@ from maestro.decision_humaine import (
 from maestro.orchestrator.schema import Task
 
 if TYPE_CHECKING:  # pragma: no cover - annotation seule (cf. `DemandeValidation.diff`)
-    from maestro.projets.application import DiffProjet
+    from maestro.projects.apply import ProjectDiff
 
 #: Mots-clés (normalisés sans accents) classant une tâche comme sensible, d'après
 #: les fiches de rôles (docs/04 : déploiement, migration destructive, suppression).
@@ -278,7 +278,7 @@ class DemandeValidation:
     une question qu'on peut trancher. None pour toutes les autres actions
     sensibles, qui se décrivent en texte. L'annotation est différée (`TYPE_CHECKING`)
     pour garder ce module de garde-fous indépendant des projets à l'exécution :
-    c'est `maestro.projets.application` qui dépend de lui, jamais l'inverse.
+    c'est `maestro.projects.apply` qui dépend de lui, jamais l'inverse.
 
     `outil` et `arguments` (#581) portent l'**acte** qui a déclenché la demande —
     la pièce jointe de l'arbitrage sur l'acte, comme `diff` l'est de l'application
@@ -332,7 +332,7 @@ class DemandeValidation:
     agent: str
     role: str
     raison: str
-    diff: DiffProjet | None = None
+    diff: ProjectDiff | None = None
     run_id: str = ""
     projet_id: str | None = None
     outil: str = ""

@@ -87,8 +87,8 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.messaging import InMemoryMailbox
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.store import ProjectStore
 from maestro.sources.extraction import STATE_READ, STATE_TRUNCATED, ReadingReport
 from maestro.telemetry import StepUsage
 
@@ -210,7 +210,7 @@ def test_le_livrable_est_lu_par_la_chaine_d_ingestion_perimetre_compris(tmp_path
     (racine / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
     (racine / ".env").write_text("MAESTRO_JETON=secret-a-ne-pas-lire\n", encoding="utf-8")
 
-    livrable = lire_le_livrable(racine, Perimetre())
+    livrable = lire_le_livrable(racine, Perimeter())
 
     assert not livrable.vide
     assert str(racine / "README.md") in livrable.chemins
@@ -252,7 +252,7 @@ def test_un_livrable_sans_readme_se_lit_par_ce_qu_il_contient(
     racine.mkdir()
     (racine / nom).write_text(contenu, encoding="utf-8")
 
-    livrable = lire_le_livrable(racine, Perimetre())
+    livrable = lire_le_livrable(racine, Perimeter())
 
     etats = {e.name: e.state for lecture in livrable.rapport.readings for e in lecture.entries}
     assert etats == {nom: STATE_READ}
@@ -287,7 +287,7 @@ def test_le_manifeste_se_lit_meme_derriere_un_fichier_genere(tmp_path: Path) -> 
         '{"name": "demo", "scripts": {"start": "node index.js"}}\n', encoding="utf-8"
     )
 
-    livrable = lire_le_livrable(racine, Perimetre())
+    livrable = lire_le_livrable(racine, Perimeter())
 
     etats = {e.name: e.state for lecture in livrable.rapport.readings for e in lecture.entries}
     assert etats["package.json"] == STATE_READ
@@ -298,7 +298,7 @@ def test_le_manifeste_se_lit_meme_derriere_un_fichier_genere(tmp_path: Path) -> 
 def test_aucun_secret_du_livrable_n_atteint_le_recit(tmp_path: Path) -> None:
     """Lire le code n'ouvre pas la porte aux secrets — les trois frontières tiennent.
 
-    Le périmètre écarte `.env` et `secrets/` sans les ouvrir ; `porte_des_secrets`
+    Le périmètre écarte `.env` et `secrets/` sans les ouvrir ; `holds_secrets`
     nomme un `.npmrc` ou un `.pem` sans les lire ; et un fichier qu'aucun nom ne
     signale — une clé SSH `id_rsa`, sans extension, que la lecture par le contenu
     (#1163) prend pour du texte — voit sa clé masquée avant d'entrer dans le
@@ -322,7 +322,7 @@ def test_aucun_secret_du_livrable_n_atteint_le_recit(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    livrable = lire_le_livrable(racine, Perimetre())
+    livrable = lire_le_livrable(racine, Perimeter())
 
     assert "print('bonjour')" in livrable.contexte
     for secret in (
@@ -337,7 +337,7 @@ def test_aucun_secret_du_livrable_n_atteint_le_recit(tmp_path: Path) -> None:
 
 def test_une_racine_disparue_rend_un_livrable_vide_sans_lever(tmp_path: Path) -> None:
     """Un run qui n'a rien laissé est une information, jamais une panne."""
-    livrable = lire_le_livrable(tmp_path / "jamais-cree", Perimetre())
+    livrable = lire_le_livrable(tmp_path / "jamais-cree", Perimeter())
 
     assert livrable.vide
     assert livrable.chemins == ()
@@ -350,7 +350,7 @@ def test_les_chemins_offerts_en_lien_sont_bornes(tmp_path: Path) -> None:
     for rang in range(20):
         (racine / f"fichier{rang:02d}.txt").write_text(f"ligne {rang}\n", encoding="utf-8")
 
-    livrable = lire_le_livrable(racine, Perimetre(), fichiers_max=5)
+    livrable = lire_le_livrable(racine, Perimeter(), fichiers_max=5)
 
     assert len(livrable.chemins) == 5
 
@@ -425,7 +425,7 @@ def _conteur(
     projet = (
         None
         if racine is None
-        else Projet(id="p1", nom="projet", racine=str(racine), perimetre=Perimetre())
+        else Project(id="p1", name="projet", root=str(racine), perimeter=Perimeter())
     )
     return ConteurDeFin(
         chat=_service_chat(depot),
@@ -636,7 +636,7 @@ def test_une_fin_de_run_publiee_sur_le_bus_pose_le_recit_dans_le_fil(
     racine = maison / "livrable"
     racine.mkdir()
     (racine / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projets = ServiceProjets(ProjectStore(tmp_path / "depot"))
     projet = projets.creer("livrable", str(racine))
 
     depot = ChatStore(tmp_path / "chat")
@@ -778,7 +778,7 @@ def _conteur_sur(
     redacteur: RedacteurEspion,
     bilan: Any = None,
 ) -> ConteurDeFin:
-    projet = Projet(id="p1", nom="projet", racine=str(racine), perimetre=Perimetre())
+    projet = Project(id="p1", name="projet", root=str(racine), perimeter=Perimeter())
     return ConteurDeFin(
         chat=_service_chat(depot),
         state=state,
@@ -905,7 +905,7 @@ def test_un_run_solde_par_sa_reprise_n_a_qu_un_recit_a_sa_vraie_fin(
     racine = maison / "livrable"
     racine.mkdir()
     (racine / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projets = ServiceProjets(ProjectStore(tmp_path / "depot"))
     projet = projets.creer("livrable", str(racine))
     depot = ChatStore(tmp_path / "chat")
     for message in _lancement("origine"):

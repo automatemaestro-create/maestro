@@ -76,26 +76,26 @@ from maestro.controltower.orchestration import (
     faits_des_runs,
 )
 from maestro.controltower.state import EXECUTION_EN_COURS, EXECUTION_TERMINEE, ControlTowerState
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, StepUsage
 
 # --------------------------------------------------------------- le harnais
 
 
-def _projet(racine: Path) -> Projet:
+def _projet(racine: Path) -> Project:
     """Un projet déclaré sur `racine`, avec le périmètre **par défaut**.
 
     Le périmètre par défaut est ce qui ferme `.env` et `**/secrets/**`
-    (`EXCLUS_DEFAUT`, docs/24 §2.5) : les tests de frontière ci-dessous
+    (`DEFAULT_EXCLUDED`, docs/24 §2.5) : les tests de frontière ci-dessous
     n'ajoutent aucune exclusion pour leur compte — ils éprouvent celle que tout
     projet de l'utilisateur porte déjà.
     """
-    return Projet(
+    return Project(
         id="prj-essai",
-        nom="Essai",
-        racine=racine.resolve().as_posix(),
-        perimetre=Perimetre(),
+        name="Essai",
+        root=racine.resolve().as_posix(),
+        perimeter=Perimeter(),
     )
 
 
@@ -251,7 +251,7 @@ def test_les_secrets_du_perimetre_restent_fermes(tmp_path: Path) -> None:
     """`.env` et `secrets/` ne se lisent pas, et ne se listent pas non plus.
 
     Ce n'est pas une précaution prise ici : c'est le périmètre du projet
-    (`EXCLUS_DEFAUT`) qu'on hérite, comme l'analyse d'un projet (#1158).
+    (`DEFAULT_EXCLUDED`) qu'on hérite, comme l'analyse d'un projet (#1158).
     """
     racine = tmp_path / "projet"
     racine.mkdir()

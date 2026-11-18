@@ -10,7 +10,7 @@ place — la frontière d'écriture et la sérialisation d'un projet non version
 l'ordre des lots :
 
 1. **#704** — une racine non versionnée devient un dépôt Git **sur demande**
-   (`ProjetStore.versionner`), et jamais autrement : rien de ce qui parcourt un
+   (`ProjectStore.enable_versioning`), et jamais autrement : rien de ce qui parcourt un
    projet n'initialise quoi que ce soit, un projet déjà versionné est rendu tel
    quel, et un échec laisse la racine dans l'état d'avant, avec son motif ;
 2. **#705** — la branche d'une tâche soldée **en succès** est fusionnée dans la
@@ -28,7 +28,7 @@ sa branche ; ce qui passe encore à la fusion fait de la tâche un échec rattra
 Vrais dépôts jetables, vrais worktrees, vraies fusions et vrais conflits — rien
 n'est simulé côté Git (sautés sans `git`). Le seul refus **joué** est celui du
 périmètre : Git ne sait pas produire un chemin hors de son propre arbre, et la
-brique qui le refuse (`chemin_dans_racine`) est éprouvée sur du vrai disque dans
+brique qui le refuse (`path_in_root`) est éprouvée sur du vrai disque dans
 `tests/test_projets.py` ; ce qu'on garde ici est sa **place** dans le geste — avant
 l'accord, avant l'écriture. Aucun réseau, aucun modèle : les fournisseurs sont
 des fonctions du test qui écrivent dans l'espace qu'on leur donne.
@@ -64,16 +64,16 @@ from maestro.engine.recette import RecetteDuRun
 from maestro.orchestrator import Brief, Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
-from maestro.projets import (
-    MESSAGE_PREMIER_COMMIT,
-    ApplicationRefusee,
-    Projet,
-    ProjetStore,
-    VersionnementRefuse,
-    detecter_vcs,
-    initialiser_depot,
+from maestro.projects import (
+    FIRST_COMMIT_MESSAGE,
+    ApplyRejected,
+    Project,
+    ProjectStore,
+    VersioningRejected,
+    detect_vcs,
+    init_repository,
 )
-from maestro.projets.commits import RedacteurDeCommits
+from maestro.projects.commits import CommitDrafter
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
 from maestro.telemetry import RunJournal, StepUsage, report_usage
@@ -143,23 +143,23 @@ def _racine_nue(tmp_path: Path, nom: str = "agenda") -> Path:
     return racine
 
 
-def _projet_nu(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_nu(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **non versionné** qui y est déclaré."""
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("Agenda", _racine_nue(tmp_path))
-    assert not projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("Agenda", _racine_nue(tmp_path))
+    assert not projet.versioned, projet
     return depot, projet
 
 
-def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_git(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **versionné** : dépôt jetable, un commit, VCS détecté."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     racine = _racine_nue(tmp_path, "agenda-git")
     _git(racine, "init", "--quiet")
     _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
     _commiter(racine, "socle")
-    projet = depot.creer("Agenda", racine)
-    assert projet.versionne, projet
+    projet = depot.create("Agenda", racine)
+    assert projet.versioned, projet
     return depot, projet
 
 
@@ -359,7 +359,7 @@ def _tache(id_: str, projet_id: str, livrable: str, *, dependances: tuple[str, .
 
 
 def _executeur(
-    fournisseur: ModelProvider, depot: ProjetStore, validateur: Validateur | None = None
+    fournisseur: ModelProvider, depot: ProjectStore, validateur: Validateur | None = None
 ) -> LocalExecutor:
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
     return LocalExecutor(
@@ -400,24 +400,24 @@ def _joue(executeur: LocalExecutor, journal: RunJournal, *taches: Task):
 
 def test_versionner_fait_de_la_racine_declaree_un_depot_dont_la_base_existe(tmp_path: Path):
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
-    versionne = depot.versionner(projet.id)
+    versionne = depot.enable_versioning(projet.id)
 
-    # Le `Vcs` est celui que Git a posé — constaté par `detecter_vcs`, jamais fabriqué.
-    assert versionne.versionne and versionne.vcs is not None
-    assert versionne.vcs.type == "git" and versionne.vcs.branche_base
-    assert detecter_vcs(racine) == versionne.vcs
+    # Le `Vcs` est celui que Git a posé — constaté par `detect_vcs`, jamais fabriqué.
+    assert versionne.versioned and versionne.vcs is not None
+    assert versionne.vcs.type == "git" and versionne.vcs.base_branch
+    assert detect_vcs(racine) == versionne.vcs
     # …et persisté : le dépôt des projets relit le projet versionné.
-    relu = depot.lire(projet.id)
+    relu = depot.read(projet.id)
     assert relu is not None and relu.vcs == versionne.vcs
     # Ce n'est pas un `git init` nu : la branche de base **résout**, portée par un premier
     # commit qui enregistre la racine telle qu'elle est — sans lui, `HEAD` désigne une branche
     # qui n'existe pas et rien de ce que #703 vise ne fonctionne (worktree orphelin, base
     # introuvable).
-    base = versionne.vcs.branche_base
+    base = versionne.vcs.base_branch
     _git(racine, "rev-parse", "--verify", "--quiet", f"refs/heads/{base}")
-    assert _commits(racine) == [MESSAGE_PREMIER_COMMIT]
+    assert _commits(racine) == [FIRST_COMMIT_MESSAGE]
     assert set(_git(racine, "ls-files").split()) == {"README.md", "src/app.py"}
     assert _git(racine, "status", "--porcelain").strip() == ""  # rien laissé hors de l'index
 
@@ -425,8 +425,8 @@ def test_versionner_fait_de_la_racine_declaree_un_depot_dont_la_base_existe(tmp_
 def test_un_projet_versionne_par_maestro_sert_de_base_a_la_tache_suivante(tmp_path: Path):
     """« Renseigné comme s'il l'avait toujours été » : la première tâche part du projet entier."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
-    depot.versionner(projet.id)
+    racine = Path(projet.root)
+    depot.enable_versioning(projet.id)
     fournisseur = _Ecrivain()
     journal = RunJournal(run_id="run-704")
 
@@ -449,9 +449,9 @@ def test_un_projet_versionne_par_maestro_sert_de_base_a_la_tache_suivante(tmp_pa
 def test_rien_n_initialise_un_depot_sans_qu_on_le_demande(tmp_path: Path):
     """Le geste est explicite ou n'a pas lieu : déclarer, lire, exécuter ne posent aucun `.git`."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert not (racine / ".git").exists()  # `creer` a constaté Git, sans l'imposer
-    assert detecter_vcs(racine) is None
+    assert detect_vcs(racine) is None
 
     # Une tâche entière sur ce projet — espace en place, journal, tout — n'en pose pas non plus.
     journal = RunJournal(run_id="run-704")
@@ -464,35 +464,35 @@ def test_rien_n_initialise_un_depot_sans_qu_on_le_demande(tmp_path: Path):
     assert (racine / "t1.md").is_file()  # écrit en place (#839)…
     assert not (racine / ".git").exists()  # …sans qu'aucun dépôt ne soit né
     assert _etape(journal, "t1", ":fusion").statut == STATUT_ECRITURE_EN_PLACE
-    relu = depot.lire(projet.id)
+    relu = depot.read(projet.id)
     assert relu is not None and relu.vcs is None
 
 
 def test_un_projet_deja_versionne_est_rendu_tel_quel(tmp_path: Path):
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     avant = _commits(racine)
 
     # Par le verbe de bas niveau : le `Vcs` constaté, et pas une commande de plus.
-    assert initialiser_depot(racine) == projet.vcs
+    assert init_repository(racine) == projet.vcs
     assert _commits(racine) == avant
     # Par le dépôt : le projet est rendu tel quel, sans même un `modifie_le` rafraîchi.
-    assert depot.versionner(projet.id) == projet
+    assert depot.enable_versioning(projet.id) == projet
     assert _commits(racine) == avant
 
 
 def test_une_declaration_en_retard_sur_le_disque_est_rattrapee_sans_rien_creer(tmp_path: Path):
     """Un `git init` à la main depuis la déclaration : `versionner` rattrape, n'initialise pas."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _git(racine, "init", "--quiet")
     _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
     _commiter(racine, "socle posé à la main")
 
-    versionne = depot.versionner(projet.id)
+    versionne = depot.enable_versioning(projet.id)
 
-    assert versionne.vcs == detecter_vcs(racine)
-    assert versionne.vcs is not None and versionne.vcs.branche_base == "main"
+    assert versionne.vcs == detect_vcs(racine)
+    assert versionne.vcs is not None and versionne.vcs.base_branch == "main"
     assert _commits(racine) == ["socle posé à la main"]  # aucun commit de Maestro
 
 
@@ -506,19 +506,19 @@ def test_une_racine_dans_un_autre_depot_est_refusee_sans_rien_toucher(tmp_path: 
     racine = englobant / "paquets" / "agenda"
     racine.mkdir(parents=True)
     (racine / "app.py").write_text("x\n", encoding="utf-8")
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("Agenda", racine)
-    assert not projet.versionne  # `detecter_vcs` ne regarde que `<racine>/.git`
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("Agenda", racine)
+    assert not projet.versioned  # `detect_vcs` ne regarde que `<racine>/.git`
 
-    with pytest.raises(VersionnementRefuse) as refus:
-        depot.versionner(projet.id)
+    with pytest.raises(VersioningRejected) as refus:
+        depot.enable_versioning(projet.id)
 
-    assert refus.value.motif == "depot-englobant"
+    assert refus.value.reason == "depot-englobant"
     assert not (racine / ".git").exists()
     assert _commits(englobant) == ["socle"]  # le dépôt du dessus n'a rien vu passer
     etat = _git(englobant, "status", "--porcelain", "--untracked-files=all")
     assert etat.split() == ["??", "paquets/agenda/app.py"]  # tel qu'avant : non suivi, rien d'autre
-    relu = depot.lire(projet.id)
+    relu = depot.read(projet.id)
     assert relu is not None and relu.vcs is None  # rien d'enregistré sur un refus
 
 
@@ -527,16 +527,16 @@ def test_un_premier_commit_refuse_retire_le_depot_qui_vient_de_naitre(
 ) -> None:
     """Les hooks de l'utilisateur tiennent : un `pre-commit` qui refuse annule tout."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _pre_commit_qui_refuse(tmp_path, monkeypatch)
 
-    with pytest.raises(VersionnementRefuse) as refus:
-        depot.versionner(projet.id)
+    with pytest.raises(VersioningRejected) as refus:
+        depot.enable_versioning(projet.id)
 
-    assert refus.value.motif == "commit-refuse"
+    assert refus.value.reason == "commit-refuse"
     assert not (racine / ".git").exists()  # le `.git` né ici est reparti avec l'échec
     assert (racine / "README.md").read_text(encoding="utf-8") == "# Agenda\n"  # le reste : intact
-    relu = depot.lire(projet.id)
+    relu = depot.read(projet.id)
     assert relu is not None and relu.vcs is None
 
 
@@ -545,17 +545,17 @@ def test_un_git_residuel_trouve_sur_place_n_est_jamais_retire(
 ) -> None:
     """Un `.git` sans `HEAD` (clone avorté) n'est pas un dépôt — mais il est à l'utilisateur."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     residuel = racine / ".git"
     residuel.mkdir()
     (residuel / "description").write_text("résidu\n", encoding="utf-8")
-    assert detecter_vcs(racine) is None  # le motif : sans `HEAD`, ce n'est pas un dépôt
+    assert detect_vcs(racine) is None  # le motif : sans `HEAD`, ce n'est pas un dépôt
     _pre_commit_qui_refuse(tmp_path, monkeypatch)
 
-    with pytest.raises(VersionnementRefuse) as refus:
-        depot.versionner(projet.id)
+    with pytest.raises(VersioningRejected) as refus:
+        depot.enable_versioning(projet.id)
 
-    assert refus.value.motif == "commit-refuse"
+    assert refus.value.reason == "commit-refuse"
     assert residuel.is_dir()  # présent avant l'appel, donc pas à nous : laissé en place
 
 
@@ -578,7 +578,7 @@ def _pre_commit_qui_refuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_une_tache_soldee_en_succes_est_fusionnee_dans_la_base(tmp_path: Path):
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     journal = RunJournal(run_id="run-705")
 
     (resultat,) = _joue(
@@ -620,9 +620,9 @@ class _Redacteur(ModelProvider):
         return self.sujet
 
 
-def _avec_convention(projet: Projet, convention: str) -> None:
+def _avec_convention(projet: Project, convention: str) -> None:
     """Le manifeste d'un outillage venu des réponses, qui retient une convention de commit."""
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     manifeste = racine / CHEMIN_MANIFESTE
     manifeste.parent.mkdir(parents=True, exist_ok=True)
     manifeste.write_text(
@@ -649,11 +649,11 @@ def test_la_fusion_suit_la_convention_de_commit_choisie(tmp_path: Path):
     que l'appel a coûté est porté par l'étape `:fusion`.
     """
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _avec_convention(projet, "Conventional Commits")
     modele = _Redacteur("feat(docs): intègre la note t1")
     executeur = _executeur(_Ecrivain(), depot, _Validateur(True))
-    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    executeur._redacteur = CommitDrafter(modele, model="modele-du-test")
     journal = RunJournal(run_id="run-1507")
 
     (resultat,) = _joue(executeur, journal, _tache("t1", projet.id, "docs/t1.md"))
@@ -672,16 +672,16 @@ def test_sans_convention_choisie_la_fusion_ne_coute_aucun_appel(tmp_path: Path):
     depot, projet = _projet_git(tmp_path)
     modele = _Redacteur("feat: jamais demandé")
     executeur = _executeur(_Ecrivain(), depot, _Validateur(True))
-    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    executeur._redacteur = CommitDrafter(modele, model="modele-du-test")
 
     _joue(executeur, RunJournal(run_id="run-1507"), _tache("t1", projet.id, "t1.md"))
 
     assert modele.prompts == []
-    (fusion,) = _fusions(Path(projet.racine))
+    (fusion,) = _fusions(Path(projet.root))
     assert fusion.startswith("Maestro : application de")
 
 
-def _ecrit_la_recette(executeur: LocalExecutor, projet: Projet, run_id: str):
+def _ecrit_la_recette(executeur: LocalExecutor, projet: Project, run_id: str):
     """La recette d'un run qui a obtenu l'accord d'écrire, déposée dans `projet` (#1530)."""
     executeur._accords_fusion[(run_id, projet.id)] = AccordFusion(
         approuve=True, detail="approuvée par le validateur humain", tache_id="t1"
@@ -702,11 +702,11 @@ def test_le_commit_de_la_recette_suit_la_convention_de_commit_choisie(tmp_path: 
     que l'appel a coûté revient à l'étape `recette`.
     """
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _avec_convention(projet, "Conventional Commits")
     modele = _Redacteur("docs(recette): dépose la recette du run")
     executeur = _executeur(_Ecrivain(), depot)
-    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    executeur._redacteur = CommitDrafter(modele, model="modele-du-test")
 
     recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
 
@@ -722,19 +722,19 @@ def test_sans_convention_choisie_la_recette_garde_le_message_de_maestro(tmp_path
     depot, projet = _projet_git(tmp_path)
     modele = _Redacteur("docs: jamais demandé")
     executeur = _executeur(_Ecrivain(), depot)
-    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    executeur._redacteur = CommitDrafter(modele, model="modele-du-test")
 
     recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
 
     assert recette.ecriture == "", recette
     assert modele.prompts == []
-    assert _commits(Path(projet.racine))[0] == "Maestro : recette du run run-1507"
+    assert _commits(Path(projet.root))[0] == "Maestro : recette du run run-1507"
     assert cout == StepUsage()
 
 
 def test_une_tache_en_echec_ne_fusionne_rien_et_sa_branche_conserve_le_travail(tmp_path: Path):
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     validateur = _Validateur(True)
     journal = RunJournal(run_id="run-705")
 
@@ -781,7 +781,7 @@ def test_la_tache_dependante_part_du_travail_de_la_precedente(tmp_path: Path):
     # Puis la règle — **avec** fusion, le worktree de t2 est monté après la fusion de t1, donc
     # depuis une base qui porte déjà son travail.
     depot, projet = _projet_git(tmp_path / "apres")
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _Ecrivain()
     journal = RunJournal(run_id="run-b2-apres")
     resultats = _joue(
@@ -820,7 +820,7 @@ class _Planificateur(ModelProvider):
 def test_la_boucle_du_moteur_ne_libere_l_aval_qu_une_fois_la_fusion_faite(tmp_path: Path):
     """Le même enchaînement, par la vraie boucle (#43) : l'aval attend le retour de `execute`."""
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _Ecrivain()
     plan = json.dumps(
         [
@@ -881,7 +881,7 @@ def test_une_fusion_refusee_par_git_laisse_le_projet_intact_et_la_tache_n_est_pa
     fusionne entre-temps —, donc rien ne pouvait le voir avant la fusion elle-même.
     """
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     def _edition_concurrente() -> None:
         # La même ligne change dans la base, commitée : la fusion ne peut pas trancher.
@@ -928,7 +928,7 @@ def test_une_livraison_en_conflit_avec_la_base_revient_a_l_agent_qui_l_integre(t
     sont dans le projet.
     """
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     def _edition_concurrente() -> None:
         (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
@@ -964,7 +964,7 @@ def test_un_conflit_que_l_agent_ne_resout_pas_arrete_la_livraison_sans_rien_fusi
 ):
     """L'agent relivre le même conflit : la boucle s'arrête, comme la recette sur un essai vain."""
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     def _edition_concurrente() -> None:
         (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
@@ -993,7 +993,7 @@ def test_un_conflit_que_l_agent_ne_resout_pas_arrete_la_livraison_sans_rien_fusi
 
 def test_une_racine_occupee_refuse_la_fusion_sans_toucher_aux_changements_en_cours(tmp_path):
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     def _edition_non_commitee() -> None:
         (racine / "README.md").write_text("# En cours d'édition\n", encoding="utf-8")
@@ -1024,15 +1024,15 @@ def test_un_chemin_hors_perimetre_est_refuse_avant_l_accord_et_avant_d_ecrire(
 ) -> None:
     """Le périmètre (EF-38) se contrôle avant tout : on ne fait pas approuver ce qu'on refusera."""
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
-    def _refuse(projet_: Projet, diff) -> tuple[Path, ...]:
-        raise ApplicationRefusee(
+    def _refuse(projet_: Project, diff) -> tuple[Path, ...]:
+        raise ApplyRejected(
             "hors-racine",
-            f"Application refusée — {diff.modifications[0].chemin} sort du périmètre.",
+            f"Application refusée — {diff.changes[0].path} sort du périmètre.",
         )
 
-    monkeypatch.setattr("maestro.engine.executor.verifier_perimetre", _refuse)
+    monkeypatch.setattr("maestro.engine.executor.check_perimeter", _refuse)
     validateur = _Validateur(True)
     journal = RunJournal(run_id="run-705")
     (resultat,) = _joue(
@@ -1060,7 +1060,7 @@ def test_le_run_ne_libere_pas_l_aval_d_une_tache_dont_la_fusion_est_refusee(tmp_
     reste — la tâche suivante n'est pas lancée sur un projet qui n'a pas ce qu'elle attend.
     """
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     def _edition_concurrente() -> None:
         (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")

@@ -70,8 +70,8 @@ from maestro.outillage import (
 )
 from maestro.outillage.clients import Client
 from maestro.outillage.detection import IGNORES_DEFAUT
-from maestro.projets.modele import Perimetre
-from maestro.projets.racine import RacineRefusee
+from maestro.projects.model import Perimeter
+from maestro.projects.root import RootRejected
 
 GIT = shutil.which("git")
 
@@ -389,7 +389,7 @@ def test_un_dossier_ignore_n_est_pas_descendu_et_se_voit_dans_le_parcours(
     for index in range(40):
         ecrire(tmp_path, f"node_modules/paquet{index}/index.js", "module.exports = {};\n")
 
-    analyse = analyser(tmp_path, perimetre=Perimetre(exclus=(".git",)))
+    analyse = analyser(tmp_path, perimetre=Perimeter(excluded=(".git",)))
 
     assert "node_modules" in analyse.parcours.ignores_rencontres
     assert not any("node_modules" in langage.exemple for langage in analyse.constats.langages)
@@ -403,7 +403,7 @@ def test_des_bornes_avec_une_liste_d_ignores_vide_la_veulent_vide(tmp_path: Path
     l'analyse ne doit pas décider à la place du second.
     """
     ecrire(tmp_path, "node_modules/gauche/index.js", "module.exports = {};\n")
-    ouvert = Perimetre(exclus=(".git",))
+    ouvert = Perimeter(excluded=(".git",))
 
     vue = analyser(tmp_path, perimetre=ouvert, bornes=Bornes(ignores=()))
     cachee = analyser(tmp_path, perimetre=ouvert)
@@ -442,7 +442,7 @@ def test_ni_env_ni_secrets_ne_sont_ouverts_par_l_analyse(tmp_path: Path) -> None
     sonde = _SondeEcriture()
 
     with sonde.armee():
-        analyse = analyser(tmp_path, perimetre=Perimetre())
+        analyse = analyser(tmp_path, perimetre=Perimeter())
 
     ouverts = [Path(chemin).name for chemin in sonde.lectures]
     assert ".env" not in ouverts
@@ -460,8 +460,8 @@ def test_un_perimetre_resserre_retire_ce_qu_il_nomme(tmp_path: Path) -> None:
     projet_python(tmp_path)
     ecrire(tmp_path, "exemples/copie.py", "x = 1\n")
 
-    large = analyser(tmp_path, perimetre=Perimetre(exclus=(".git",)))
-    etroit = analyser(tmp_path, perimetre=Perimetre(exclus=(".git", "exemples")))
+    large = analyser(tmp_path, perimetre=Perimeter(excluded=(".git",)))
+    etroit = analyser(tmp_path, perimetre=Perimeter(excluded=(".git", "exemples")))
 
     assert large.parcours.fichiers_vus == etroit.parcours.fichiers_vus + 1
     assert etroit.parcours.ignores_rencontres == ()
@@ -651,14 +651,14 @@ def test_une_racine_absente_ou_qui_n_est_pas_un_dossier_est_refusee_motivee(
     tmp_path: Path,
 ) -> None:
     """Le même type de refus que le reste du paquet `projets` — donc le même 422 côté API."""
-    with pytest.raises(RacineRefusee) as absente:
+    with pytest.raises(RootRejected) as absente:
         analyser(tmp_path / "nulle-part")
     fichier = ecrire(tmp_path, "un-fichier.txt", "x")
-    with pytest.raises(RacineRefusee) as pas_un_dossier:
+    with pytest.raises(RootRejected) as pas_un_dossier:
         analyser(fichier)
 
-    assert absente.value.motif == "dossier-absent"
-    assert pas_un_dossier.value.motif == "pas-un-dossier"
+    assert absente.value.reason == "dossier-absent"
+    assert pas_un_dossier.value.reason == "pas-un-dossier"
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 """Les formes de l'analyse d'un projet et de l'outillage qu'elle recommande (#1030).
 
-Inerte, au patron de [`maestro.projets.modele`](../projets/modele.py) : ce module
+Inerte, au patron de [`maestro.projects.model`](../projects/model.py) : ce module
 **décrit et sérialise**, il ne touche pas au disque. Ce qui l'y confronte est
 ailleurs — `maestro.outillage.analyse` (parcourir, constater) et
 `maestro.outillage.recommandation` (en déduire l'outillage). C'est ce qui rend
@@ -40,7 +40,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from maestro.projets.modele import Vcs
+from maestro.projects.model import Vcs
 
 #: Version de la forme servie. Elle voyage dans la réponse au même titre que
 #: `manifeste: 1` (docs/38 §4.1) : un consommateur — #1031, #1033, l'écran de
@@ -147,7 +147,7 @@ class Bornes:
     `ignores` sont des **noms de dossiers** que le parcours ne descend jamais :
     un `node_modules` ou un `target` coûterait à lui seul tout le budget de
     fichiers et n'apprendrait rien du projet. Ils s'ajoutent aux motifs du
-    périmètre déclaré du projet (`Perimetre.exclus`, qui retire déjà `.env` et
+    périmètre déclaré du projet (`Perimeter.excluded`, qui retire déjà `.env` et
     `**/secrets/**`) : l'analyse ne lit donc jamais les deux gisements de
     secrets de docs/24 §2.5.
 
@@ -429,7 +429,7 @@ class ConventionDeCommit:
     référence au ticket exigée —, en une ligne ; `chemin` le fichier lu qui la fixe
     (`CLAUDE.md`, un guide de contribution, le hook `commit-msg`), relatif à la racine.
     C'est ce que Maestro suit pour écrire ses propres commits dans un projet importé
-    (`maestro.projets.commits`), comme il suit la convention qu'une personne a choisie
+    (`maestro.projects.commits`), comme il suit la convention qu'une personne a choisie
     pour un projet neuf (#1507).
     """
 

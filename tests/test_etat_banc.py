@@ -62,7 +62,7 @@ from maestro.controltower.state import ControlTowerState
 from maestro.emplacements import TEMOIN_PID, occupant
 from maestro.espace import COMMUN, VARIABLE_ESPACE, Espace
 from maestro.messaging.mailbox import RedisMailbox
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.sandbox.ramassage import porte_un_worktree
 from maestro.scenarios import etat
 from maestro.scenarios.modele import Rapport, Resultat
@@ -160,7 +160,7 @@ def jouer_un_passage(
 ) -> str:
     """Ce qu'un passage laisse sur le banc : un projet déclaré, un run publié par son hôte."""
     sur(monkeypatch, banc)
-    projet = ProjetStore.default().creer("dépensio", maison / "s2", origine="nouveau")
+    projet = ProjectStore.default().create("dépensio", maison / "s2", origin="nouveau")
     publieur_redis()(statut(run_id))
     return projet.id
 
@@ -900,7 +900,7 @@ def test_un_passage_retire_emporte_les_declarations_de_ses_projets(
     ailleurs.mkdir()
 
     def declarer(depot: Path, racine: Path) -> str:
-        return ProjetStore(depot).creer(racine.name, racine).id
+        return ProjectStore(depot).create(racine.name, racine).id
 
     oublies = {
         declarer(copie, vieux / "s1-vider"),
@@ -919,7 +919,7 @@ def test_un_passage_retire_emporte_les_declarations_de_ses_projets(
 
     assert retention.retires == ("20261001-100000",)
     assert retention.declarations == len(oublies)
-    assert set(ProjetStore(copie).ids()) | set(ProjetStore(banc_d_une_autre).ids()) == restent
+    assert set(ProjectStore(copie).ids()) | set(ProjectStore(banc_d_une_autre).ids()) == restent
     assert ailleurs.is_dir() and garde.is_dir(), "oublier un projet ne touche pas au disque"
     assert (
         "3 déclaration(s) de projet oubliée(s) : leur passage n'existe plus"
@@ -934,13 +934,13 @@ def test_sans_passage_disparu_aucune_declaration_n_est_touchee(
     même les déclarations."""
     depot = maison / "copie" / "projets"
     passage = un_passage(ateliers, "20261001-100000")
-    vivant = ProjetStore(depot).creer("s1", passage / "s1-vider").id
+    vivant = ProjectStore(depot).create("s1", passage / "s1-vider").id
     retention = retenir(environnement=regime(ateliers, temporaire, 3), declarations=(depot,))
     assert retention.declarations == 0 and retention.lignes() == []
     shutil.rmtree(passage)
     eteinte = retenir(environnement=regime(ateliers, temporaire, 0), declarations=(depot,))
     assert eteinte.declarations == 0
-    assert ProjetStore(depot).ids() == (vivant,)
+    assert ProjectStore(depot).ids() == (vivant,)
 
 
 def test_la_retention_du_poste_oublie_dans_les_depots_du_poste(
@@ -951,7 +951,7 @@ def test_la_retention_du_poste_oublie_dans_les_depots_du_poste(
     (`maestro.menage.depots_de_declarations`) — et, éteinte, ne les demande même pas."""
     depot = maison / "copie" / "projets"
     parti = un_passage(ateliers, "20261001-100000")
-    oubliee = ProjetStore(depot).creer("s1", parti / "s1-vider").id
+    oubliee = ProjectStore(depot).create("s1", parti / "s1-vider").id
     shutil.rmtree(parti)
     demandes: list[str] = []
 
@@ -964,11 +964,11 @@ def test_la_retention_du_poste_oublie_dans_les_depots_du_poste(
 
     monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "0")
     retenir_le_poste(lignes.append)
-    assert demandes == [] and ProjetStore(depot).ids() == (oubliee,)
+    assert demandes == [] and ProjectStore(depot).ids() == (oubliee,)
 
     monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "3")
     retenir_le_poste(lignes.append)
-    assert demandes == ["depots"] and ProjetStore(depot).ids() == ()
+    assert demandes == ["depots"] and ProjectStore(depot).ids() == ()
     assert "1 déclaration(s) de projet oubliée(s)" in "\n".join(lignes)
 
 

@@ -78,7 +78,7 @@ from maestro.emplacements import repertoire_temporaire
 from maestro.outillage.clients import version_de
 from maestro.outillage.generation import verifications_declarees
 from maestro.outillage.verification import Joueur, programmes, sondable, sonde
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 from maestro.sandbox import container
 from maestro.sandbox import verification as execution
 from maestro.sandbox.container_broker_client import NOT_RUN as RIEN_N_A_ETE_JOUE
@@ -303,7 +303,7 @@ def systeme() -> str:
     return f"{titre} ({version})" if version else titre
 
 
-def programmes_de_l_outillage(projet: Projet | None) -> tuple[str, ...]:
+def programmes_de_l_outillage(projet: Project | None) -> tuple[str, ...]:
     """Les programmes que les commandes de l'outillage de `projet` appellent, chacun une fois.
 
     Lus sur les commandes que le **manifeste** garde (`verifications_declarees`) : ce
@@ -314,7 +314,7 @@ def programmes_de_l_outillage(projet: Projet | None) -> tuple[str, ...]:
     if projet is None:
         return ()
     vus: dict[str, None] = {}
-    for verification in verifications_declarees(projet.racine_chemin):
+    for verification in verifications_declarees(projet.root_path):
         for nom in programmes(verification.commande):
             vus.setdefault(nom, None)
     return tuple(vus)

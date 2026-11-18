@@ -65,7 +65,7 @@ from maestro.outillage.questionnaire import (
 from maestro.outillage.recommandation import recommander
 from maestro.outillage.redaction import rediger
 from maestro.portee import PORTEE_PROJET
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.team import (
     EXCLUDED_ORCHESTRATOR,
@@ -805,7 +805,7 @@ def test_a_new_project_declared_web_application_receives_the_browser_by_the_rule
 
 @pytest.fixture()
 def workshop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Under a fake home folder: `valider_racine` refuses `AppData` (#221)."""
+    """Under a fake home folder: `validate_root` refuses `AppData` (#221)."""
     home = tmp_path / "maison"
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
@@ -842,7 +842,7 @@ def _service(
     provider: ModelProvider,
     generator: GenerateurDefinitionAgent | None = None,
 ) -> tuple[ServiceEquipe, str]:
-    projects = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,))
+    projects = ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,))
     project = _flutter_project(workshop, projects)
     service = ServiceEquipe(
         projects,
@@ -932,7 +932,7 @@ def _songbook_service(
     *,
     with_own_files: bool = False,
 ) -> tuple[ServiceEquipe, str]:
-    projects = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,))
+    projects = ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,))
     project = _project_born_in_chat(workshop, projects, with_own_files=with_own_files)
     service = ServiceEquipe(
         projects,
@@ -1146,7 +1146,7 @@ def http_client(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,)),
         agents_store=agent_config.agents,
         surcharges=agent_config.surcharges,
         playbooks=agent_config.playbooks,
@@ -1284,7 +1284,7 @@ def test_the_correction_route_returns_502_when_the_model_does_not_answer(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,)),
         agents_store=agent_config.agents,
         generateur_agent=_OfflineGenerator(),
         compositeur_equipe=CompositeurEquipe(provider=_FailingProvider()),
@@ -1576,7 +1576,7 @@ def test_the_correction_route_returns_the_rewritten_playbooks(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,)),
         agents_store=agent_config.agents,
         generateur_agent=_ScriptedGenerator(),
         compositeur_equipe=CompositeurEquipe(provider=provider),

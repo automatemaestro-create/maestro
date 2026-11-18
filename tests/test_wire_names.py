@@ -57,6 +57,34 @@ from maestro.orchestrator.recovery import (
     validate_recovery,
 )
 from maestro.outillage.modele import Constats, Langage, Recommandation
+from maestro.projects import (
+    APPLY_APPROVED,
+    APPLY_DECLINED,
+    APPLY_NOT_NEEDED,
+    AUTHOR_EMAIL,
+    AUTHOR_NAME,
+    DEFAULT_EXCLUDED,
+    DEFAULT_INCLUDED,
+    FIRST_COMMIT_MESSAGE,
+    KIND_ADDED,
+    KIND_DELETED,
+    KIND_MODIFIED,
+    ORIGINS,
+    ApplyResult,
+    FileChange,
+    Perimeter,
+    Project,
+    ProjectDiff,
+    ProjectSettings,
+    ProjectSettingsStore,
+    ProjectStore,
+    RootRejected,
+    ToolingDecision,
+    Vcs,
+    validate_root,
+)
+from maestro.projects import ID_PREFIX as PROJECT_ID_PREFIX
+from maestro.projects.model import GIT_IDENTITY_ENV
 from maestro.queue import EXECUTE_TASK_NAME, TASKS_QUEUE, create_app
 from maestro.queue.worker import execute_task as celery_execute_task
 from maestro.references import ReferenceTicket
@@ -898,3 +926,167 @@ def test_the_playbook_sections_keep_their_headings() -> None:
         body, section = split_skills_section(f"# Dev\n\nCorps.\n\n{heading}\n\n- tester\n")
         assert body.rstrip() == "# Dev\n\nCorps."
         assert section.startswith(heading)
+
+
+# --- The projects (#1671) -----------------------------------------------------------------
+#
+# A project's declaration is a `<id>.json` file in the projects store, read back by every
+# later version; the projects settings are the single `projets.json` file of the settings
+# store. The diff of a task's work and the outcome of its application are served by the API
+# and carried by the events. The origins, the change kinds, the apply outcomes and the
+# refusal reasons are compared and stored; the identity and the first commit message are
+# written into the person's repository.
+
+
+@pytest.fixture()
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # `tmp_path` lives under the profile's `AppData` on Windows, which validation rejects.
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
+
+
+def test_a_project_declaration_keeps_its_json_keys() -> None:
+    project = Project(
+        id="prj-0001",
+        name="Dépensio",
+        root="D:/projets/depensio",
+        origin="nouveau",
+        vcs=Vcs(type="git", base_branch="main", remote="git@exemple:depensio.git"),
+        perimeter=Perimeter(included=("src",), excluded=(".env",)),
+        tooling=ToolingDecision(deferred_at="2026-11-18T10:00:00+00:00"),
+        created_at="2026-11-01T09:00:00+00:00",
+        updated_at="2026-11-02T09:00:00+00:00",
+    )
+    written = {
+        "id": "prj-0001",
+        "nom": "Dépensio",
+        "racine": "D:/projets/depensio",
+        "origine": "nouveau",
+        "vcs": {"type": "git", "branche_base": "main", "distant": "git@exemple:depensio.git"},
+        "perimetre": {"inclus": ["src"], "exclus": [".env"]},
+        "outillage": {"reporte_le": "2026-11-18T10:00:00+00:00"},
+        "cree_le": "2026-11-01T09:00:00+00:00",
+        "modifie_le": "2026-11-02T09:00:00+00:00",
+    }
+    assert project.to_dict() == written
+    assert Project.from_dict(written) == project
+
+
+def test_the_project_store_writes_one_file_per_project_under_its_id(
+    tmp_path: Path, _isolated_home: Path
+) -> None:
+    root = _isolated_home / "depensio"
+    created = ProjectStore(tmp_path / "projets").create("Dépensio", root, origin="nouveau")
+    assert re.fullmatch(r"prj-[0-9a-f]{8}", created.id)
+    assert PROJECT_ID_PREFIX == "prj-"
+    stored = json.loads((tmp_path / "projets" / f"{created.id}.json").read_text("utf-8"))
+    assert set(stored) == {
+        "id",
+        "nom",
+        "racine",
+        "origine",
+        "vcs",
+        "perimetre",
+        "outillage",
+        "cree_le",
+        "modifie_le",
+    }
+    assert stored["nom"] == "Dépensio"
+    assert stored["origine"] == "nouveau"
+
+
+def test_the_project_settings_keep_their_file_and_keys(
+    tmp_path: Path, _isolated_home: Path
+) -> None:
+    directory = _isolated_home / "Maestro"
+    store = ProjectSettingsStore(tmp_path / "reglages")
+    store.write(directory)
+    stored = json.loads((tmp_path / "reglages" / "projets.json").read_text("utf-8"))
+    assert set(stored) == {"repertoire", "dossiers_autorises", "modifie_le"}
+    settings = ProjectSettings.from_dict(
+        {"repertoire": "D:/Maestro", "dossiers_autorises": ["D:/code"], "modifie_le": "t"}
+    )
+    assert (settings.directory, settings.allowed_folders, settings.updated_at) == (
+        "D:/Maestro",
+        ("D:/code",),
+        "t",
+    )
+    assert settings.to_dict() == {
+        "repertoire": "D:/Maestro",
+        "dossiers_autorises": ["D:/code"],
+        "modifie_le": "t",
+    }
+
+
+def test_a_project_diff_and_an_apply_result_keep_their_json_keys() -> None:
+    diff = ProjectDiff(
+        changes=(
+            FileChange(path="src/app.py", kind=KIND_MODIFIED, additions=3, deletions=1),
+            FileChange(path="logo.png", kind=KIND_ADDED, binary=True),
+        ),
+        branch="maestro/t1",
+        base="main",
+    )
+    served = {
+        "modifications": [
+            {
+                "chemin": "src/app.py",
+                "nature": "modifie",
+                "ajouts": 3,
+                "suppressions": 1,
+                "binaire": False,
+            },
+            {
+                "chemin": "logo.png",
+                "nature": "ajoute",
+                "ajouts": 0,
+                "suppressions": 0,
+                "binaire": True,
+            },
+        ],
+        "branche": "maestro/t1",
+        "base": "main",
+        "fichiers": 2,
+        "ajouts": 3,
+        "suppressions": 1,
+    }
+    assert diff.to_dict() == served
+    assert ProjectDiff.from_dict(served) == diff
+    result = ApplyResult(status=APPLY_APPROVED, diff=diff, detail="fusionné", applied=("a",))
+    assert result.to_dict() == {
+        "statut": "approuvee",
+        "diff": served,
+        "detail": "fusionné",
+        "appliques": ["a"],
+    }
+
+
+def test_project_origins_kinds_outcomes_and_identity_keep_their_values() -> None:
+    assert ORIGINS == frozenset({"nouveau", "existant"})
+    assert (KIND_ADDED, KIND_MODIFIED, KIND_DELETED) == ("ajoute", "modifie", "supprime")
+    assert (APPLY_NOT_NEEDED, APPLY_APPROVED, APPLY_DECLINED) == (
+        "sans_objet",
+        "approuvee",
+        "refusee",
+    )
+    assert DEFAULT_EXCLUDED == (".git", "node_modules", ".env", "**/secrets/**")
+    assert DEFAULT_INCLUDED == (".",)
+    assert (AUTHOR_NAME, AUTHOR_EMAIL) == ("Maestro", "maestro@localhost")
+    assert GIT_IDENTITY_ENV == {
+        "GIT_AUTHOR_NAME": "Maestro",
+        "GIT_AUTHOR_EMAIL": "maestro@localhost",
+        "GIT_COMMITTER_NAME": "Maestro",
+        "GIT_COMMITTER_EMAIL": "maestro@localhost",
+    }
+    assert FIRST_COMMIT_MESSAGE == "Maestro : état initial du projet"
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"), [("", "chemin-vide"), ("relatif/projet", "chemin-relatif")]
+)
+def test_a_rejected_root_keeps_its_reason_code(path: str, reason: str) -> None:
+    with pytest.raises(RootRejected) as rejection:
+        validate_root(path)
+    assert rejection.value.reason == reason

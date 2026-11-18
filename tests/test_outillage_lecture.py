@@ -44,7 +44,7 @@ from maestro.outillage import (
 )
 from maestro.outillage.detection import IGNORES_DEFAUT
 from maestro.outillage.verification import ECHOUEE, Verification
-from maestro.projets.modele import Perimetre
+from maestro.projects.model import Perimeter
 from maestro.providers.base import ModelProvider
 
 SECRET = "secret-a-ne-jamais-lire"
@@ -143,13 +143,13 @@ LECTURE_DOTNET: tuple[str, ...] = (
 
 
 def lire(
-    indices: Analyse, lecteur: _Lecteur, perimetre: Perimetre | None = None
+    indices: Analyse, lecteur: _Lecteur, perimetre: Perimeter | None = None
 ) -> Analyse:
     """La lecture jouée jusqu'au bout, comme la Control Tower la joue."""
     return asyncio.run(
         lire_le_projet(
             indices,
-            perimetre=perimetre if perimetre is not None else Perimetre(),
+            perimetre=perimetre if perimetre is not None else Perimeter(),
             provider=lecteur,
             modele="modele-factice",
         )
@@ -384,7 +384,7 @@ def test_une_commande_en_echec_est_dite_au_modele_et_ce_qu_il_en_tire_confronte(
     analyse = asyncio.run(
         lire_le_projet(
             analyser(projet_dotnet(tmp_path)),
-            perimetre=Perimetre(),
+            perimetre=Perimeter(),
             provider=lecteur,
             modele="modele-factice",
             echecs=(echec,),
@@ -647,7 +647,7 @@ def test_le_perimetre_declare_du_projet_s_applique_a_la_lecture(tmp_path: Path) 
     racine = projet_dotnet(tmp_path)
     ecrire(racine, "interne/notes.md", f"{SECRET}\n")
     lecteur = _Lecteur(("LIRE: interne/notes.md\nLISTER: interne", "FIN"))
-    perimetre = Perimetre(exclus=(*Perimetre().exclus, "interne"))
+    perimetre = Perimeter(excluded=(*Perimeter().excluded, "interne"))
 
     analyse = lire(analyser(racine, perimetre=perimetre), lecteur, perimetre)
 

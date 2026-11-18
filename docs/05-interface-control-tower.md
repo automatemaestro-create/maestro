@@ -2710,7 +2710,7 @@ c'est un geste normal, qui ne touche à rien.
   Si l'écriture échoue, la confirmation reste ouverte et dit que l'autorisation n'a pas abouti :
   une API injoignable y prend le ton de panne des autres écrans, pas celui d'un refus.
 - **Il ne le pourrait pas** (partage réseau, racine de disque, dossier absent…) : aucun bouton.
-  Le bandeau le dit à la place de son offre, avec le motif en mots que `valider_racine` rendrait
+  Le bandeau le dit à la place de son offre, avec le motif en mots que `validate_root` rendrait
   et son conseil (« Ce dossier ne peut pas être autorisé — Racine de disque. Descendre d'un
   cran… »).
 - **Tout autre motif** (zone protégée, dossier système, dépôt de Maestro…) n'offre pas le geste,
@@ -2723,7 +2723,7 @@ une autorisation devenue inutilisable, disque débranché par exemple, y est sig
 fait relire l'explorateur ouvert au-dessus, pour que ses deux vues ne se contredisent pas : si la
 page affichée sort des dossiers explorables, il y revient, le refus en tête, qui propose d'autoriser
 le dossier de nouveau. L'autorisation ne crée
-**aucune seconde porte** : le dossier passe par `valider_racine` à l'autorisation et y repasse à
+**aucune seconde porte** : le dossier passe par `validate_root` à l'autorisation et y repasse à
 chaque lecture de la frontière, et les zones interdites restent refusées sous un dossier autorisé.
 Un poste sans aucun dossier explorable (`aucune-racine-explorable`) en sort de même : un chemin
 saisi revient `hors-racines-explorables`, et se propose à l'autorisation.
@@ -2738,7 +2738,7 @@ un backend distant n'aura jamais de dialogue natif, et les trois voies ci-dessus
 voies.
 
 Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_entree`,
-`DossierHorsFrontiere`), `maestro/projets/reglages.py` (`autoriser`, `retirer`),
+`DossierHorsFrontiere`), `maestro/projects/settings.py` (`allow`, `remove`),
 `apps/web/components/projets/ExplorateurDossiers.tsx` et
 `apps/web/components/parametres/ParametresProjets.tsx`. Couverture :
 [`tests/test_selecteur.py`](../tests/test_selecteur.py),
@@ -5309,7 +5309,7 @@ obligerait à tout relire pour savoir quoi retirer.
 | `type-inconnu` | un type de source hors `fichier`/`dossier`/`url` |
 | `televersement-inconnu` | l'`id` ne désigne aucun téléversement (expiré, jamais reçu, faute de frappe) |
 | `url-non-suivable`, `url-absente`, `url-trop-longue` | l'URL n'est pas une adresse `http(s)` exploitable |
-| `chemin-sensible`, `racine-de-disque`, `dossier-absent`… | motifs de `valider_racine` (EF-38), **conservés tels quels** |
+| `chemin-sensible`, `racine-de-disque`, `dossier-absent`… | motifs de `validate_root` (EF-38), **conservés tels quels** |
 | `nom-invalide`, `nom-absent`, `nom-trop-long` | le nom d'un fichier est un nom, pas un chemin |
 | `taille-absente`, `taille-invalide` | une source non mesurée ne peut pas être plafonnée |
 | `source-trop-volumineuse`, `ingestion-trop-volumineuse`, `trop-de-sources` | plafonds d'ingestion (§6.8) |
@@ -6092,7 +6092,7 @@ comportement réel.
   touche jamais au dossier sur le disque** : oublier un projet n'est pas supprimer le travail de
   l'utilisateur.
 - `POST /api/projets/{id}/versionner` → `Projet` (#855) — met un projet **non versionné** sous Git
-  par le verbe de #704 (`ProjetStore.versionner`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) :
+  par le verbe de #704 (`ProjectStore.enable_versioning`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) :
   `git init` puis un **premier commit** « Maestro : état initial du projet » de toute la racine,
   `git add -A` donc le `.gitignore` du projet **respecté**, pour que la branche de base résolve.
   Rend la fiche **relue**, `vcs` constaté. **Sans corps** : le `vcs` ne se déclare pas (EF-38), il
@@ -6127,11 +6127,11 @@ comportement réel.
   reste en place.
 - `GET /api/projets/dossiers-autorises` → `DossiersAutorises` (#1610) — les **dossiers autorisés
   depuis l'écran**, dans l'ordre de leur autorisation. Chacun porte son `refus` **du moment** :
-  `valider_racine` les rejuge à chaque lecture, et une autorisation devenue inutilisable (disque
+  `validate_root` les rejuge à chaque lecture, et une autorisation devenue inutilisable (disque
   débranché) ne sert plus de frontière — l'écran le dit.
 - `POST /api/projets/dossiers-autorises` → `DossiersAutorises` + `chemin` (#1610) — autorise un
   dossier sur ce poste. Corps `{ "chemin": "D:/clients/acme" }`. Le dossier passe par
-  `valider_racine` (sans création) : refus motivé (422/403/404) d'un dossier qui ne pourrait pas
+  `validate_root` (sans création) : refus motivé (422/403/404) d'un dossier qui ne pourrait pas
   être la racine d'un projet, et **rien n'est écrit**. Idempotent ; effet **sans redémarrage** — la
   frontière se relit à chaque appel.
 - `DELETE /api/projets/dossiers-autorises?chemin=…` → `DossiersAutorises` (#1610) — retire une
@@ -6219,7 +6219,7 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
     "message": "D:/clients/acme est hors des dossiers explorables : C:/Users/moi.",
     "autorisation": {
       "chemin": "D:/clients/acme",  // le dossier en POSIX, celui qu'on autoriserait
-      "refus": null                 // null : valider_racine l'accepte, l'écran propose le geste
+      "refus": null                 // null : validate_root l'accepte, l'écran propose le geste
     }                               // sinon le refus qu'il rendrait (partage réseau, absent…)
   }
 }
@@ -6284,11 +6284,11 @@ en porte deux, superposées :
 1. **les racines explorables** — le dossier utilisateur par défaut, remplaçable par
    `MAESTRO_EXPLORATEUR_RACINES` (séparateur `;` sous Windows, `:` sous POSIX), et **toujours**
    les racines des projets déjà déclarés, explorables par construction, et les **dossiers
-   autorisés depuis l'écran** (#1610), que `valider_racine` rejuge à chaque lecture. Une racine
+   autorisés depuis l'écran** (#1610), que `validate_root` rejuge à chaque lecture. Une racine
    contenue dans une autre est retirée de la liste : elle n'ajoute aucune permission ;
-2. **les zones interdites** de `maestro.projets.racine`, qui s'appliquent *à l'intérieur* des
+2. **les zones interdites** de `maestro.projects.root`, qui s'appliquent *à l'intérieur* des
    racines — le dossier utilisateur se **traverse**, `~/.ssh` non. C'est la même liste que celle
-   qui refuse une racine de projet (#221), extraite en `verifier_zone_interdite` pour être
+   qui refuse une racine de projet (#221), extraite en `check_forbidden_zone` pour être
    partagée : une zone interdite à la déclaration ne peut pas devenir lisible par l'explorateur.
 
 Quand une restriction est posée, un projet qui vit hors d'elle (`D:/projets`) est refusé, avec son

@@ -64,7 +64,7 @@ from maestro.engine.verification import (
 )
 from maestro.orchestrator import BRIEF_SYSTEM_PROMPT, Brief, Orchestrator
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
-from maestro.projets import Projet, ProjetStore
+from maestro.projects import Project, ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import ATELIERS_RESERVES, chemin_atelier
@@ -246,18 +246,18 @@ def _plan(*ids: str) -> str:
     )
 
 
-def _projet_nu(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_nu(tmp_path: Path) -> tuple[ProjectStore, Project]:
     racine = tmp_path / "projets" / "herbier"
     racine.mkdir(parents=True)
     (racine / "README.md").write_text("# Herbier\n\nnpm start\n", encoding="utf-8")
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("herbier", racine)
-    assert not projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("herbier", racine)
+    assert not projet.versioned, projet
     return depot, projet
 
 
 def _moteur(
-    depot: ProjetStore, verificateur: _Verificateur, joueur: _Joueur, *, agent: _Agent
+    depot: ProjectStore, verificateur: _Verificateur, joueur: _Joueur, *, agent: _Agent
 ) -> OrchestrationEngine:
     executeur = LocalExecutor(
         agent,
@@ -628,7 +628,7 @@ def test_l_empreinte_d_un_projet_non_versionne_suit_ce_qu_il_porte(tmp_path: Pat
     """Deux relevés du même arbre se confondent ; un fichier qui change les sépare. Le dossier
     de Maestro dans le projet n'y entre pas : il n'est pas le livrable."""
     _depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     avant = empreinte_du_livrable(racine, projet)
     (racine / ".maestro" / "atelier").mkdir(parents=True)
@@ -641,11 +641,11 @@ def test_l_empreinte_d_un_projet_non_versionne_suit_ce_qu_il_porte(tmp_path: Pat
 
 
 def test_l_empreinte_d_une_copie_de_travail_est_celle_de_la_racine_apres_sa_fusion(
-    projet_versionne: Projet, tmp_path: Path
+    projet_versionne: Project, tmp_path: Path
 ) -> None:
     """La vérification juge la copie de travail, la recette la racine après la fusion : sur une
     base qui n'a pas bougé, c'est le même arbre, commité ou non, et l'empreinte le dit."""
-    racine = Path(projet_versionne.racine)
+    racine = Path(projet_versionne.root)
     copie = tmp_path / "copie"
     assert _git(racine, "worktree", "add", "-q", "-b", "maestro/t", str(copie)).returncode == 0
     (copie / "accueil.md").write_text("Bienvenue\n", encoding="utf-8")
@@ -738,7 +738,7 @@ def test_dans_un_projet_non_versionne_la_recette_s_ecrit_en_place(tmp_path: Path
 
     fichier, raison = ecrire_dans_le_projet(projet, "run-1530", "# Recette\n", accorde=False)
 
-    attendu = Path(projet.racine) / ".maestro" / "recette" / "run-1530.md"
+    attendu = Path(projet.root) / ".maestro" / "recette" / "run-1530.md"
     assert (Path(fichier), raison) == (attendu, "")
     assert attendu.read_text(encoding="utf-8") == "# Recette\n"
     assert chemin_de_la_recette("run-1530") == ".maestro/recette/run-1530.md"
@@ -761,7 +761,7 @@ def _git(racine: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture
-def projet_versionne(tmp_path: Path) -> Projet:
+def projet_versionne(tmp_path: Path) -> Project:
     if shutil.which("git") is None:  # pragma: no cover — la CI porte git (#333)
         pytest.skip("git absent du poste")
     racine = tmp_path / "projets" / "herbier-git"
@@ -770,17 +770,17 @@ def projet_versionne(tmp_path: Path) -> Projet:
     assert _git(racine, "init", "-q", "-b", "main").returncode == 0
     assert _git(racine, "add", "-A").returncode == 0
     assert _git(racine, "commit", "-q", "-m", "init").returncode == 0
-    projet = ProjetStore(tmp_path / "depot").creer("herbier-git", racine)
-    assert projet.versionne, projet
+    projet = ProjectStore(tmp_path / "depot").create("herbier-git", racine)
+    assert projet.versioned, projet
     return projet
 
 
 def test_dans_un_projet_versionne_la_recette_est_commitee_sous_l_accord_du_run(
-    projet_versionne: Projet,
+    projet_versionne: Project,
 ) -> None:
     """Commitée seule sur la branche de travail : la racine reste propre, et la fusion
     du run suivant n'est pas refusée pour une racine « occupée »."""
-    racine = Path(projet_versionne.racine)
+    racine = Path(projet_versionne.root)
 
     fichier, raison = ecrire_dans_le_projet(
         projet_versionne, "run-1530", "# Recette\n", accorde=True
@@ -798,9 +798,9 @@ def test_dans_un_projet_versionne_la_recette_est_commitee_sous_l_accord_du_run(
 
 
 def test_sans_accord_un_projet_versionne_ne_recoit_pas_la_recette(
-    projet_versionne: Projet,
+    projet_versionne: Project,
 ) -> None:
-    racine = Path(projet_versionne.racine)
+    racine = Path(projet_versionne.root)
 
     fichier, raison = ecrire_dans_le_projet(
         projet_versionne, "run-1530", "# Recette\n", accorde=False
@@ -813,9 +813,9 @@ def test_sans_accord_un_projet_versionne_ne_recoit_pas_la_recette(
 
 
 def test_une_racine_occupee_n_est_pas_commitee_sous_les_pieds_de_la_personne(
-    projet_versionne: Projet,
+    projet_versionne: Project,
 ) -> None:
-    racine = Path(projet_versionne.racine)
+    racine = Path(projet_versionne.root)
     (racine / "brouillon.txt").write_text("en cours\n", encoding="utf-8")
 
     fichier, raison = ecrire_dans_le_projet(
@@ -850,7 +850,7 @@ def test_a_la_fin_du_run_chaque_critere_du_brief_est_verifie_sur_le_livrable_int
     )
 
     assert all(r.ok for r in rapport.resultats), [r.erreur for r in rapport.resultats]
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     # Une seule recette, après les tâches, sur le brief et les deux livrables réunis — et la
     # commande qui n'a pas tenu, contre-expertisée avant d'être crue (#1177).
     assert len(verificateur.recettes) == 1 and len(verificateur.taches) == 2
@@ -905,7 +905,7 @@ def test_un_run_sans_brief_n_a_pas_de_recette(tmp_path: Path) -> None:
     assert rapport.recette is None
     assert verificateur.recettes == []
     assert all(r.etape != STEP_ACCEPTANCE for r in journal.records)
-    assert not (Path(projet.racine) / ".maestro" / "recette").exists()
+    assert not (Path(projet.root) / ".maestro" / "recette").exists()
 
 
 def test_un_run_dont_aucune_tache_n_aboutit_ne_paie_pas_sa_recette(tmp_path: Path) -> None:

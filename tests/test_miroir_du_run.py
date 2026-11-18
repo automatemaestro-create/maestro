@@ -41,7 +41,7 @@ from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.engine.verification import SYSTEME, VerificateurTaches
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
-from maestro.projets import Projet, ProjetStore
+from maestro.projects import Project, ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import espace_de_travail, ramasser
 from maestro.sandbox import verification as execution
@@ -104,15 +104,15 @@ def copies(monkeypatch: pytest.MonkeyPatch) -> _Copies:
 # --------------------------------------------------------------------------- #
 
 
-def _projet_nu(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_nu(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **non versionné**, déjà peuplé par la personne."""
     racine = tmp_path / "projets" / "herbier"
     (racine / "src").mkdir(parents=True)
     for n in range(_FICHIERS_DE_LA_PERSONNE):
         (racine / "src" / f"page{n}.ts").write_text(f"export const p = {n}\n", encoding="utf-8")
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("herbier", racine)
-    assert not projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("herbier", racine)
+    assert not projet.versioned, projet
     return depot, projet
 
 
@@ -221,7 +221,7 @@ class _Validateur:
         return True
 
 
-def _executeur(agent: ModelProvider, depot: ProjetStore, joueur: _Joueur) -> LocalExecutor:
+def _executeur(agent: ModelProvider, depot: ProjectStore, joueur: _Joueur) -> LocalExecutor:
     return LocalExecutor(
         agent,
         runtimes={DEVELOPER_PROFILE.nom: AgentRuntime(agent, DEVELOPER_PROFILE)},
@@ -233,7 +233,7 @@ def _executeur(agent: ModelProvider, depot: ProjetStore, joueur: _Joueur) -> Loc
     )
 
 
-def _moteur(agent: ModelProvider, depot: ProjetStore, joueur: _Joueur, plan: str):
+def _moteur(agent: ModelProvider, depot: ProjectStore, joueur: _Joueur, plan: str):
     return OrchestrationEngine(
         agent,
         Orchestrator(_Planificateur(plan), model="factice"),
@@ -274,7 +274,7 @@ def test_deux_taches_d_un_run_ne_copient_la_racine_qu_une_fois(
     miroir = copies.naissances[0]
     # Les deux tâches se sont vérifiées au même endroit, et ce n'est pas la racine.
     assert set(joueur.lieux) == {miroir}
-    assert miroir != Path(projet.racine)
+    assert miroir != Path(projet.root)
     # La première vérification copie toute la racine ; la seconde, le seul livrable
     # que la seconde tâche y a ajouté.
     assert copies.fichiers_copies[0] >= _FICHIERS_DE_LA_PERSONNE + 1
@@ -345,8 +345,8 @@ def test_sans_run_tenu_chaque_tache_garde_son_miroir(tmp_path: Path, copies: _Co
 # --------------------------------------------------------------------------- #
 
 
-def _projet(racine: Path) -> Projet:
-    return Projet(id="prj-0000beef", nom="Herbier", racine=racine.as_posix(), vcs=None)
+def _projet(racine: Path) -> Project:
+    return Project(id="prj-0000beef", name="Herbier", root=racine.as_posix(), vcs=None)
 
 
 def test_l_espace_joue_dans_le_miroir_fourni_et_ne_le_retire_pas(tmp_path: Path) -> None:

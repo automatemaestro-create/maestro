@@ -45,7 +45,7 @@ from maestro.outillage import (
     source_manifeste_des_choix,
 )
 from maestro.outillage.verification import A_VERIFIER, Verificateur
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.team import (
@@ -85,7 +85,7 @@ VOUVOIEMENT = re.compile(r"\b(vous|votre|vos|vôtres?|servez)\b", re.IGNORECASE)
 
 @pytest.fixture(autouse=True)
 def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """`Path.home()` sous `tmp_path` : `valider_racine` refuse `AppData` sous Windows (#221)."""
+    """`Path.home()` sous `tmp_path` : `validate_root` refuse `AppData` sous Windows (#221)."""
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
@@ -182,7 +182,7 @@ def _tache_de_p5(tmp_path: Path) -> _Capture:
     """Le chemin réel, des réponses de p5 jusqu'au fournisseur de sa première tâche."""
     racine = Path.home() / "Maestro" / "livre-de-recettes"
     racine.mkdir(parents=True)
-    projet = Projet(id="prj-0000p500", nom="Livre de recettes", racine=racine.as_posix())
+    projet = Project(id="prj-0000p500", name="Livre de recettes", root=racine.as_posix())
     choix = _choix_de_p5()
     constats = constats_depuis_choix(choix)
     recommandation = recommandation_depuis_choix(choix)

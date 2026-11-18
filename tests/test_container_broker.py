@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from maestro.machine import LIGNE_COURTIER, LIGNE_INTEGRITE_BASSE, Machine
-from maestro.projets.modele import Perimetre, Projet, Vcs
+from maestro.projects.model import Perimeter, Project, Vcs
 from maestro.providers.base import Credentials
 from maestro.providers.claude import ClaudeProvider
 from maestro.sandbox import container, container_broker, low_integrity, low_session
@@ -134,7 +134,7 @@ def _git(cwd: Path, *arguments: str) -> None:
     assert done.returncode == 0, done.stderr
 
 
-def _versioned_project(tmp_path: Path) -> tuple[Path, Projet]:
+def _versioned_project(tmp_path: Path) -> tuple[Path, Project]:
     """A versioned project that versions a `.env`, and the worktree of a task."""
     root = tmp_path / "depensio"
     root.mkdir()
@@ -146,13 +146,13 @@ def _versioned_project(tmp_path: Path) -> tuple[Path, Projet]:
     workspace = tmp_path / "espaces" / "tache"
     workspace.parent.mkdir()
     _git(root, "worktree", "add", "-q", "-b", "maestro/tache", str(workspace), "main")
-    project = Projet(
+    project = Project(
         id="prj-depensio",
-        nom="Dépensio",
-        racine=root.as_posix(),
-        origine="existant",
-        vcs=Vcs(type="git", branche_base="main"),
-        perimetre=Perimetre(),
+        name="Dépensio",
+        root=root.as_posix(),
+        origin="existant",
+        vcs=Vcs(type="git", base_branch="main"),
+        perimeter=Perimeter(),
     )
     return workspace, project
 
@@ -213,7 +213,7 @@ def test_a_versioned_project_s_container_gets_its_own_repository_and_its_masks(
     depot = next(v for v in volumes if v.endswith(":/maestro/depot")).rsplit(":/", 1)[0]
     # Rebuilt for the command, removed after it: never read by the host's git.
     assert not Path(depot).exists()
-    assert not any(project.racine_chemin.resolve() == Path(v.rsplit(":/", 1)[0]) for v in volumes)
+    assert not any(project.root_path.resolve() == Path(v.rsplit(":/", 1)[0]) for v in volumes)
 
 
 def test_a_second_request_of_the_session_waits_for_the_first_and_is_told(tmp_path):

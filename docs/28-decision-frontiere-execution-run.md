@@ -836,7 +836,7 @@ devient le défaut. Le déménagement du brief dans le fil refermera ce trou pou
 il ne le refermera pas pour ceux qui partent sans validation, et le refus de `relancer` est **binaire**.
 
 **Un troisième fait, qui ne se lit pas comme un coût.** Une tâche peut **écrire dans le projet de
-l'utilisateur** — `maestro.projets.application.appliquer` (`application.py:643`), après accord
+l'utilisateur** — `maestro.projects.apply.apply_diff` (`apply.py:681`), après accord
 humain. Rejouer les cinq tâches d'un run arrêté à quatre ne coûte donc pas seulement le travail :
 cela **repose des questions déjà tranchées** et **réapplique** dans un projet déjà modifié. Ce
 n'est plus un argument de dépense, c'en est un de correction — et il n'était écrit nulle part.
@@ -1222,7 +1222,7 @@ il vit donc chez celui qui sait que ce process ne tourne plus. `ServiceExecution
 (`_ramasser`) : pour chaque tâche **en vol** du run (la même lecture que celle qui les solde,
 `_taches_en_vol`), il porte sur sa branche ce que son worktree retient
 (`maestro.sandbox.projet.sauver_le_travail_en_vol`). C'est le **même** commit que le démontage
-(`commiter_en_attente` : hooks du projet respectés, `.gitignore` compris), sur les **seuls** worktrees
+(`commit_pending` : hooks du projet respectés, `.gitignore` compris), sur les **seuls** worktrees
 de la forme d'un espace de Maestro pour cette tâche — jamais celui qu'une personne aurait ouvert. Le
 worktree reste monté : le retirer n'ajoute rien à la sauvegarde, et le montage suivant le libère.
 Best-effort et sans jamais lever : un commit que le projet refuse est **dit** au journal de l'API, et

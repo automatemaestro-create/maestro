@@ -21,7 +21,7 @@ chacune ferait un dégât différent selon le régime (docs/24 §2.4) :
 La copie tranche les deux d'un coup, et elle vérifie **la bonne chose** : ce qu'un
 agent trouve en arrivant, c'est-à-dire **ce que le périmètre du projet lui laisse
 voir** — ni `.git`, ni `node_modules`, ni `.env`, ni `**/secrets/**` par défaut
-(`Perimetre`), ni l'atelier `.maestro/`. `npm test` n'y passe donc que si
+(`Perimeter`), ni l'atelier `.maestro/`. `npm test` n'y passe donc que si
 l'installation qu'on écrit avant lui passe aussi. C'est la leçon des produits
 comparables : les étapes de mise en route de l'agent cloud de GitHub Copilot se
 vérifient dans l'environnement neuf où l'agent travaillera, pas sur le poste de

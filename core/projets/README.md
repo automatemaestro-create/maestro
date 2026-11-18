@@ -36,12 +36,12 @@ produire des livrables à recopier à la main : l'espace de travail d'une tâche
   tombe sur une **racine interdite** — racine de disque, dossier utilisateur nu
   ou l'un de ses ancêtres, `.ssh`/`.gnupg`/`.aws`/`.config`/`AppData`/`Library`,
   dossiers système, et le dépôt de Maestro lui-même (ou un dossier qui le
-  contient). **Un refus porte son motif** (`RacineRefusee.motif` :
+  contient). **Un refus porte son motif** (`RootRejected.reason` :
   `racine-de-disque`, `chemin-sensible`, `depot-maestro`…) — l'écran Projets
   doit pouvoir dire *pourquoi*, jamais ignorer en silence
   ([docs/05 §2.7](../../docs/05-interface-control-tower.md)).
 - **L'écriture au-dessus de la racine est barrée** : tout chemin dérivé passe par
-  `chemin_dans_racine()`, qui le résout **avant** de vérifier qu'il est sous la
+  `path_in_root()`, qui le résout **avant** de vérifier qu'il est sous la
   racine — un `../..` comme un lien symbolique pointant dehors sont refusés.
 - **Le VCS est détecté, pas imposé** : un `.git` (dossier, ou fichier `gitdir:`
   d'un worktree) donne `vcs.type = "git"` avec sa branche courante et son
@@ -51,7 +51,7 @@ produire des livrables à recopier à la main : l'espace de travail d'une tâche
 - **Les exclusions par défaut sont les deux gisements de secrets** d'un dépôt
   d'utilisateur (`.env`, `**/secrets/**`) plus la plomberie qu'on ne lit jamais
   (`.git`, `node_modules`) — docs/24 §2.5.
-- Lecture/écriture par le code : `maestro.projets.ProjetStore`
+- Lecture/écriture par le code : `maestro.projects.ProjectStore`
   (`creer` / `lire` / `lister` / `par_racine` / `ecrire` / `supprimer`) — le
   **seul écrivain**, y compris pour l'API.
 - Lecture/écriture par l'API (#223) : `/api/projets` (liste, détail, création,

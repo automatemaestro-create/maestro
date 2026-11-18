@@ -41,7 +41,7 @@ from maestro.espace import nom_redis
 from maestro.orchestrator.schema import Brief as Brief  # ré-export explicite
 from maestro.plan_run import NoeudPlan as NoeudPlan  # ré-export explicite
 from maestro.plan_run import noeuds_depuis
-from maestro.projets.application import DiffProjet
+from maestro.projects.apply import ProjectDiff
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.sources.model import Source as Source  # ré-export explicite
 from maestro.sources.model import sources_from
@@ -456,7 +456,7 @@ class Event:
     # et de ne pas effacer ce qu'un événement précédent a posé (#246).
     etapes: list[EtapeTache] | None = None
     liens: list[LienUtile] | None = None
-    diff: DiffProjet | None = None
+    diff: ProjectDiff | None = None
     # None (et non `[]`) pour la même raison qu'`etapes`/`liens` : seul le
     # lancement en porte, et un événement de fin ne doit pas effacer les sources
     # posées au départ (#315).
@@ -748,7 +748,7 @@ class Event:
             # normalisée, éventuellement vide si rien n'y était lisible (#246).
             etapes=(etapes_depuis(data["etapes"]) if data.get("etapes") is not None else None),
             liens=(liens_depuis(data["liens"]) if data.get("liens") is not None else None),
-            diff=DiffProjet.from_dict(diff_brut) if isinstance(diff_brut, Mapping) else None,
+            diff=ProjectDiff.from_dict(diff_brut) if isinstance(diff_brut, Mapping) else None,
             # Relecture, jamais nouvelle saisie (#315) : les sources ont été
             # résolues et plafonnées au lancement ; les rejuger ici rendrait
             # illisible un run passé dès qu'un plafond serait resserré.

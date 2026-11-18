@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
-from maestro.projets.modele import Perimetre
+from maestro.projects.model import Perimeter
 from maestro.sources.extraction import (
     STATE_IGNORED,
     STATE_READ,
@@ -197,21 +197,21 @@ def test_a_directory_is_walked_according_to_its_perimeter(tmp_path: Path) -> Non
 
     assert reading.state == STATE_READ
     assert "Alpha" in reading.markdown
-    # `.env` and `node_modules` are in `EXCLUS_DEFAUT`: neither read nor even listed.
+    # `.env` and `node_modules` are in `DEFAULT_EXCLUDED`: neither read nor even listed.
     assert "SECRET" not in reading.markdown
     assert "Beta" not in reading.markdown
     assert [entry.name for entry in reading.entries] == ["a.md"]
 
 
 def test_an_explicit_perimeter_restricts_the_directory(tmp_path: Path) -> None:
-    """A `Perimetre` passed explicitly takes precedence over the default."""
+    """A `Perimeter` passed explicitly takes precedence over the default."""
     (tmp_path / "a.md").write_text("Alpha", encoding="utf-8")
     (tmp_path / "b.txt").write_text("Beta", encoding="utf-8")
 
     reading = single(
         extract_sources(
             [Source(type=TYPE_DIRECTORY, name="refs", path=str(tmp_path))],
-            perimeter=Perimetre(inclus=("*.md",), exclus=()),
+            perimeter=Perimeter(included=("*.md",), excluded=()),
         )
     )
 

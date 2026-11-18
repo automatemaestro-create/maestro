@@ -61,7 +61,7 @@ from typing import TextIO
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.rangement import SEGMENT_PROJETS, racine_du_projet
 from maestro.config import Settings, load_settings
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 
 #: Code de sortie : la reprise a rendu son rapport (faite, ou rien à faire).
 CODE_FAIT = 0
@@ -152,7 +152,7 @@ class RapportReprise:
 
 
 def projet_cible(
-    projet_id: str | None = None, *, projets: ProjetStore | None = None
+    projet_id: str | None = None, *, projets: ProjectStore | None = None
 ) -> tuple[str | None, str]:
     """À quel projet rattacher, et pourquoi — voir l'en-tête du module.
 
@@ -161,7 +161,7 @@ def projet_cible(
     **demandé** mais inconnu du dépôt est rendu à None avec son motif : on ne
     range pas une configuration sous un identifiant qui ne désigne rien.
     """
-    projets = projets if projets is not None else ProjetStore.default()
+    projets = projets if projets is not None else ProjectStore.default()
     try:
         connus = projets.ids()
     except Exception:  # pragma: no cover - dépôt illisible : on n'invente pas un rattachement
@@ -181,7 +181,7 @@ def reprendre(
     projet_id: str | None = None,
     *,
     settings: Settings | None = None,
-    projets: ProjetStore | None = None,
+    projets: ProjectStore | None = None,
     configuration: ConfigurationAgents | None = None,
     check: bool = False,
 ) -> RapportReprise:
@@ -283,7 +283,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     settings: Settings | None = None,
-    projets: ProjetStore | None = None,
+    projets: ProjectStore | None = None,
     sortie: TextIO | None = None,
     erreur: TextIO | None = None,
 ) -> int:

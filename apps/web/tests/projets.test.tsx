@@ -882,7 +882,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     expect(within(explorateur).getByText("depensio")).toBeInTheDocument();
   });
 
-  it("n'offre pas le geste pour un dossier hors frontière que valider_racine refuserait", async () => {
+  it("n'offre pas le geste pour un dossier hors frontière que validate_root refuserait", async () => {
     const utilisateur = userEvent.setup();
     const explorateur = await refuserDepensio(utilisateur, {
       chemin: "//serveur/partage",

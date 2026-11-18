@@ -462,7 +462,7 @@ surcharges, capacités, permissions, secrets, MCP. Quatre choses à ne pas défa
 
 - **Les clés et les dossiers viennent des constantes Python** — `CLE_JOURNAL_EVENEMENTS`,
   `CLE_BATTEMENTS`, `TASKS_QUEUE`, `MAILBOX_CHANNEL_PREFIX`/`BROADCAST_CHANNEL`, `ChatStore.default`,
-  `ingestion_root`, `ProjetStore.default` —, importées, jamais recopiées dans un
+  `ingestion_root`, `ProjectStore.default` —, importées, jamais recopiées dans un
   shell ni dans le module : une constante recopiée des deux côtés d'une frontière est ce que #830 a
   vu casser (un mois de captures muettes sur un texte que l'UI ne rendait plus). Le test l'interdit
   par l'AST — aucun littéral `maestro.` hors docstring dans `purge.py`.
@@ -3821,7 +3821,7 @@ Les points de conception, à comprendre avant d'y toucher :
   le ramassage automatique reste muet.
 - **Le dépôt est monté, jamais copié** — c'est le code de la branche, travail non commité compris.
   Et **jamais à la racine** : monté à `/w`, le parent du dépôt est `/`, et
-  `test_projets.py::test_depot_maestro_refuse` rend `racine-de-disque` au lieu de
+  `test_projets.py::test_maestro_repository_rejected` rend `racine-de-disque` au lieu de
   `au-dessus-du-depot-maestro`. Le montage est à `/maestro/depot`. Trouvé par les tests.
 - **Le montage se paie à chaque fichier lu** (#1546) : le dépôt arrive par le partage de fichiers
   de Docker Desktop. Un balayage qui descendait dans `.claude/worktrees/` — 10 worktrees et leurs
@@ -4290,7 +4290,7 @@ Deux moitiés, et il faut les deux :
   que pytest démarre. **Un remède qui coûte une panne récurrente à ceux qui mergent n'est
   pas un remède.**
   Aucune **identité** git n'y est posée globalement, et c'est délibéré : le code qui écrit dans le
-  dépôt de l'utilisateur porte la sienne par `-c` (`maestro/projets/application.py`). En fournir
+  dépôt de l'utilisateur porte la sienne par `-c` (`maestro/projects/apply.py`). En fournir
   une au runner masquerait à nouveau le défaut que #333 a corrigé — une fusion qui n'échouait que
   sur les machines sans `~/.gitconfig`, c'est-à-dire nulle part où quelqu'un regardait.
 - **son absence en CI est une erreur**, pas un saut : `tests/conftest.py` refuse de jouer la suite

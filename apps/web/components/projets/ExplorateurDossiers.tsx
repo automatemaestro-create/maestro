@@ -17,7 +17,7 @@
  * ne casse pas la navigation (critère #225).
  *
  * Un dossier refusé **hors des dossiers explorables** s'autorise d'ici (#1610),
- * quand l'API dit que `valider_racine` l'accepterait : le geste naît sous le
+ * quand l'API dit que `validate_root` l'accepterait : le geste naît sous le
  * refus, et sa confirmation reste dans l'explorateur, sans boîte modale au
  * milieu d'une navigation (variante retenue sur le ticket). Sinon, une ligne dit
  * pourquoi le dossier ne peut pas l'être : jamais un bouton qui échouerait.
@@ -187,7 +187,7 @@ export function RefusMotive({
 /**
  * Pourquoi un dossier hors de la frontière ne s'autorise pas, en mots (#1610).
  *
- * Le libellé du motif et son conseil, jamais le message de `valider_racine` :
+ * Le libellé du motif et son conseil, jamais le message de `validate_root` :
  * il redit le motif et écrit le chemin à la façon du système (`E:\`), quand
  * tout l'explorateur l'écrit en POSIX. Un motif que la table ne connaît pas
  * garde son message, faute de mieux.
@@ -287,7 +287,7 @@ export function ExplorateurDossiers({
   );
 
   // Le dossier que le refus propose d'autoriser — le chemin vient de l'API, en
-  // POSIX, jamais de la saisie : c'est celui que `valider_racine` a jugé.
+  // POSIX, jamais de la saisie : c'est celui que `validate_root` a jugé.
   const autorisation = refus?.autorisation ?? null;
   const autorisable = autorisation !== null && autorisation.refus === null;
 

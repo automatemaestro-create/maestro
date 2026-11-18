@@ -1194,7 +1194,7 @@ def test_le_livrable_se_lit_sur_un_clone_propre(tmp_path: Path) -> None:
 
 
 def test_l_atelier_vit_sous_l_etat_du_poste_et_pas_dans_appdata() -> None:
-    """Deux refus de `valider_racine` à éviter : `AppData` (donc `TMPDIR`) et le dépôt —
+    """Deux refus de `validate_root` à éviter : `AppData` (donc `TMPDIR`) et le dépôt —
     et une seule racine du profil pour l'état du poste (#1457)."""
     racine = racine_atelier({})
 

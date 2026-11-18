@@ -44,7 +44,7 @@ from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower.equipe import EquipeRefusee, ServiceEquipe
 from maestro.controltower.projets import ServiceProjets
 from maestro.decideur import Decideur
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.team import (
     BROWSER_HEADING,
     MAX_CREATED_INSTANCES,
@@ -71,7 +71,7 @@ from maestro.team.creation import (
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A `Path.home()` under `tmp_path` (#221) — without it `valider_racine` would
+    """A `Path.home()` under `tmp_path` (#221) — without it `validate_root` would
     refuse any project root under `AppData` on a Windows workstation."""
     home = tmp_path / "maison"
     home.mkdir(parents=True, exist_ok=True)
@@ -107,10 +107,10 @@ def _templates(tmp_path: Path) -> ConfigurationAgents:
 
 def _service(tmp_path: Path) -> tuple[ServiceEquipe, ConfigurationAgents, str]:
     """The service, its stores and the id of a project that is really declared."""
-    store = ProjetStore(tmp_path / "projets")
+    store = ProjectStore(tmp_path / "projets")
     root = Path.home() / "depensio"
     root.mkdir(parents=True, exist_ok=True)
-    project = store.creer("Dépensio", root)
+    project = store.create("Dépensio", root)
     templates = _templates(tmp_path)
     service = ServiceEquipe(ServiceProjets(store), templates, playbooks=False)
     return service, templates, project.id
@@ -294,13 +294,13 @@ def test_declaring_a_project_instantiates_no_agent(tmp_path: Path, origin: str) 
     **nothing** into the agent configuration stores. Validating a team (#1040) is the
     only path by which an agent is born there.
     """
-    store = ProjetStore(tmp_path / "projets")
+    store = ProjectStore(tmp_path / "projets")
     root = Path.home() / f"projet-{origin}"
     if origin == "existant":
         root.mkdir(parents=True, exist_ok=True)
     templates = _templates(tmp_path)
 
-    project = store.creer("Neuf", root, origine=origin)
+    project = store.create("Neuf", root, origin=origin)
 
     cfg = templates.pour_projet(project.id)
     assert cfg.agents.noms() == ()
@@ -410,7 +410,7 @@ def test_two_projects_do_not_share_their_team(tmp_path: Path) -> None:
     service, templates, project_id = _service(tmp_path)
     other = Path.home() / "autre"
     other.mkdir(parents=True, exist_ok=True)
-    neighbour = ProjetStore(tmp_path / "projets").creer("Voisin", other)
+    neighbour = ProjectStore(tmp_path / "projets").create("Voisin", other)
 
     service.creer(project_id, [_role()])
 
@@ -560,7 +560,7 @@ def test_a_role_with_nothing_recommended_keeps_its_sentence() -> None:
 def _service_with_browser(tmp_path: Path) -> tuple[ServiceEquipe, ConfigurationAgents, str]:
     """The service, its browser built without looking at the workstation."""
     _, templates, project_id = _service(tmp_path)
-    store = ProjetStore(tmp_path / "projets")
+    store = ProjectStore(tmp_path / "projets")
     edge = NavigateurDuPoste("msedge", tmp_path / "msedge.exe")
     service = ServiceEquipe(
         ServiceProjets(store),
@@ -609,7 +609,7 @@ def test_a_team_without_browser_does_not_touch_the_pool(tmp_path: Path) -> None:
     built: list[str] = []
     _, templates, project_id = _service(tmp_path)
     service = ServiceEquipe(
-        ServiceProjets(ProjetStore(tmp_path / "projets")),
+        ServiceProjets(ProjectStore(tmp_path / "projets")),
         templates,
         playbooks=False,
         navigateur=lambda: built.append("appelé") or integration_navigateur(sonde=lambda: None),

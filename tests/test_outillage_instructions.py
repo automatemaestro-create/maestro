@@ -39,7 +39,7 @@ from maestro.outillage.exploration import CADRE_LECTURE
 from maestro.outillage.generation import generer
 from maestro.outillage.modele import Analyse
 from maestro.outillage.redaction import PORTEE_BLOC, PORTEE_FICHIER, rediger
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers.base import ModelProvider
 
 #: Une règle de `CLAUDE.md`, telle qu'un dépôt réel l'écrit — celle de Maestro (#1522).
@@ -110,7 +110,7 @@ def conventions(texte: str) -> str:
 def lire(analyse: Analyse, lecteur: _Lecteur) -> Analyse:
     """La lecture du modèle jouée jusqu'au bout, comme la Control Tower la joue."""
     return asyncio.run(
-        lire_le_projet(analyse, perimetre=Perimetre(), provider=lecteur, modele="factice")
+        lire_le_projet(analyse, perimetre=Perimeter(), provider=lecteur, modele="factice")
     )
 
 
@@ -260,7 +260,7 @@ def test_le_message_de_la_tache_transmet_le_fichier_d_instructions_du_projet(
         source=analyse.source_manifeste(),
     )
     assert not rapport.refus
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     consigne = outillage_du_projet(projet).consigne()
 

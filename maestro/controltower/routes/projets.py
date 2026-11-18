@@ -22,7 +22,7 @@ from maestro.controltower.routes.requetes import (
     RepertoireRequete,
     SelecteurRequete,
 )
-from maestro.projets import RacineRefusee, VersionnementRefuse, canonique, valider_racine
+from maestro.projects import RootRejected, VersioningRejected, canonical, validate_root
 
 router = APIRouter()
 
@@ -154,16 +154,16 @@ def _verdict_racine(chemin: str) -> dict[str, Any]:
     laisser l'utilisateur découvrir le refus à la soumission.
     """
     try:
-        resolu = valider_racine(chemin)
-    except RacineRefusee as exc:
+        resolu = validate_root(chemin)
+    except RootRejected as exc:
         try:
-            lisible = canonique(chemin).as_posix()
+            lisible = canonical(chemin).as_posix()
         except OSError:  # pragma: no cover - chemin illisible pour l'OS
             lisible = chemin
         return {
             "chemin": lisible,
             "racine_valide": False,
-            "refus": {"motif": exc.motif, "message": str(exc)},
+            "refus": {"motif": exc.reason, "message": str(exc)},
         }
     return {"chemin": resolu.as_posix(), "racine_valide": True, "refus": None}
 
@@ -206,7 +206,7 @@ async def regler_repertoire_des_projets(ctx: Ctx, corps: RepertoireRequete) -> d
     écran (#225) — il vient de l'explorateur ou du dialogue du poste ; la
     route, elle, valide ce qu'on lui donne.
 
-    422/403/404 motivés quand la racine est refusée (`valider_racine`,
+    422/403/404 motivés quand la racine est refusée (`validate_root`,
     EF-38) — et dans ce cas **rien n'est écrit** : le réglage précédent
     reste en place.
     """
@@ -237,7 +237,7 @@ async def autoriser_dossier(ctx: Ctx, corps: DossierAutoriseRequete) -> dict[str
 
     Un réglage **du poste**, qui **s'ajoute** aux dossiers explorables
     (`MAESTRO_EXPLORATEUR_RACINES` ou le défaut) sans les remplacer, et sans
-    redémarrage. Le dossier passe par `valider_racine` (EF-38) : 422/403/404
+    redémarrage. Le dossier passe par `validate_root` (EF-38) : 422/403/404
     motivés quand il ne pourrait pas être la racine d'un projet, et rien
     n'est écrit. Les zones interdites restent refusées sous un dossier
     autorisé.
@@ -383,7 +383,7 @@ async def versionner_projet(ctx: Ctx, id_projet: str) -> dict[str, Any]:
     `git init` puis un premier commit de toute la racine — `git add -A`, donc
     le `.gitignore` du projet respecté — pour que la branche de base résolve.
     Rien n'est réimplémenté ici : la route appelle le verbe de #704
-    (`ProjetStore.versionner`) et traduit ses refus.
+    (`ProjectStore.enable_versioning`) et traduit ses refus.
 
     **Sans corps**, à dessein : le `vcs` n'est jamais un champ de requête
     (EF-38 — constaté sur le disque, jamais déclaré), et c'est ce qui
@@ -402,5 +402,5 @@ async def versionner_projet(ctx: Ctx, id_projet: str) -> dict[str, Any]:
     projets = ctx.projets
     try:
         return await asyncio.to_thread(projets.versionner, id_projet)
-    except (ValueError, ProjetInconnu, VersionnementRefuse) as exc:
+    except (ValueError, ProjetInconnu, VersioningRejected) as exc:
         raise _refus_projet(exc) from exc

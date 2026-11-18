@@ -36,7 +36,7 @@ from maestro.outillage.clients import Client
 from maestro.outillage.exploration import CADRE_LECTURE
 from maestro.outillage.modele import ORIGINE_PRESCRITE, Analyse, Bornes
 from maestro.outillage.recommandation import recommander
-from maestro.projets.modele import Perimetre
+from maestro.projects.model import Perimeter
 from maestro.providers.base import ModelProvider
 
 #: The rules of a repository that writes its instructions in `CLAUDE.md`, like Maestro's.
@@ -126,7 +126,7 @@ CONCLUSION = "\n".join(
 def read(analysis: Analyse, reader: _Reader) -> Analyse:
     """The model's reading played to the end, as the Control Tower plays it."""
     return asyncio.run(
-        lire_le_projet(analysis, perimetre=Perimetre(), provider=reader, modele="fake")
+        lire_le_projet(analysis, perimetre=Perimeter(), provider=reader, modele="fake")
     )
 
 

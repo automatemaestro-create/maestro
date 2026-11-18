@@ -76,7 +76,7 @@ PYTEST_IMAGE_NOM="${MAESTRO_PYTEST_IMAGE:-maestro-pytest}"
 #: Ramasser les images périmées après une construction ? 0 pour ne jamais le faire (#463).
 PYTEST_GC="${MAESTRO_PYTEST_GC:-1}"
 # Deux niveaux, JAMAIS la racine : monté à `/w`, le parent du dépôt serait `/` et
-# `test_projets.py::test_depot_maestro_refuse` rendrait `racine-de-disque` au lieu de
+# `test_projets.py::test_maestro_repository_rejected` rendrait `racine-de-disque` au lieu de
 # `au-dessus-du-depot-maestro` — un rouge qui ne dit rien du code (trouvé par les tests, #372).
 PYTEST_MONTAGE=/maestro/depot
 #: auto (défaut) · conteneur (exige Docker, échoue sinon) · natif (l'ancien régime).

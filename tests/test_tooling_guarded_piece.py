@@ -52,9 +52,9 @@ from maestro.outillage.verification import (
     Verificateur,
     Verification,
 )
-from maestro.projets import ProjetStore
-from maestro.projets.modele import Perimetre
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.model import Perimeter
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 
@@ -202,7 +202,7 @@ def read(root: Path, guard: str = GUARDED) -> Analyse:
     """The repository analysed, then read by a model that opens its `CLAUDE.md`."""
     reader = _Reader(("LIRE: CLAUDE.md", conclusion(guard)))
     return asyncio.run(
-        lire_le_projet(analyser(root), perimetre=Perimetre(), provider=reader, modele="fake")
+        lire_le_projet(analyser(root), perimetre=Perimeter(), provider=reader, modele="fake")
     )
 
 
@@ -211,7 +211,7 @@ def service(
 ) -> tuple[ServicePieces, ServiceProjets]:
     """The pieces service of a project read by the fake model, on a workstation with Claude Code."""
     projects = ServiceProjets(
-        ProjetStore(tmp_path / "store"), reglages=ReglagesProjetsStore(tmp_path / "settings")
+        ProjectStore(tmp_path / "store"), reglages=ProjectSettingsStore(tmp_path / "settings")
     )
     claude = Client(cle="claude", libelle="Claude Code")
     tooling = ServiceOutillage(
@@ -305,7 +305,7 @@ def test_the_guard_is_played_without_then_with_the_piece_on_a_copy(home: Path) -
         FichierGarde(nom="CLAUDE.md", chemin="CLAUDE.md", role="budget", commande=GUARD),
         chemin="CLAUDE.md",
         texte=after,
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
     )
 
     assert player.guard_runs() == [CLAUDE_MD, after]
@@ -331,7 +331,7 @@ def test_on_a_versioned_project_the_fresh_clone_carries_the_piece(home: Path) ->
         FichierGarde(nom="CLAUDE.md", chemin="CLAUDE.md", role="budget", commande=GUARD),
         chemin="CLAUDE.md",
         texte=after,
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
         installation=_installation(),
     )
 
@@ -352,7 +352,7 @@ def test_a_guard_already_red_without_the_piece_says_nothing_of_the_piece(home: P
         FichierGarde(nom="CLAUDE.md", chemin="CLAUDE.md", role="budget", commande=GUARD),
         chemin="CLAUDE.md",
         texte=CLAUDE_MD + "\n@AGENTS.md\n",
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
     )
 
     assert verdict.etat == A_VERIFIER
@@ -370,7 +370,7 @@ def test_a_guard_without_a_command_is_not_played_and_says_why(home: Path) -> Non
         FichierGarde(nom="CLAUDE.md", chemin="CLAUDE.md", role="budget"),
         chemin="CLAUDE.md",
         texte=CLAUDE_MD + "\n@AGENTS.md\n",
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
     )
 
     assert verdict.etat == A_VERIFIER and "aucune commande" in verdict.raison
@@ -388,7 +388,7 @@ def test_a_real_guard_turns_red_on_a_real_copy_and_the_root_stays_intact(home: P
 
     def verdict_for(text: str) -> Verification:
         return Verificateur().verifier_garde(
-            root, guard, chemin="CLAUDE.md", texte=text, perimetre=Perimetre()
+            root, guard, chemin="CLAUDE.md", texte=text, perimetre=Perimeter()
         )
 
     red = verdict_for(CLAUDE_MD + "\n<!-- BEGIN:maestro-outillage -->\n@AGENTS.md\n")

@@ -67,8 +67,8 @@ from maestro.outillage.questionnaire import (
     resume_des_choix,
 )
 from maestro.outillage.verification import Verificateur, sonde
-from maestro.projets import ProjetStore
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.scenarios.gestes import reponse_a
@@ -487,7 +487,7 @@ def test_la_proposition_retenue_ouvre_la_premiere_piece_avec_ce_qu_elle_proposai
     maison.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
     projets = ServiceProjets(
-        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+        ProjectStore(tmp_path / "depot"), reglages=ProjectSettingsStore(tmp_path / "reglages")
     )
     racine = maison / "Maestro" / "recettes"
     projet = str(projets.creer("recettes", str(racine), origine=ORIGINE_NOUVEAU)["id"])

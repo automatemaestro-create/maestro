@@ -45,9 +45,9 @@ from maestro.engine.executor import (
     LocalExecutor,
 )
 from maestro.orchestrator.schema import Task
-from maestro.projets.modele import Perimetre, Projet, Vcs
-from maestro.projets.racine import RacineRefusee, detecter_vcs
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Perimeter, Project, Vcs
+from maestro.projects.root import RootRejected, detect_vcs
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import (
     DOSSIER_ATELIER,
@@ -75,7 +75,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path`, comme dans les tests du socle (#221).
 
     Indispensable sous Windows : le `tmp_path` de pytest vit sous `AppData`, que
-    `valider_racine` interdit à juste titre — sans cette isolation, toutes les
+    `validate_root` interdit à juste titre — sans cette isolation, toutes les
     racines de projet de ce fichier seraient refusées.
     """
     maison = tmp_path / "maison"
@@ -108,18 +108,18 @@ def _arborescence(racine: Path) -> None:
     (racine / "services" / "api" / "secrets" / "jeton.txt").write_text("zz", encoding="utf-8")
 
 
-def _projet(racine: Path, *, vcs: Vcs | None = None, perimetre: Perimetre | None = None) -> Projet:
+def _projet(racine: Path, *, vcs: Vcs | None = None, perimetre: Perimeter | None = None) -> Project:
     """Un projet inerte pointant sur `racine` (le dépôt n'est pas sollicité ici)."""
-    return Projet(
+    return Project(
         id="prj-0000dead",
-        nom="Démo",
-        racine=racine.as_posix(),
+        name="Démo",
+        root=racine.as_posix(),
         vcs=vcs,
-        perimetre=perimetre if perimetre is not None else Perimetre(),
+        perimeter=perimetre if perimetre is not None else Perimeter(),
     )
 
 
-def _projet_copie(tmp_path: Path) -> Projet:
+def _projet_copie(tmp_path: Path) -> Project:
     """Un projet **non versionné** posé sur le disque, avec son arborescence."""
     racine = tmp_path / "projets" / "depensio"
     racine.mkdir(parents=True)
@@ -142,7 +142,7 @@ def _git(racine: Path, *arguments: str) -> str:
     return resultat.stdout
 
 
-def _projet_git(tmp_path: Path, *, branche: str = "main") -> Projet:
+def _projet_git(tmp_path: Path, *, branche: str = "main") -> Project:
     """Un projet **versionné** : dépôt jetable, un commit, VCS détecté comme en vrai."""
     racine = tmp_path / "projets" / "depensio-git"
     racine.mkdir(parents=True)
@@ -161,7 +161,7 @@ def _projet_git(tmp_path: Path, *, branche: str = "main") -> Projet:
         "-m",
         "socle",
     )
-    return _projet(racine, vcs=detecter_vcs(racine))
+    return _projet(racine, vcs=detect_vcs(racine))
 
 
 # --------------------------------------------------------------------------- #
@@ -186,7 +186,7 @@ def test_sans_projet_l_espace_reste_le_repertoire_jetable() -> None:
 
 def test_projet_non_versionne_travaille_dans_sa_racine(tmp_path: Path) -> None:
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t1") as ws:
         assert ws.path.resolve() == racine.resolve()  # l'espace **est** la racine
         (ws.path / "NOUVEAU.md").write_text("livrable", encoding="utf-8")
@@ -237,7 +237,7 @@ def test_le_recensement_ne_suit_aucun_lien_symbolique(tmp_path: Path) -> None:
     dehors.mkdir()
     (dehors / "cle.txt").write_text("secret du poste", encoding="utf-8")
     try:
-        (Path(projet.racine) / "src" / "evasion").symlink_to(dehors, target_is_directory=True)
+        (Path(projet.root) / "src" / "evasion").symlink_to(dehors, target_is_directory=True)
     except (OSError, NotImplementedError):  # pragma: no cover - dépend des droits Windows
         pytest.skip("liens symboliques indisponibles sur ce poste")
     with espace_de_travail(projet, tache_id="t1") as ws:
@@ -249,7 +249,7 @@ def test_le_recensement_ne_suit_aucun_lien_symbolique(tmp_path: Path) -> None:
 
 def test_rien_n_est_retire_de_la_racine_meme_sur_exception(tmp_path: Path) -> None:
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with pytest.raises(RuntimeError):
         with espace_de_travail(projet, tache_id="t1") as ws:
             (ws.path / "en-cours.md").write_text("à moitié", encoding="utf-8")
@@ -268,7 +268,7 @@ def test_l_atelier_de_la_tache_est_ouvert_dans_la_racine(tmp_path: Path) -> None
     """Créé et pas seulement nommé : un agent qui y `cd` ou y lance un script en a
     besoin, là où `Write` l'aurait créé au passage."""
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
 
     with espace_de_travail(projet, tache_id="verification-qa") as ws:
         assert ws.atelier == f"{DOSSIER_ATELIER}/verification-qa"
@@ -291,14 +291,14 @@ def test_l_atelier_n_entre_jamais_au_recensement(tmp_path: Path) -> None:
 
     assert produits == ["index.html"]
     # Rien n'est effacé pour autant : ce qui a servi reste lisible, rangé à part.
-    assert (Path(projet.racine) / DOSSIER_ATELIER / "t1" / "verif.mjs").is_file()
+    assert (Path(projet.root) / DOSSIER_ATELIER / "t1" / "verif.mjs").is_file()
 
 
 def test_l_atelier_d_une_tache_voisine_n_entre_pas_davantage(tmp_path: Path) -> None:
     """Les tâches d'un projet non versionné se succèdent dans la même racine :
     l'atelier de la précédente n'est pas le livrable de la suivante."""
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     (racine / DOSSIER_ATELIER / "t0").mkdir(parents=True)
     (racine / DOSSIER_ATELIER / "t0" / "vieux.txt").write_text("d'avant", encoding="utf-8")
 
@@ -315,7 +315,7 @@ def test_l_atelier_s_ecrit_sans_que_la_frontiere_le_refuse(tmp_path: Path) -> No
     donnée, pas un refus de plus — l'inverse d'une exclusion de périmètre, qui
     vaut aussi à l'écriture."""
     projet = _projet_copie(tmp_path)
-    frontiere = frontiere_de(Path(projet.racine), projet)
+    frontiere = frontiere_de(Path(projet.root), projet)
 
     assert frontiere is not None
     assert frontiere.refus("Write", {"file_path": f"{DOSSIER_ATELIER}/t1/verif.mjs"}) is None
@@ -373,7 +373,7 @@ def test_un_projet_versionne_n_a_pas_d_atelier(tmp_path: Path) -> None:
 
     with espace_de_travail(projet, tache_id="t1") as ws:
         consigne = ws.consigne_espace()
-        assert not (Path(projet.racine) / DOSSIER_ATELIER).exists()
+        assert not (Path(projet.root) / DOSSIER_ATELIER).exists()
     assert DOSSIER_ATELIER not in consigne
 
 
@@ -392,7 +392,7 @@ def test_la_copie_de_travail_dit_a_l_agent_qu_il_est_a_la_racine_du_projet_nomme
     décision. La copie le dit désormais : le projet par son nom et son dossier, sa
     branche, et que ce que la tâche nomme du projet désigne ce répertoire."""
     projet = _projet_git(tmp_path)
-    dossier = Path(projet.racine).name
+    dossier = Path(projet.root).name
 
     with espace_de_travail(projet, tache_id="socle-nextjs") as ws:
         consigne = ws.consigne_espace()
@@ -400,7 +400,7 @@ def test_la_copie_de_travail_dit_a_l_agent_qu_il_est_a_la_racine_du_projet_nomme
         assert ws.path.name != dossier
 
     assert "racine du projet « Démo »" in consigne
-    assert f"`{projet.racine}`" in consigne
+    assert f"`{projet.root}`" in consigne
     assert f"« {dossier} »" in consigne
     assert "`maestro/socle-nextjs`" in consigne
     assert "sans y créer de sous-dossier" in consigne
@@ -418,12 +418,12 @@ def test_un_projet_qui_porte_le_nom_de_son_dossier_n_est_nomme_qu_une_fois(
 ) -> None:
     """p5 s'appelait comme son dossier : le dire deux fois n'apprendrait rien."""
     projet = _projet_git(tmp_path)
-    projet = replace(projet, nom=Path(projet.racine).name)
+    projet = replace(projet, name=Path(projet.root).name)
 
     with espace_de_travail(projet, tache_id="t1") as ws:
         consigne = ws.consigne_espace()
 
-    assert consigne.count(f"« {projet.nom} »") == 2  # le projet, puis ce que la tâche nomme
+    assert consigne.count(f"« {projet.name} »") == 2  # le projet, puis ce que la tâche nomme
     assert " ou « " not in consigne
 
 
@@ -494,7 +494,7 @@ def test_l_espace_nomme_les_chemins_hors_perimetre(tmp_path: Path) -> None:
     with espace_de_travail(projet, tache_id="vider") as ws:
         consigne = ws.consigne_espace()
 
-    for motif in Perimetre().exclus:
+    for motif in Perimeter().excluded:
         assert motif in consigne, f"exclusion non dite à l'agent : {motif}"
     assert "commande shell ne les atteint pas" in consigne
 
@@ -506,14 +506,14 @@ def test_les_exclusions_dites_sont_celles_du_projet_jamais_une_liste_recopiee(
     l'agent sans une ligne de plus, et un périmètre sans exclusion n'ajoute rien."""
     racine = tmp_path / "projets" / "sur-mesure"
     racine.mkdir(parents=True)
-    sur_mesure = _projet(racine, perimetre=Perimetre(exclus=("dossier/prive",)))
+    sur_mesure = _projet(racine, perimetre=Perimeter(excluded=("dossier/prive",)))
 
     with espace_de_travail(sur_mesure, tache_id="t1") as ws:
         consigne = ws.consigne_espace()
     assert "dossier/prive" in consigne
     assert ".git" not in consigne
 
-    sans_exclusion = _projet(racine, perimetre=Perimetre(exclus=()))
+    sans_exclusion = _projet(racine, perimetre=Perimeter(excluded=()))
     with espace_de_travail(sans_exclusion, tache_id="t1") as ws:
         consigne = ws.consigne_espace()
     assert "hors du périmètre du projet" not in consigne
@@ -537,14 +537,14 @@ def test_le_message_de_la_tache_porte_le_perimetre_exclu(tmp_path: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
-def _frontiere(tmp_path: Path) -> tuple[Projet, FrontiereEcriture]:
+def _frontiere(tmp_path: Path) -> tuple[Project, FrontiereEcriture]:
     projet = _projet_copie(tmp_path)
-    return projet, FrontiereEcriture.pour(projet.racine, projet.perimetre)
+    return projet, FrontiereEcriture.pour(projet.root, projet.perimeter)
 
 
 def test_la_frontiere_laisse_passer_une_ecriture_ordinaire(tmp_path: Path) -> None:
     projet, frontiere = _frontiere(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert frontiere.refus("Write", {"file_path": "src/nouveau.py", "content": ""}) is None
     assert frontiere.refus("Edit", {"file_path": str(racine / "README.md")}) is None
     assert frontiere.refus("Read", {"file_path": "src/app.py"}) is None
@@ -602,7 +602,7 @@ def test_la_frontiere_refuse_les_chemins_exclus_en_lecture_comme_en_ecriture(
 
 def test_la_frontiere_ne_suit_aucun_lien_symbolique(tmp_path: Path) -> None:
     projet, frontiere = _frontiere(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     dehors = tmp_path / "dehors"
     dehors.mkdir()
     try:
@@ -666,7 +666,7 @@ def test_la_portee_et_la_frontiere_appliquent_le_meme_predicat(
     rendent désormais le même verdict sur le même chemin, ce qu'on écrit dans
     l'établi comme ce qui reste dehors."""
     projet, frontiere = _frontiere(tmp_path)
-    portee = portee_de(Path(projet.racine), projet)
+    portee = portee_de(Path(projet.root), projet)
     (_temporaire(tmp_path) / NOM_MKTEMP).mkdir()
     chemin = tmp_path / relatif
 
@@ -711,7 +711,7 @@ def test_un_dossier_de_mktemp_qui_contient_la_racine_n_est_pas_un_etabli(
     racine.mkdir(parents=True)
     _arborescence(racine)
     projet = _projet(racine)
-    frontiere = FrontiereEcriture.pour(projet.racine, projet.perimetre)
+    frontiere = FrontiereEcriture.pour(projet.root, projet.perimeter)
     portee = portee_de(racine, projet)
 
     motif = frontiere.refus("Write", {"file_path": str(conteneur / "voisin" / "note.txt")})
@@ -722,13 +722,13 @@ def test_un_dossier_de_mktemp_qui_contient_la_racine_n_est_pas_un_etabli(
 
 def test_la_frontiere_n_est_armee_que_sur_la_racine(tmp_path: Path) -> None:
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert frontiere_de(racine, projet) is not None
     assert frontiere_de(racine / ".." / racine.name, projet) is not None  # même racine, résolue
     # Un espace qui n'est pas la racine n'en reçoit aucune : l'armer y refuserait tout.
     assert frontiere_de(tmp_path / "ailleurs", projet) is None
     assert frontiere_de(racine, None) is None
-    versionne = _projet(racine, vcs=Vcs(type="git", branche_base="main"))
+    versionne = _projet(racine, vcs=Vcs(type="git", base_branch="main"))
     assert frontiere_de(tmp_path / "worktree", versionne) is None
 
 
@@ -769,7 +769,7 @@ def test_le_hook_du_fournisseur_refuse_sur_la_frontiere_meme_sans_politique(
 @besoin_de_git
 def test_projet_versionne_monte_un_worktree_sur_une_branche_dediee(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1") as ws:
         assert (ws.path / "src" / "app.py").is_file()  # l'agent voit le projet
         assert (ws.path / ".env").is_file()  # un worktree porte tout le suivi Git
@@ -783,7 +783,7 @@ def test_projet_versionne_monte_un_worktree_sur_une_branche_dediee(tmp_path: Pat
 @besoin_de_git
 def test_le_worktree_est_retire_mais_jamais_la_branche(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1") as ws:
         (ws.path / "src" / "nouveau.py").write_text("x = 1\n", encoding="utf-8")
         _git(ws.path, "add", "-A")
@@ -850,7 +850,7 @@ def test_un_redecoupage_part_de_la_branche_de_la_tache_qu_il_remplace(tmp_path: 
     `npm install` comme le reste se refaisaient de zéro.
     """
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="socle") as ws:
         (ws.path / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
         _commite(ws.path, "le socle, livré")
@@ -867,7 +867,7 @@ def test_un_redecoupage_part_de_la_branche_de_la_tache_qu_il_remplace(tmp_path: 
 def test_sans_branche_a_reprendre_le_redecoupage_part_de_la_base(tmp_path: Path) -> None:
     """Une tâche jamais montée n'a pas de branche : on part de la base, comme avant."""
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="socle-r1-init", reprend="socle") as ws:
         assert (ws.path / "README.md").is_file()
     assert _git(racine, "rev-parse", "maestro/socle-r1-init").strip() == _git(
@@ -896,8 +896,8 @@ def test_une_branche_existante_se_reprend_telle_quelle_meme_quand_elle_reprend(
 @besoin_de_git
 def test_la_branche_part_de_la_branche_de_base_declaree(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path, branche="develop")
-    racine = Path(projet.racine)
-    assert projet.vcs is not None and projet.vcs.branche_base == "develop"
+    racine = Path(projet.root)
+    assert projet.vcs is not None and projet.vcs.base_branch == "develop"
     # Une branche `main` divergente existe aussi : c'est bien `develop` qui doit servir de base.
     _git(racine, "branch", "main")
     with espace_de_travail(projet, tache_id="t-1"):
@@ -909,11 +909,11 @@ def test_la_branche_part_de_la_branche_de_base_declaree(tmp_path: Path) -> None:
 @besoin_de_git
 def test_une_branche_de_base_disparue_ne_condamne_pas_la_tache(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    disparue = Projet(
+    disparue = Project(
         id=projet.id,
-        nom=projet.nom,
-        racine=projet.racine,
-        vcs=Vcs(type="git", branche_base="jamais-creee"),
+        name=projet.name,
+        root=projet.root,
+        vcs=Vcs(type="git", base_branch="jamais-creee"),
     )
     with espace_de_travail(disparue, tache_id="t-1") as ws:
         assert (ws.path / "README.md").is_file()  # parti de HEAD, sans broncher
@@ -922,7 +922,7 @@ def test_une_branche_de_base_disparue_ne_condamne_pas_la_tache(tmp_path: Path) -
 @besoin_de_git
 def test_keep_conserve_le_worktree(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1", keep=True) as ws:
         chemin = ws.path
     try:
@@ -936,7 +936,7 @@ def test_keep_conserve_le_worktree(tmp_path: Path) -> None:
 @besoin_de_git
 def test_un_enregistrement_orphelin_ne_bloque_pas_le_montage(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1", keep=True) as ws:
         orphelin = ws.path
     # Le répertoire disparaît sans que Git en soit informé (session tuée, disque nettoyé) :
@@ -960,7 +960,7 @@ def test_un_worktree_abandonne_rend_sa_branche_avec_son_travail(tmp_path: Path) 
     retiré — le retirer d'abord l'emporterait —, et la tâche remonte en le retrouvant.
     """
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1", keep=True) as ws:
         abandonne = ws.path
     # Ce qu'un process tué laisse : un worktree monté, du travail que personne n'a commité.
@@ -980,7 +980,7 @@ def test_un_worktree_ouvert_par_la_personne_n_est_jamais_touche(tmp_path: Path) 
     dit, comme avant.
     """
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     a_soi = tmp_path / "le-mien" / "t-1"
     _git(racine, "worktree", "add", "--quiet", "-b", branche_de_tache("t-1"), str(a_soi))
     (a_soi / "brouillon.txt").write_text("à moi\n", encoding="utf-8")
@@ -998,7 +998,7 @@ def test_un_worktree_ouvert_par_la_personne_n_est_jamais_touche(tmp_path: Path) 
 # --------------------------------------------------------------------------- #
 
 
-def _projet_git_qui_ignore(tmp_path: Path) -> Projet:
+def _projet_git_qui_ignore(tmp_path: Path) -> Project:
     """Un projet versionné qui ignore ses dépendances et sa sortie de build — p5, en petit."""
     racine = tmp_path / "projets" / "p5"
     (racine / "src").mkdir(parents=True)
@@ -1012,7 +1012,7 @@ def _projet_git_qui_ignore(tmp_path: Path) -> Projet:
         racine, "-c", "user.email=tests@maestro", "-c", "user.name=Tests",
         "commit", "--quiet", "-m", "socle",
     )
-    return _projet(racine, vcs=detecter_vcs(racine))
+    return _projet(racine, vcs=detect_vcs(racine))
 
 
 @besoin_de_git
@@ -1045,7 +1045,7 @@ def test_le_recensement_du_worktree_ne_rend_pas_ce_que_git_ignore(tmp_path: Path
 def test_le_recensement_du_worktree_est_celui_que_la_branche_porte(tmp_path: Path) -> None:
     """Le juge et la branche lisent le même ensemble : ce qui est commité au démontage."""
     projet = _projet_git_qui_ignore(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1") as ws:
         (ws.path / "node_modules").mkdir()
         (ws.path / "node_modules" / "paquet.js").write_text("x", encoding="utf-8")
@@ -1096,7 +1096,7 @@ def test_ce_que_la_copie_de_travail_annonce_est_ce_que_sa_branche_porte(tmp_path
     laissé dans la copie part sur la branche avec le livrable, et ce que le
     `.gitignore` du projet retire — dépendances, sortie de build — n'y part pas."""
     projet = _projet_git_qui_ignore(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1") as ws:
         (ws.path / "app").mkdir()
         (ws.path / "app" / "page.tsx").write_text("export default null\n", encoding="utf-8")
@@ -1135,7 +1135,7 @@ def test_la_copie_de_travail_dit_a_l_agent_de_commiter_dans_la_convention(
 def test_au_demontage_le_reste_rejoint_le_dernier_commit_de_l_agent(tmp_path: Path) -> None:
     """La branche ne porte que les commits de l'agent : le reste entre dans le dernier."""
     projet = _projet_git_qui_ignore(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="page") as ws:
         (ws.path / "app").mkdir()
         (ws.path / "app" / "page.tsx").write_text("export default null\n", encoding="utf-8")
@@ -1198,8 +1198,8 @@ def test_un_git_absent_a_l_enumeration_est_une_erreur_motivee(
 
 
 def test_git_absent_est_un_refus_motive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    projet = _projet(tmp_path / "vide", vcs=Vcs(type="git", branche_base="main"))
-    Path(projet.racine).mkdir(parents=True)
+    projet = _projet(tmp_path / "vide", vcs=Vcs(type="git", base_branch="main"))
+    Path(projet.root).mkdir(parents=True)
 
     def _sans_git(*args: object, **kwargs: object) -> object:
         raise FileNotFoundError("git")
@@ -1214,8 +1214,8 @@ def test_git_absent_est_un_refus_motive(tmp_path: Path, monkeypatch: pytest.Monk
 def test_worktree_refuse_est_un_refus_motive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    projet = _projet(tmp_path / "vide", vcs=Vcs(type="git", branche_base="main"))
-    Path(projet.racine).mkdir(parents=True)
+    projet = _projet(tmp_path / "vide", vcs=Vcs(type="git", base_branch="main"))
+    Path(projet.root).mkdir(parents=True)
 
     def _git_fache(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
@@ -1233,14 +1233,14 @@ def test_worktree_refuse_est_un_refus_motive(
 def test_un_temporaire_dans_la_racine_est_refuse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    racine = Path(_projet_copie(tmp_path).racine)
-    projet = _projet(racine, vcs=Vcs(type="git", branche_base="main"))
+    racine = Path(_projet_copie(tmp_path).root)
+    projet = _projet(racine, vcs=Vcs(type="git", base_branch="main"))
     # Un TMPDIR posé *dans* le projet ferait du worktree une écriture en place —
     # contrôle joué avant tout appel à Git, donc sans dépôt réel. Par la variable
     # et non par `tempfile.tempdir` depuis #992 : c'est l'environnement qui décide
     # de la racine des espaces (`maestro.sandbox.ramassage.racine_des_espaces`),
     # et c'est de là que vient le cas réel que ce contrôle attrape.
-    monkeypatch.setenv("TMPDIR", projet.racine)
+    monkeypatch.setenv("TMPDIR", projet.root)
     with pytest.raises(EspaceProjetIndisponible) as refus:
         with espace_de_travail(projet, tache_id="t1"):
             pass  # pragma: no cover - le montage a déjà échoué
@@ -1249,10 +1249,10 @@ def test_un_temporaire_dans_la_racine_est_refuse(
 
 def test_une_racine_disparue_est_refusee_avec_son_motif(tmp_path: Path) -> None:
     projet = _projet(tmp_path / "projets" / "envole")
-    with pytest.raises(RacineRefusee) as refus:
+    with pytest.raises(RootRejected) as refus:
         with espace_de_travail(projet, tache_id="t1"):
             pass  # pragma: no cover - la validation a déjà échoué
-    assert refus.value.motif == "dossier-absent"
+    assert refus.value.reason == "dossier-absent"
 
 
 # --------------------------------------------------------------------------- #
@@ -1313,7 +1313,7 @@ class _FournisseurEcrivain(ModelProvider):
 
 def test_le_runtime_derive_l_espace_du_projet(tmp_path: Path) -> None:
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _FournisseurEcrivain()
     runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
 
@@ -1327,11 +1327,11 @@ def test_le_runtime_derive_l_espace_du_projet(tmp_path: Path) -> None:
 
 
 def test_l_executeur_relit_le_projet_de_la_tache(tmp_path: Path) -> None:
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     racine = tmp_path / "projets" / "depensio"
     racine.mkdir(parents=True)
     _arborescence(racine)
-    projet = depot.creer("Démo", racine)
+    projet = depot.create("Démo", racine)
 
     def _tache(id_: str, projet_id: str | None) -> Task:
         return Task(
@@ -1346,7 +1346,7 @@ def test_l_executeur_relit_le_projet_de_la_tache(tmp_path: Path) -> None:
     executeur = LocalExecutor(_FournisseurEcrivain(), projets=depot)
 
     relu = executeur._projet(_tache("t1", projet.id))
-    assert relu is not None and relu.racine == projet.racine
+    assert relu is not None and relu.root == projet.root
     assert executeur._projet(_tache("t2", None)) is None
     # Un `projet_id` orphelin ramène au `mkdtemp()` d'avant plutôt qu'à un échec.
     assert executeur._projet(_tache("t3", "prj-00000000")) is None
@@ -1443,18 +1443,18 @@ def _tache_routee(id_: str, projet_id: str | None) -> Task:
     )
 
 
-def _executeur(fournisseur: ModelProvider, depot: ProjetStore | None) -> LocalExecutor:
+def _executeur(fournisseur: ModelProvider, depot: ProjectStore | None) -> LocalExecutor:
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
     return LocalExecutor(fournisseur, runtimes=runtimes, projets=depot)
 
 
-def _depot_et_projet(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _depot_et_projet(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **non versionné** qui y est déclaré."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     racine = tmp_path / "projets" / "depensio"
     racine.mkdir(parents=True)
     _arborescence(racine)
-    return depot, depot.creer("Démo", racine)
+    return depot, depot.create("Démo", racine)
 
 
 def _etape_projet(journal: RunJournal, tache_id: str):
@@ -1464,7 +1464,7 @@ def _etape_projet(journal: RunJournal, tache_id: str):
     return etapes[0]
 
 
-def _joue(fournisseur: ModelProvider, depot: ProjetStore | None, projet_id: str | None):
+def _joue(fournisseur: ModelProvider, depot: ProjectStore | None, projet_id: str | None):
     journal = RunJournal(run_id="run-839")
     resultat = asyncio.run(
         _executeur(fournisseur, depot).execute(_tache_routee("t1", projet_id), [], journal)
@@ -1494,9 +1494,9 @@ class _FournisseurQuiRegarde(ModelProvider):
 @besoin_de_git
 def test_l_executeur_monte_un_redecoupage_sur_la_branche_de_la_tache(tmp_path: Path) -> None:
     """De la tâche jusqu'au worktree (#1396) : `Task.resumes_from` atteint le montage."""
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("Démo", Path(_projet_git(tmp_path).racine))
-    assert projet.versionne
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("Démo", Path(_projet_git(tmp_path).root))
+    assert projet.versioned
     with espace_de_travail(projet, tache_id="socle") as ws:
         (ws.path / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
         _commite(ws.path, "le socle, livré")
@@ -1515,10 +1515,10 @@ def test_l_ecriture_en_place_est_consignee_avec_ce_qui_a_ete_ecrit(tmp_path: Pat
     depot, projet = _depot_et_projet(tmp_path)
     resultat, journal = _joue(_FournisseurEcrivain(), depot, projet.id)
     assert resultat.ok
-    assert (Path(projet.racine) / "RAPPORT.md").read_text(encoding="utf-8") == "fait"
+    assert (Path(projet.root) / "RAPPORT.md").read_text(encoding="utf-8") == "fait"
     etape = _etape_projet(journal, "t1")
     assert etape.statut == STATUT_ECRITURE_EN_PLACE
-    assert projet.racine in etape.entree
+    assert projet.root in etape.entree
     assert "1 fichier(s)" in etape.sortie and "RAPPORT.md" in etape.sortie
 
 
@@ -1536,14 +1536,14 @@ def test_une_tache_en_echec_laisse_la_racine_telle_quelle_et_le_dit(tmp_path: Pa
     depot, projet = _depot_et_projet(tmp_path)
     resultat, journal = _joue(_FournisseurQuiTombe(), depot, projet.id)
     assert not resultat.ok
-    assert (Path(projet.racine) / "AVANT-LA-CHUTE.md").is_file()  # rien n'est retiré
+    assert (Path(projet.root) / "AVANT-LA-CHUTE.md").is_file()  # rien n'est retiré
     etape = _etape_projet(journal, "t1")
     assert etape.statut == STATUT_ECRITURE_EN_PLACE
     assert "tâche en échec" in etape.sortie
 
 
 def test_un_projet_introuvable_est_nomme_au_journal(tmp_path: Path) -> None:
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     resultat, journal = _joue(_FournisseurEcrivain(), depot, "prj-00000000")
     assert resultat.ok  # la tâche a travaillé dans un espace jetable (règle de `_projet`)
     etape = _etape_projet(journal, "t1")
@@ -1562,7 +1562,7 @@ def test_sans_projet_aucune_ligne_projet_n_est_consignee(tmp_path: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
-def _joue_sans_equipe(tmp_path: Path, depot: ProjetStore, projet_id: str):
+def _joue_sans_equipe(tmp_path: Path, depot: ProjectStore, projet_id: str):
     """La tâche d'un projet **qui n'a recruté personne** : le routeur la replie.
 
     Le dépôt d'agents est vide pour ce projet, donc `catalogue_du_projet` rend un
@@ -1591,7 +1591,7 @@ def test_une_tache_a_assigner_ne_raconte_aucune_ecriture_d_agent(tmp_path: Path)
     ligne le dit au lieu de laisser chercher un travail qui n'existe pas.
     """
     depot, projet = _depot_et_projet(tmp_path)
-    avant = sorted(p.name for p in Path(projet.racine).iterdir())
+    avant = sorted(p.name for p in Path(projet.root).iterdir())
 
     resultat, journal = _joue_sans_equipe(tmp_path, depot, projet.id)
 
@@ -1600,7 +1600,7 @@ def test_une_tache_a_assigner_ne_raconte_aucune_ecriture_d_agent(tmp_path: Path)
     assert etape.statut == STATUT_ECRITURE_SANS_OBJET
     assert "aucun agent n'a pris cette tâche" in etape.sortie
     assert "avant d'échouer" not in etape.sortie
-    assert sorted(p.name for p in Path(projet.racine).iterdir()) == avant
+    assert sorted(p.name for p in Path(projet.root).iterdir()) == avant
 
 
 @besoin_de_git
@@ -1611,9 +1611,9 @@ def test_une_tache_a_assigner_n_ouvre_ni_ne_fusionne_aucune_branche(tmp_path: Pa
     créée, faute d'agent pour la monter. Le test vérifie l'absence de la branche
     dans le dépôt, pas seulement dans la phrase.
     """
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet_git = _projet_git(tmp_path)
-    projet = depot.creer("Versionné", Path(projet_git.racine))
+    projet = depot.create("Versionné", Path(projet_git.root))
 
     resultat, journal = _joue_sans_equipe(tmp_path, depot, projet.id)
 
@@ -1622,7 +1622,7 @@ def test_une_tache_a_assigner_n_ouvre_ni_ne_fusionne_aucune_branche(tmp_path: Pa
     assert etape.statut == STATUT_FUSION_NON_TENTEE
     assert "aucune branche n'a été ouverte" in etape.sortie
     assert "conserve le travail" not in etape.sortie
-    branches = _git(Path(projet.racine), "branch", "--list", branche_de_tache("t1"))
+    branches = _git(Path(projet.root), "branch", "--list", branche_de_tache("t1"))
     assert branches.strip() == ""
 
 
@@ -1630,7 +1630,7 @@ def test_une_tache_a_assigner_d_un_projet_introuvable_ne_parle_d_aucun_espace(
     tmp_path: Path,
 ) -> None:
     """Troisième régime : « la tâche a travaillé dans un espace jetable » serait faux aussi."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
 
     resultat, journal = _joue_sans_equipe(tmp_path, depot, "prj-00000000")
 
@@ -1760,7 +1760,7 @@ def _livre_et_verifie(tmp_path: Path) -> tuple[Path, _AgentQuiCorrige, object]:
             on_livraison=_juge_qui_laisse_des_traces,
         )
     )
-    return Path(projet.racine), agent, issue
+    return Path(projet.root), agent, issue
 
 
 @besoin_de_git
@@ -1847,7 +1847,7 @@ def test_un_reste_qui_ne_se_defait_pas_se_nomme(
 def test_la_racine_d_un_projet_non_versionne_n_est_jamais_defaite(tmp_path: Path) -> None:
     """En place, la racine est le dossier vivant de la personne : rien n'y est effacé après coup."""
     projet = _projet_copie(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t-1448") as ws:
         with ws.sans_trace():
             (racine / "ecrit-pendant.txt").write_text("par la personne", encoding="utf-8")
@@ -1872,7 +1872,7 @@ def _la_base_avance(racine: Path, contenu: str) -> None:
 @besoin_de_git
 def test_une_livraison_qui_fusionnerait_ne_porte_aucun_conflit(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t1") as ws:
         (ws.path / "nouveau.md").write_text("de l'agent\n", encoding="utf-8")
         _la_base_avance(racine, "print('voisin')\n")  # ailleurs que ce que l'agent touche
@@ -1888,7 +1888,7 @@ def test_le_travail_non_commite_se_confronte_a_la_base_sans_que_rien_ne_bouge(
 ) -> None:
     """Ce que le démontage commiterait compte, et le constat n'écrit nulle part."""
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t1") as ws:
         (ws.path / "src" / "app.py").write_text("print('agent')\n", encoding="utf-8")
         _la_base_avance(racine, "print('voisin')\n")
@@ -1919,7 +1919,7 @@ def test_une_integration_laissee_en_conflit_est_rendue_et_resolue_elle_passe(
 ) -> None:
     """L'agent a commencé d'intégrer la base : en conflit il le reste, résolue elle entre."""
     projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with espace_de_travail(projet, tache_id="t1") as ws:
         (ws.path / "src" / "app.py").write_text("print('agent')\n", encoding="utf-8")
         _git(ws.path, "add", "-A")

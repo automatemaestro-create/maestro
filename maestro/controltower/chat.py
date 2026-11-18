@@ -1287,7 +1287,7 @@ class EquipeRecrutee:
 
 
 #: Les deux origines d'un projet proposé — les deux valeurs de
-#: `maestro.projets.ORIGINES`, nommées ici pour le fil : un dossier **neuf**, que la
+#: `maestro.projects.ORIGINS`, nommées ici pour le fil : un dossier **neuf**, que la
 #: déclaration crée, ou un dossier **existant**, qu'elle importe.
 ORIGINE_NOUVEAU = "nouveau"
 ORIGINE_EXISTANT = "existant"

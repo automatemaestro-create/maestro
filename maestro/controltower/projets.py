@@ -10,11 +10,11 @@ les traduire en codes HTTP.
 Deux responsabilités :
 
 - **le CRUD** (`lister`, `detail`, `creer`, `remplacer`, `supprimer`) — une
-  couche mince au-dessus de `ProjetStore`, qui reste le seul écrivain. La forme
-  servie est celle de `Projet.to_dict` (docs/24 §2.3) : aucune seconde
+  couche mince au-dessus de `ProjectStore`, qui reste le seul écrivain. La forme
+  servie est celle de `Project.to_dict` (docs/24 §2.3) : aucune seconde
   définition du contrat, donc aucune dérive possible entre le fichier stocké et
   la réponse HTTP — et, depuis #855, le **geste** `versionner`, qui n'est pas
-  un champ de plus du CRUD mais l'appel d'un verbe (`ProjetStore.versionner`,
+  un champ de plus du CRUD mais l'appel d'un verbe (`ProjectStore.enable_versioning`,
   #704) : le `vcs` reste **constaté et jamais déclaré** (EF-38), la route ne
   prend aucun `vcs` en entrée, elle déclenche la mise sous Git et rend la
   fiche relue ;
@@ -31,15 +31,15 @@ frontière, pas comme un confort. Elle en porte deux, superposées :
 
 1. **les racines explorables** — le dossier utilisateur par défaut, remplaçable
    par `MAESTRO_EXPLORATEUR_RACINES`, et **toujours** les racines des projets
-   déjà déclarés (elles ont passé `valider_racine`, elles sont explorables par
+   déjà déclarés (elles ont passé `validate_root`, elles sont explorables par
    construction) et les **dossiers autorisés depuis l'écran** (#1610), rejugés
-   par `valider_racine` à chaque lecture. Hors d'elles, refus — qui dit si le
+   par `validate_root` à chaque lecture. Hors d'elles, refus — qui dit si le
    dossier peut s'autoriser d'ici (`autorisation`) ;
-2. **les zones interdites** de `maestro.projets.racine` (`.ssh`, `AppData`,
+2. **les zones interdites** de `maestro.projects.root` (`.ssh`, `AppData`,
    dossiers système, dépôt de Maestro) — qui s'appliquent *à l'intérieur* des
    racines : le dossier utilisateur est traversable, `~/.ssh` ne l'est pas.
 
-Un refus **porte toujours son motif** (`RacineRefusee.motif`) et jamais une
+Un refus **porte toujours son motif** (`RootRejected.reason`) et jamais une
 liste vide : « ce dossier n'a pas de sous-dossier » et « je refuse de regarder
 là » sont deux réponses différentes, et les confondre est ce qui rend un
 explorateur inutilisable. `STATUT_HTTP_PAR_MOTIF` donne à chaque motif son code
@@ -56,19 +56,19 @@ from typing import Any
 
 from maestro.config import Settings, load_settings
 from maestro.outillage import CHEMIN_MANIFESTE
-from maestro.projets import (
-    ORIGINES,
-    Perimetre,
-    Projet,
-    ProjetStore,
-    RacineRefusee,
-    canonique,
-    chemin_dans_racine,
-    detecter_vcs,
-    valider_racine,
-    verifier_zone_interdite,
+from maestro.projects import (
+    ORIGINS,
+    Perimeter,
+    Project,
+    ProjectStore,
+    RootRejected,
+    canonical,
+    check_forbidden_zone,
+    detect_vcs,
+    path_in_root,
+    validate_root,
 )
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects.settings import ProjectSettingsStore
 
 #: Nombre maximum de sous-dossiers rendus par un appel à l'explorateur. Un
 #: dossier de dépôts à 50 000 entrées existe (un `node_modules`, un cache) et
@@ -87,7 +87,7 @@ LIMITE_RECENTS = 5
 #: saisie fautive) et **404** « ce chemin n'existe pas ». Un motif absent de la
 #: table retombe sur 422 — ajouter un motif ne peut donc pas rendre un 500.
 #:
-#: Les refus de la **mise sous Git** (#855, motifs de `VersionnementRefuse`,
+#: Les refus de la **mise sous Git** (#855, motifs de `VersioningRejected`,
 #: #704) passent par la même table : **409** pour `depot-englobant` — ce n'est
 #: ni la saisie ni une frontière, c'est l'**état du disque** qui s'oppose au
 #: geste (la racine est déjà dans un autre dépôt, comme un run déjà terminé
@@ -144,7 +144,7 @@ class ProjetIllisible(ValueError):
     Distinct de `ProjetInconnu` à dessein : « il n'y en a pas » et « il y en a un
     que je n'arrive pas à lire » demandent deux gestes différents. Le listing,
     lui, **saute** un projet illisible plutôt que de rendre la page entière
-    inutilisable — le même arbitrage que `ProjetStore.par_racine` (#221).
+    inutilisable — le même arbitrage que `ProjectStore.by_root` (#221).
     """
 
     def __init__(self, id_: str, cause: Exception) -> None:
@@ -157,7 +157,7 @@ def motif_du_refus(refus: Exception, defaut: str = "") -> str:
     """Le code stable d'un refus, quel que soit le paquet qui l'a levé.
 
     Un refus du paquet `sources` (`SourceRejected`) porte son code dans `reason`, ceux des
-    projets (`RacineRefusee` et ses dérivés) dans `motif`. Les deux se lisent ici, et nulle
+    projets (`RootRejected` et ses dérivés) dans `motif`. Les deux se lisent ici, et nulle
     part ailleurs, jusqu'à la traduction du paquet `projets` (#1652).
     """
     for attribut in ("reason", "motif"):
@@ -174,11 +174,11 @@ def statut_http(refus: Exception, *, explorateur: bool = False) -> int:
     return STATUT_HTTP_PAR_MOTIF.get(motif, STATUT_HTTP_DEFAUT)
 
 
-class DossierHorsFrontiere(RacineRefusee):
+class DossierHorsFrontiere(RootRejected):
     """Le refus `hors-racines-explorables`, qui dit en plus si le dossier s'autorise d'ici.
 
     `autorisation` vaut `{chemin, refus}` : `chemin` est le dossier en POSIX,
-    `refus` est `None` quand `valider_racine` l'accepterait comme racine de
+    `refus` est `None` quand `validate_root` l'accepterait comme racine de
     projet, et sinon le refus motivé qu'il rendrait (#1610). L'écran ne
     propose le geste que dans le premier cas : il ne devine rien.
     """
@@ -197,8 +197,8 @@ class DossierHorsFrontiere(RacineRefusee):
             cible,
         )
         try:
-            valider_racine(cible)
-        except RacineRefusee as refus:
+            validate_root(cible)
+        except RootRejected as refus:
             verdict: dict[str, str] | None = detail_refus(refus)
         else:
             verdict = None
@@ -225,27 +225,27 @@ def detail_refus(refus: Exception) -> dict[str, Any]:
 
 
 class ServiceProjets:
-    """CRUD des projets et explorateur de dossiers, au-dessus d'un `ProjetStore`.
+    """CRUD des projets et explorateur de dossiers, au-dessus d'un `ProjectStore`.
 
     `racines_exploration` fixe les dossiers que l'explorateur accepte
     d'énumérer. `None` (le cas nominal) : le dossier utilisateur. Dans les deux
     cas, les racines des projets **déjà déclarés** s'y ajoutent — un projet
     déclaré est explorable par construction, sa racine ayant passé
-    `valider_racine`.
+    `validate_root`.
     """
 
     def __init__(
         self,
-        store: ProjetStore,
+        store: ProjectStore,
         *,
         racines_exploration: tuple[Path | str, ...] | None = None,
-        reglages: ReglagesProjetsStore | None = None,
+        reglages: ProjectSettingsStore | None = None,
     ) -> None:
         self._store = store
         self._racines = (
             None if racines_exploration is None else tuple(Path(r) for r in racines_exploration)
         )
-        self._reglages = reglages if reglages is not None else ReglagesProjetsStore.default()
+        self._reglages = reglages if reglages is not None else ProjectSettingsStore.default()
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> ServiceProjets:
@@ -253,18 +253,18 @@ class ServiceProjets:
         explorables `MAESTRO_EXPLORATEUR_RACINES`, réglages `MAESTRO_REGLAGES_DIR`."""
         settings = settings or load_settings()
         return cls(
-            ProjetStore.default(settings),
+            ProjectStore.default(settings),
             racines_exploration=_racines_configurees(settings),
-            reglages=ReglagesProjetsStore.default(settings),
+            reglages=ProjectSettingsStore.default(settings),
         )
 
     @property
-    def store(self) -> ProjetStore:
+    def store(self) -> ProjectStore:
         """Le dépôt sous-jacent — le seul écrivain des projets (#221)."""
         return self._store
 
     @property
-    def reglages(self) -> ReglagesProjetsStore:
+    def reglages(self) -> ProjectSettingsStore:
         """Le dépôt des réglages du poste — où naît un projet neuf (#1022)."""
         return self._reglages
 
@@ -286,12 +286,12 @@ class ServiceProjets:
         votre répertoire des projets » d'un dossier qui en est la racine même.
         """
         try:
-            chemin, par_defaut, cree = self._reglages.resoudre(creer=creer)
-        except RacineRefusee as refus:
-            reglages = self._reglages.lire()
-            brut = reglages.repertoire
+            chemin, par_defaut, cree = self._reglages.resolve(create=creer)
+        except RootRejected as refus:
+            reglages = self._reglages.read()
+            brut = reglages.directory
             return {
-                "chemin": brut if brut is not None else str(refus.chemin or ""),
+                "chemin": brut if brut is not None else str(refus.path or ""),
                 "par_defaut": brut is None,
                 "existe": False,
                 "cree": False,
@@ -310,9 +310,9 @@ class ServiceProjets:
 
         Le dossier est validé **et créé** par le dépôt avant d'être stocké : le
         réglage posé est toujours un dossier déclarable, jamais une intention à
-        vérifier plus tard. Lève `RacineRefusee` motivée, que l'API traduit.
+        vérifier plus tard. Lève `RootRejected` motivée, que l'API traduit.
         """
-        self._reglages.ecrire(chemin)
+        self._reglages.write(chemin)
         return self.repertoire(creer=True)
 
     def _repertoire_explorable(self) -> Path | None:
@@ -324,8 +324,8 @@ class ServiceProjets:
         dossier… » s'ouvre dessus).
         """
         try:
-            chemin, _, _ = self._reglages.resoudre()
-        except RacineRefusee:
+            chemin, _, _ = self._reglages.resolve()
+        except RootRejected:
             return None
         return chemin
 
@@ -335,15 +335,15 @@ class ServiceProjets:
         """Les dossiers autorisés depuis l'écran, chacun avec son verdict du moment.
 
         Rend `{dossiers: [{chemin, refus}]}`, dans l'ordre d'autorisation. Le
-        `refus` est celui que `valider_racine` rend **aujourd'hui** (disque
+        `refus` est celui que `validate_root` rend **aujourd'hui** (disque
         débranché, dossier supprimé) : une autorisation devenue invalide ne sert
         plus de frontière, et l'écran le dit au lieu de la taire.
         """
         dossiers: list[dict[str, Any]] = []
-        for chemin in self._reglages.lire().dossiers_autorises:
+        for chemin in self._reglages.read().allowed_folders:
             try:
-                valider_racine(chemin)
-            except RacineRefusee as refus:
+                validate_root(chemin)
+            except RootRejected as refus:
                 dossiers.append({"chemin": chemin, "refus": detail_refus(refus)})
             else:
                 dossiers.append({"chemin": chemin, "refus": None})
@@ -352,26 +352,26 @@ class ServiceProjets:
     def autoriser_dossier(self, chemin: str) -> dict[str, Any]:
         """Autorise `chemin` sur ce poste ; rend `{chemin, dossiers}`.
 
-        Validé par `valider_racine` dans le dépôt : un dossier qu'on ne pourrait
-        pas déclarer comme projet ne s'autorise pas, et `RacineRefusee` motivée
+        Validé par `validate_root` dans le dépôt : un dossier qu'on ne pourrait
+        pas déclarer comme projet ne s'autorise pas, et `RootRejected` motivée
         remonte sans rien écrire. `chemin` est le dossier en POSIX, celui que
         l'explorateur ouvre ensuite.
         """
-        _, valeur = self._reglages.autoriser(chemin)
+        _, valeur = self._reglages.allow(chemin)
         return {"chemin": valeur, **self.dossiers_autorises()}
 
     def retirer_dossier(self, chemin: str) -> dict[str, Any]:
         """Retire une autorisation ; rend `{dossiers}`. `autorisation-inconnue` sinon."""
-        self._reglages.retirer(chemin)
+        self._reglages.remove(chemin)
         return self.dossiers_autorises()
 
     def _dossiers_autorises_valides(self) -> tuple[Path, ...]:
-        """Les dossiers autorisés que `valider_racine` accepte encore, canonicalisés."""
+        """Les dossiers autorisés que `validate_root` accepte encore, canonicalisés."""
         valides = []
-        for chemin in self._reglages.lire().dossiers_autorises:
+        for chemin in self._reglages.read().allowed_folders:
             try:
-                valides.append(valider_racine(chemin))
-            except RacineRefusee:
+                valides.append(validate_root(chemin))
+            except RootRejected:
                 continue
         return tuple(valides)
 
@@ -381,7 +381,7 @@ class ServiceProjets:
         """Les projets déclarés, dans l'ordre des identifiants.
 
         Un fichier **illisible est sauté** : un JSON corrompu ne doit pas rendre
-        l'écran Projets inutilisable (même arbitrage que `ProjetStore.par_racine`).
+        l'écran Projets inutilisable (même arbitrage que `ProjectStore.by_root`).
         Il reste diagnosticable par `detail`, qui l'explique au lieu de le taire.
         """
         return [self._fiche(projet) for projet in self._projets_lisibles()]
@@ -390,7 +390,7 @@ class ServiceProjets:
         """Le projet `id_`. `ProjetInconnu` s'il n'existe pas, `ProjetIllisible` s'il est cassé."""
         return self._fiche(self._lire(id_))
 
-    def entite(self, id_: str) -> Projet:
+    def entite(self, id_: str) -> Project:
         """Le projet `id_` en **entité** — sa racine en `Path`, son périmètre.
 
         `detail` rend la fiche JSON de l'API ; les services qui vont *regarder le
@@ -433,11 +433,11 @@ class ServiceProjets:
 
         `origine="nouveau"` **crée** le dossier s'il manque ; `existant` exige
         qu'il soit là. Le `vcs` n'est jamais demandé à l'appelant : il est
-        constaté sur le disque. Lève `RacineRefusee` (racine hors périmètre) ou
+        constaté sur le disque. Lève `RootRejected` (racine hors périmètre) ou
         `ValueError` (nom vide, origine inconnue, racine déjà déclarée).
         """
         return self._fiche(
-            self._store.creer(nom, racine, origine=origine, inclus=inclus, exclus=exclus)
+            self._store.create(nom, racine, origin=origine, included=inclus, excluded=exclus)
         )
 
     def remplacer(
@@ -464,37 +464,37 @@ class ServiceProjets:
         question à laquelle quelqu'un a répondu.
         """
         ancien = self._lire(id_)  # 404 avant toute écriture — et avant de créer un dossier.
-        if origine not in ORIGINES:
+        if origine not in ORIGINS:
             raise ValueError(
-                f"origine invalide : {origine!r} ({' ou '.join(sorted(ORIGINES))} attendu)."
+                f"origine invalide : {origine!r} ({' ou '.join(sorted(ORIGINS))} attendu)."
             )
-        chemin = valider_racine(racine, creer=origine == "nouveau")
-        projet = Projet(
+        chemin = validate_root(racine, create=origine == "nouveau")
+        projet = Project(
             id=id_,
-            nom=nom,
-            racine=chemin.as_posix(),
-            origine=origine,
-            vcs=detecter_vcs(chemin),
-            perimetre=Perimetre(
-                inclus=inclus if inclus is not None else Perimetre().inclus,
-                exclus=exclus if exclus is not None else Perimetre().exclus,
+            name=nom,
+            root=chemin.as_posix(),
+            origin=origine,
+            vcs=detect_vcs(chemin),
+            perimeter=Perimeter(
+                included=inclus if inclus is not None else Perimeter().included,
+                excluded=exclus if exclus is not None else Perimeter().excluded,
             ),
-            outillage=ancien.outillage,
+            tooling=ancien.tooling,
         )
-        return self._fiche(self._store.ecrire(projet))
+        return self._fiche(self._store.write(projet))
 
     def supprimer(self, id_: str) -> dict[str, Any]:
         """Oublie le projet `id_`. Ne touche **jamais** au dossier sur le disque (#221)."""
         self._lire(id_)
-        self._store.supprimer(id_)
+        self._store.delete(id_)
         return {"id": id_, "supprime": True}
 
     def versionner(self, id_: str) -> dict[str, Any]:
         """Met le projet `id_` sous Git s'il ne l'est pas, et rend sa fiche relue (#855).
 
         Le **seul** geste du service qui écrive dans le dossier de l'utilisateur,
-        et il ne fait qu'appeler le verbe de #704 (`ProjetStore.versionner` →
-        `initialiser_depot`) : `git init` puis un premier commit qui enregistre
+        et il ne fait qu'appeler le verbe de #704 (`ProjectStore.enable_versioning` →
+        `init_repository`) : `git init` puis un premier commit qui enregistre
         la racine telle qu'elle est — `git add -A`, donc le `.gitignore` du
         projet respecté —, pour que la branche de base résolve. Rien n'est
         réimplémenté ici, et rien n'est demandé à l'appelant : pas de `vcs` en
@@ -506,13 +506,13 @@ class ServiceProjets:
         idempotent, et l'écran peut le proposer sans craindre un second clic.
 
         Lève `ProjetInconnu`/`ProjetIllisible` (404/422 — avant toute commande
-        Git), `RacineRefusee` si la racine n'est plus admissible (EF-38, motif à
-        l'appui) et `VersionnementRefuse` motivée si l'initialisation échoue, la
+        Git), `RootRejected` si la racine n'est plus admissible (EF-38, motif à
+        l'appui) et `VersioningRejected` motivée si l'initialisation échoue, la
         racine restant alors dans l'état d'avant. Les trois portent un `motif` :
         c'est ce que `statut_http`/`detail_refus` traduisent, jamais un 500.
         """
         self._lire(id_)  # 404/422 d'abord — et avant qu'une commande Git ne parte.
-        return self._fiche(self._store.versionner(id_))
+        return self._fiche(self._store.enable_versioning(id_))
 
     def reporter_outillage(self, id_: str) -> dict[str, Any]:
         """Enregistre le « plus tard » de l'étape d'outillage, et rend la fiche relue (#1034).
@@ -522,7 +522,7 @@ class ServiceProjets:
         dossier de l'utilisateur : reporter, c'est précisément ne pas y écrire.
         Elle ne prend donc aucun corps, et ne peut rien refuser du dehors.
 
-        Idempotente (`ProjetStore.reporter_outillage` garde la première date) :
+        Idempotente (`ProjectStore.defer_tooling` garde la première date) :
         l'écran peut la rappeler sans craindre un double clic. La fiche rendue
         porte déjà `outillage.a_faire`, donc l'écran n'a rien à recalculer.
 
@@ -531,7 +531,7 @@ class ServiceProjets:
         visible, `a_faire` restant faux parce que le manifeste est là.
         """
         self._lire(id_)  # 404/422 avant toute écriture.
-        return self._fiche(self._store.reporter_outillage(id_))
+        return self._fiche(self._store.defer_tooling(id_))
 
     def reprendre_outillage(self, id_: str) -> dict[str, Any]:
         """Lève le « plus tard » d'un outillage repris dans la conversation (#1161).
@@ -540,7 +540,7 @@ class ServiceProjets:
         s'ouvre pour lui : la fiche cesse de dire « reporté ». Idempotente.
         """
         self._lire(id_)
-        return self._fiche(self._store.reprendre_outillage(id_))
+        return self._fiche(self._store.resume_tooling(id_))
 
     # --- Explorateur de dossiers -----------------------------------------
 
@@ -556,9 +556,9 @@ class ServiceProjets:
         même ordre.
         """
         base = self._racines if self._racines is not None else _racines_defaut()
-        candidates = list(base) + [p.racine_chemin for p in self._projets_lisibles()]
+        candidates = list(base) + [p.root_path for p in self._projets_lisibles()]
         # Les dossiers autorisés depuis l'écran **s'ajoutent** à la base sans la
-        # remplacer (#1610), et seulement ceux que `valider_racine` accepte
+        # remplacer (#1610), et seulement ceux que `validate_root` accepte
         # encore : une autorisation n'ouvre aucune zone interdite.
         candidates.extend(self._dossiers_autorises_valides())
         # Le répertoire des projets entre dans la frontière comme une racine de
@@ -572,7 +572,7 @@ class ServiceProjets:
         retenues: dict[str, Path] = {}
         for candidate in candidates:
             try:
-                resolue = canonique(candidate)
+                resolue = canonical(candidate)
             except OSError:  # pragma: no cover - chemin illisible pour l'OS
                 continue
             if resolue.is_dir():
@@ -625,15 +625,15 @@ class ServiceProjets:
 
         def retenir(candidat: Path | str, origine: str) -> None:
             try:
-                resolu = canonique(candidat)
+                resolu = canonical(candidat)
             except OSError:  # pragma: no cover - chemin illisible pour l'OS
                 return
             cle = _cle(resolu)
             if cle in vus or not resolu.is_dir():
                 return
             try:
-                verifier_zone_interdite(resolu)
-            except RacineRefusee:
+                check_forbidden_zone(resolu)
+            except RootRejected:
                 return
             if _sous_une_racine(resolu, racines) is None:
                 return
@@ -656,13 +656,13 @@ class ServiceProjets:
 
         projets = sorted(
             self._projets_lisibles(),
-            key=lambda p: (p.cree_le or "", p.id),
+            key=lambda p: (p.created_at or "", p.id),
             reverse=True,
         )
         for projet in projets[:LIMITE_RECENTS]:
-            retenir(projet.racine_chemin.parent, "recent")
+            retenir(projet.root_path.parent, "recent")
         for projet in projets:
-            retenir(projet.racine_chemin, "projet")
+            retenir(projet.root_path, "projet")
         for volume in _volumes():
             retenir(volume, "volume")
         return tuple(vus.values())
@@ -676,7 +676,7 @@ class ServiceProjets:
         remonter sortirait des racines — la frontière se voit dans la réponse,
         elle ne se découvre pas au clic suivant.
 
-        Lève `RacineRefusee` **motivée** — jamais une liste vide — quand le
+        Lève `RootRejected` **motivée** — jamais une liste vide — quand le
         chemin sort des racines (`hors-racines-explorables`), tombe dans une
         zone sensible (`chemin-sensible`, `chemin-systeme`, `depot-maestro`),
         n'existe pas (`dossier-absent`), n'est pas un dossier (`pas-un-dossier`)
@@ -688,7 +688,7 @@ class ServiceProjets:
         # donné, lui, passe par la frontière et revient `hors-racines-explorables`
         # avec son `autorisation` — la sortie de ce cul-de-sac (#1610).
         if not racines and not brut:
-            raise RacineRefusee(
+            raise RootRejected(
                 "aucune-racine-explorable",
                 "Aucun dossier explorable sur ce poste : le dossier utilisateur est "
                 "introuvable, et aucun projet ni aucun dossier autorisé n'est déclaré.",
@@ -725,23 +725,23 @@ class ServiceProjets:
     # --- Interne ---------------------------------------------------------
 
     def _dossier_explorable(self, brut: str, racines: tuple[Path, ...]) -> Path:
-        """Le dossier `brut` canonicalisé et autorisé, ou `RacineRefusee` motivée."""
+        """Le dossier `brut` canonicalisé et autorisé, ou `RootRejected` motivée."""
         if not Path(brut).expanduser().is_absolute():
-            raise RacineRefusee(
+            raise RootRejected(
                 "chemin-relatif",
                 f"Chemin relatif refusé : {brut!r} — indiquez un chemin absolu.",
                 brut,
             )
-        cible = canonique(brut)
-        verifier_zone_interdite(cible)
+        cible = canonical(brut)
+        check_forbidden_zone(cible)
         if not _sous_une_racine(cible, racines):
             raise DossierHorsFrontiere(cible, racines)
         if not cible.exists():
-            raise RacineRefusee(
+            raise RootRejected(
                 "dossier-absent", f"Dossier introuvable : {cible.as_posix()}.", cible
             )
         if not cible.is_dir():
-            raise RacineRefusee(
+            raise RootRejected(
                 "pas-un-dossier",
                 f"Chemin invalide : {cible.as_posix()} n'est pas un dossier.",
                 cible,
@@ -754,15 +754,15 @@ class ServiceProjets:
         if parent == cible or not _sous_une_racine(parent, racines):
             return None
         try:
-            verifier_zone_interdite(parent)
-        except RacineRefusee:
+            check_forbidden_zone(parent)
+        except RootRejected:
             return None
         return parent
 
-    def _lire(self, id_: str) -> Projet:
+    def _lire(self, id_: str) -> Project:
         """Le projet `id_`, ou `ProjetInconnu`/`ProjetIllisible` — jamais un 500."""
         try:
-            projet = self._store.lire(id_)
+            projet = self._store.read(id_)
         except ValueError as exc:
             # Deux `ValueError` bien différents se croisent ici : l'identifiant
             # hors slug, que le dépôt refuse de transformer en nom de fichier
@@ -778,12 +778,12 @@ class ServiceProjets:
             raise ProjetInconnu(id_)
         return projet
 
-    def _projets_lisibles(self) -> tuple[Projet, ...]:
+    def _projets_lisibles(self) -> tuple[Project, ...]:
         """Les projets du dépôt, ceux dont le fichier est cassé étant sautés."""
         lisibles = []
         for id_ in self._store.ids():
             try:
-                projet = self._store.lire(id_)
+                projet = self._store.read(id_)
             except (ValueError, OSError, KeyError):
                 continue
             if projet is not None:
@@ -794,18 +794,18 @@ class ServiceProjets:
         """`{racine canonique → id}` — de quoi dire, en un passage, quel dossier est déjà pris.
 
         Calculé une fois par appel à l'explorateur : interroger le dépôt dossier
-        par dossier (`ProjetStore.par_racine`) relirait tous les fichiers à
+        par dossier (`ProjectStore.by_root`) relirait tous les fichiers à
         chaque entrée listée.
         """
         par_racine: dict[str, str] = {}
         for projet in self._projets_lisibles():
             try:
-                par_racine[_cle(canonique(projet.racine))] = projet.id
+                par_racine[_cle(canonical(projet.root))] = projet.id
             except OSError:  # pragma: no cover - chemin illisible pour l'OS
                 continue
         return par_racine
 
-    def _fiche(self, projet: Projet) -> dict[str, Any]:
+    def _fiche(self, projet: Project) -> dict[str, Any]:
         """La forme JSON d'un projet — le fichier stocké, **plus l'outillage constaté** (#1034).
 
         Le fragment `outillage` du fichier ne porte qu'une décision
@@ -830,14 +830,14 @@ class ServiceProjets:
         fiche = projet.to_dict()
         genere = self._outillage_genere(projet)
         fiche["outillage"] = {
-            **projet.outillage.to_dict(),
+            **projet.tooling.to_dict(),
             "genere": genere,
-            "a_faire": projet.outillage.reporte and not genere,
+            "a_faire": projet.tooling.deferred and not genere,
         }
         return fiche
 
     @staticmethod
-    def _outillage_genere(projet: Projet) -> bool:
+    def _outillage_genere(projet: Project) -> bool:
         """Le manifeste d'outillage est-il présent dans la racine du projet ?
 
         Le chemin vient de `maestro.outillage` (`CHEMIN_MANIFESTE`) et n'est
@@ -845,7 +845,7 @@ class ServiceProjets:
         répondre différemment à la même question (#830).
         """
         try:
-            return (projet.racine_chemin / CHEMIN_MANIFESTE).is_file()
+            return (projet.root_path / CHEMIN_MANIFESTE).is_file()
         except OSError:  # pragma: no cover - racine illisible pour l'OS
             return False
 
@@ -888,14 +888,14 @@ def _fiche_dossier(
     return {
         "nom": dossier.name or dossier.as_posix(),
         "chemin": dossier.as_posix(),
-        "depot_git": detecter_vcs(dossier) is not None,
+        "depot_git": detect_vcs(dossier) is not None,
         "projet_id": par_racine.get(_cle(dossier)),
         "origine": origine,
     }
 
 
 def _sous_dossiers(cible: Path) -> list[str]:
-    """Les noms des sous-dossiers de `cible`, triés — ou `RacineRefusee` si illisible.
+    """Les noms des sous-dossiers de `cible`, triés — ou `RootRejected` si illisible.
 
     Rien n'est masqué (ni les dossiers cachés, ni `node_modules`) : un
     explorateur qui filtre en silence fait douter de ce qu'il montre. Le
@@ -905,13 +905,13 @@ def _sous_dossiers(cible: Path) -> list[str]:
         with os.scandir(cible) as entrees:
             noms = [entree.name for entree in entrees if _est_dossier(entree)]
     except PermissionError as exc:
-        raise RacineRefusee(
+        raise RootRejected(
             "acces-refuse",
             f"Dossier illisible : {cible.as_posix()} — accès refusé par le système.",
             cible,
         ) from exc
     except OSError as exc:
-        raise RacineRefusee(
+        raise RootRejected(
             "acces-refuse",
             f"Dossier illisible : {cible.as_posix()} ({exc.strerror or exc}).",
             cible,
@@ -930,15 +930,15 @@ def _est_dossier(entree: os.DirEntry[str]) -> bool:
 def _sous_une_racine(chemin: Path, racines: tuple[Path, ...]) -> Path | None:
     """La racine explorable qui contient `chemin`, ou None.
 
-    Délègue à `chemin_dans_racine` (#221) plutôt que de recomparer des chemins :
+    Délègue à `path_in_root` (#221) plutôt que de recomparer des chemins :
     c'est déjà la fonction qui sait résoudre les `..` et les liens symboliques
     **avant** de comparer, et dupliquer cette logique serait dupliquer une
     frontière de sécurité.
     """
     for racine in racines:
         try:
-            chemin_dans_racine(racine, chemin)
-        except (RacineRefusee, OSError):
+            path_in_root(racine, chemin)
+        except (RootRejected, OSError):
             continue
         return racine
     return None
@@ -951,9 +951,9 @@ def _racines_defaut() -> tuple[Path, ...]:
     ou sur un disque externe n'était pas atteignable, et la seule sortie était
     de renseigner `MAESTRO_EXPLORATEUR_RACINES` — un réglage d'environnement
     pour un geste d'écran. Les volumes du poste élargissent la **frontière** ;
-    ils n'ouvrent rien de nouveau, `verifier_zone_interdite` continuant de
+    ils n'ouvrent rien de nouveau, `check_forbidden_zone` continuant de
     refuser `.ssh`, `AppData`, les dossiers système et le dépôt de Maestro, et
-    `valider_racine` de refuser une racine de disque comme racine de projet.
+    `validate_root` de refuser une racine de disque comme racine de projet.
 
     Le dossier utilisateur reste dans la liste bien qu'un volume le contienne :
     `racines()` dédoublonne par contenance, mais `points_entree()` — ce que

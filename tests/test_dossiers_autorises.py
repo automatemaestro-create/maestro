@@ -6,11 +6,11 @@ renvoyer à `MAESTRO_EXPLORATEUR_RACINES` et à un redémarrage. Les deux critè
 du ticket, dans cet ordre :
 
 ① **le geste aboutit** : le refus dit que le dossier peut s'autoriser, autoriser
-   l'écrit dans les réglages du poste (`maestro.projets.reglages`), l'explorateur
+   l'écrit dans les réglages du poste (`maestro.projects.settings`), l'explorateur
    l'ouvre dès l'appel suivant — aucun redémarrage —, l'autorisation **s'ajoute**
    à la frontière configurée, et elle se retire ;
 ② **il ne s'ouvre que là où il peut aboutir** : un refus pour un autre motif ne
-   porte pas d'autorisation, un dossier que `valider_racine` refuserait ne
+   porte pas d'autorisation, un dossier que `validate_root` refuserait ne
    s'autorise pas (le refus dit pourquoi), et un dossier autorisé n'ouvre
    aucune zone interdite — même écrit à la main dans le fichier.
 
@@ -29,8 +29,8 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import ProjetStore, RacineRefusee
-from maestro.projets.reglages import ReglagesProjets, ReglagesProjetsStore
+from maestro.projects import ProjectStore, RootRejected
+from maestro.projects.settings import ProjectSettings, ProjectSettingsStore
 
 
 @pytest.fixture(autouse=True)
@@ -43,9 +43,9 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture()
-def reglages(tmp_path: Path) -> ReglagesProjetsStore:
+def reglages(tmp_path: Path) -> ProjectSettingsStore:
     """Un dépôt de réglages sur un dossier jetable — jamais celui du poste."""
-    return ReglagesProjetsStore(tmp_path / "reglages")
+    return ProjectSettingsStore(tmp_path / "reglages")
 
 
 @pytest.fixture()
@@ -64,13 +64,13 @@ def dehors(tmp_path: Path) -> Path:
     return dehors
 
 
-def _client(tmp_path: Path, reglages: ReglagesProjetsStore, *racines: Path) -> TestClient:
+def _client(tmp_path: Path, reglages: ProjectSettingsStore, *racines: Path) -> TestClient:
     """L'app, service des projets borné à `racines`, réglages jetables."""
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
         projets=ServiceProjets(
-            ProjetStore(tmp_path / "depot"),
+            ProjectStore(tmp_path / "depot"),
             racines_exploration=racines,
             reglages=reglages,
         ),
@@ -79,7 +79,7 @@ def _client(tmp_path: Path, reglages: ReglagesProjetsStore, *racines: Path) -> T
 
 
 @pytest.fixture()
-def client(tmp_path: Path, reglages: ReglagesProjetsStore, atelier: Path) -> TestClient:
+def client(tmp_path: Path, reglages: ProjectSettingsStore, atelier: Path) -> TestClient:
     """TestClient de l'app, explorateur borné à l'atelier."""
     with _client(tmp_path, reglages, atelier) as client:
         yield client
@@ -96,7 +96,7 @@ def _explorer(client: TestClient, chemin: Path | str | None = None):  # noqa: AN
 def test_le_refus_hors_frontiere_dit_que_le_dossier_s_autorise(
     client: TestClient, dehors: Path
 ) -> None:
-    """Le refus porte le dossier en POSIX et l'absence de refus de `valider_racine`.
+    """Le refus porte le dossier en POSIX et l'absence de refus de `validate_root`.
 
     Et il ne renvoie plus à une variable d'environnement ni à un redémarrage :
     c'était le cul-de-sac que le ticket retire.
@@ -128,7 +128,7 @@ def test_le_refus_hors_frontiere_se_lit_en_une_phrase(
 
 
 def test_autoriser_ouvre_le_dossier_sans_redemarrage(
-    client: TestClient, reglages: ReglagesProjetsStore, dehors: Path
+    client: TestClient, reglages: ProjectSettingsStore, dehors: Path
 ) -> None:
     """Le même client, la même app : l'appel suivant voit l'autorisation."""
     pose = client.post("/api/projets/dossiers-autorises", json={"chemin": str(dehors)})
@@ -137,7 +137,7 @@ def test_autoriser_ouvre_le_dossier_sans_redemarrage(
     corps = pose.json()
     assert corps["chemin"] == dehors.resolve().as_posix()
     assert corps["dossiers"] == [{"chemin": dehors.resolve().as_posix(), "refus": None}]
-    assert reglages.lire().dossiers_autorises == (dehors.resolve().as_posix(),)
+    assert reglages.read().allowed_folders == (dehors.resolve().as_posix(),)
 
     vue = _explorer(client, dehors)
     assert vue.status_code == 200
@@ -170,7 +170,7 @@ def test_l_autorisation_s_ajoute_a_la_frontiere_sans_la_remplacer(
 
 
 def test_retirer_une_autorisation_referme_le_dossier(
-    client: TestClient, reglages: ReglagesProjetsStore, dehors: Path
+    client: TestClient, reglages: ProjectSettingsStore, dehors: Path
 ) -> None:
     """Le retrait se fait depuis Paramètres › Projets : le dossier redevient refusé."""
     client.post("/api/projets/dossiers-autorises", json={"chemin": str(dehors)})
@@ -180,7 +180,7 @@ def test_retirer_une_autorisation_referme_le_dossier(
 
     assert retrait.status_code == 200
     assert retrait.json() == {"dossiers": []}
-    assert reglages.lire().dossiers_autorises == ()
+    assert reglages.read().allowed_folders == ()
     refus = _explorer(client, dehors)
     assert refus.status_code == 403
     assert refus.json()["detail"]["motif"] == "hors-racines-explorables"
@@ -196,23 +196,23 @@ def test_retirer_ce_qui_n_est_pas_autorise_est_un_404_motive(
 
 
 def test_autoriser_deux_fois_n_inscrit_qu_une_fois(
-    reglages: ReglagesProjetsStore, dehors: Path
+    reglages: ProjectSettingsStore, dehors: Path
 ) -> None:
-    reglages.autoriser(dehors)
-    reglages.autoriser(dehors.as_posix())
+    reglages.allow(dehors)
+    reglages.allow(dehors.as_posix())
 
-    assert reglages.lire().dossiers_autorises == (dehors.resolve().as_posix(),)
+    assert reglages.read().allowed_folders == (dehors.resolve().as_posix(),)
 
 
 def test_regler_le_repertoire_garde_les_dossiers_autorises(
-    reglages: ReglagesProjetsStore, atelier: Path, dehors: Path
+    reglages: ProjectSettingsStore, atelier: Path, dehors: Path
 ) -> None:
     """Les deux réglages partagent un fichier : écrire l'un n'efface pas l'autre."""
-    reglages.autoriser(dehors)
-    reglages.ecrire(atelier / "mes-projets")
-    reglages.ecrire(None)
+    reglages.allow(dehors)
+    reglages.write(atelier / "mes-projets")
+    reglages.write(None)
 
-    assert reglages.lire().dossiers_autorises == (dehors.resolve().as_posix(),)
+    assert reglages.read().allowed_folders == (dehors.resolve().as_posix(),)
 
 
 def test_une_autorisation_devenue_invalide_se_dit_et_se_retire(
@@ -232,7 +232,7 @@ def test_une_autorisation_devenue_invalide_se_dit_et_se_retire(
 
 
 def test_sans_aucun_dossier_explorable_un_chemin_s_autorise(
-    tmp_path: Path, reglages: ReglagesProjetsStore, dehors: Path
+    tmp_path: Path, reglages: ProjectSettingsStore, dehors: Path
 ) -> None:
     """« Aucun dossier explorable » n'est plus un cul-de-sac : un chemin donné s'autorise."""
     with _client(tmp_path, reglages, tmp_path / "disparu") as client:
@@ -248,16 +248,16 @@ def test_sans_aucun_dossier_explorable_un_chemin_s_autorise(
 
 
 def test_un_fichier_abime_garde_les_entrees_lisibles(tmp_path: Path) -> None:
-    lu = ReglagesProjets.from_dict({"dossiers_autorises": ["D:/clients", 3, "", None, " E:/x "]})
+    lu = ProjectSettings.from_dict({"dossiers_autorises": ["D:/clients", 3, "", None, " E:/x "]})
 
-    assert lu.dossiers_autorises == ("D:/clients", "E:/x")
+    assert lu.allowed_folders == ("D:/clients", "E:/x")
 
 
 # --- ② Il ne s'ouvre que là où il peut aboutir ---------------------------------
 
 
 def test_un_refus_pour_un_autre_motif_ne_porte_pas_d_autorisation(
-    tmp_path: Path, reglages: ReglagesProjetsStore, _maison_isolee: Path
+    tmp_path: Path, reglages: ProjectSettingsStore, _maison_isolee: Path
 ) -> None:
     """Une zone protégée sous une racine explorable : refusée, avec son motif, sans geste."""
     ssh = _maison_isolee / ".ssh"
@@ -272,7 +272,7 @@ def test_un_refus_pour_un_autre_motif_ne_porte_pas_d_autorisation(
 def test_un_dossier_hors_frontiere_mais_indeclarable_dit_pourquoi(
     client: TestClient, _maison_isolee: Path
 ) -> None:
-    """Le dossier personnel nu, hors de l'atelier : le refus porte le motif de `valider_racine`."""
+    """Le dossier personnel nu, hors de l'atelier : le refus porte le motif de `validate_root`."""
     detail = _explorer(client, _maison_isolee).json()["detail"]
 
     assert detail["motif"] == "hors-racines-explorables"
@@ -291,7 +291,7 @@ def test_un_dossier_hors_frontiere_mais_indeclarable_dit_pourquoi(
 )
 def test_autoriser_passe_par_valider_racine_et_n_ecrit_rien_sur_un_refus(
     client: TestClient,
-    reglages: ReglagesProjetsStore,
+    reglages: ProjectSettingsStore,
     _maison_isolee: Path,
     tmp_path: Path,
     dossier,  # noqa: ANN001 - fabrique paramétrée
@@ -305,13 +305,13 @@ def test_autoriser_passe_par_valider_racine_et_n_ecrit_rien_sur_un_refus(
 
     assert reponse.status_code in (403, 404, 422)
     assert reponse.json()["detail"]["motif"] == motif
-    assert not (reglages.racine / "projets.json").exists()
+    assert not (reglages.root / "projets.json").exists()
 
 
 def test_une_autorisation_n_ouvre_aucune_zone_interdite(
-    tmp_path: Path, reglages: ReglagesProjetsStore, _maison_isolee: Path
+    tmp_path: Path, reglages: ProjectSettingsStore, _maison_isolee: Path
 ) -> None:
-    """Même écrite à la main dans le fichier, une autorisation est rejugée par `valider_racine`.
+    """Même écrite à la main dans le fichier, une autorisation est rejugée par `validate_root`.
 
     Le service ne fait pas confiance au fichier : `~/.ssh` glissé dans les
     dossiers autorisés n'entre ni dans la frontière ni dans les points d'entrée,
@@ -319,19 +319,19 @@ def test_une_autorisation_n_ouvre_aucune_zone_interdite(
     """
     ssh = _maison_isolee / ".ssh"
     ssh.mkdir()
-    reglages.racine.mkdir(parents=True)
-    (reglages.racine / "projets.json").write_text(
+    reglages.root.mkdir(parents=True)
+    (reglages.root / "projets.json").write_text(
         json.dumps({"repertoire": None, "dossiers_autorises": [ssh.as_posix()]}),
         encoding="utf-8",
     )
     atelier = tmp_path / "atelier"
     atelier.mkdir()
     service = ServiceProjets(
-        ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,), reglages=reglages
+        ProjectStore(tmp_path / "depot"), racines_exploration=(atelier,), reglages=reglages
     )
 
     assert ssh.resolve() not in service.racines()
     assert "autorise" not in {origine for _, origine in service.points_entree()}
-    with pytest.raises(RacineRefusee) as refus:
+    with pytest.raises(RootRejected) as refus:
         service.explorer(str(ssh))
-    assert refus.value.motif == "chemin-sensible"
+    assert refus.value.reason == "chemin-sensible"

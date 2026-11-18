@@ -63,7 +63,7 @@ from typing import IO, Any
 from maestro.config import ConfigError
 from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 from maestro.sandbox import container
 from maestro.sandbox.container_broker_client import (
     ENV_ADDRESS,
@@ -147,7 +147,7 @@ class _Session:
     """What the broker knows of a live session: its workspace and its project."""
 
     workspace: Path
-    project: Projet | None
+    project: Project | None
     lock: threading.Lock = field(default_factory=threading.Lock)
     containers: set[str] = field(default_factory=set)
 
@@ -187,7 +187,7 @@ class ContainerBroker:
 
     # ------------------------------------------------------------------ sessions
 
-    def open(self, workspace: Path, project: Projet | None = None) -> BrokerSession:
+    def open(self, workspace: Path, project: Project | None = None) -> BrokerSession:
         """Opens the broker to the session working in `workspace`, on `project` if any."""
         token = secrets.token_urlsafe(32)
         key = _key(token)

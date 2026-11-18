@@ -105,7 +105,7 @@ def preview_sources(
 
     # The disposable directory is created **before** resolution: it serves as the
     # ingestion root, so it must exist when `ingestion_location` canonicalises
-    # (`chemin_dans_racine`, #221).
+    # (`path_in_root`, #221).
     root = jetable("maestro-apercu-")
     try:
         effective_settings = replace(settings or load_settings(), ingestion_dir=str(root))

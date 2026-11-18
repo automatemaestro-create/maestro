@@ -182,14 +182,14 @@ from maestro.outillage.verification import (
     commandes_ecrites,
     installation_de,
 )
-from maestro.projets import Projet
-from maestro.projets.application import (
-    ApplicationRefusee,
-    commiter_en_attente,
+from maestro.projects import Project
+from maestro.projects.apply import (
+    ApplyRejected,
+    commit_pending,
 )
-from maestro.projets.commits import RedacteurDeCommits
-from maestro.projets.perimetre import motifs_compiles
-from maestro.projets.racine import valider_racine
+from maestro.projects.commits import CommitDrafter
+from maestro.projects.perimeter import compiled_patterns
+from maestro.projects.root import validate_root
 from maestro.providers.base import ModelProvider
 from maestro.sandbox.en_place import DOSSIER_ATELIER, FrontiereEcriture, fichiers_du_perimetre
 from maestro.sandbox.projet import branche_de_tache, espace_de_travail
@@ -341,7 +341,7 @@ class AccordDeLaCarte:
         """L'accord de la carte vaut-il pour ce diff ?"""
         if demande.diff is None:
             return False
-        touches = {m.chemin for m in demande.diff.modifications}
+        touches = {m.path for m in demande.diff.changes}
         return bool(touches) and touches <= self._chemins
 
 
@@ -357,7 +357,7 @@ class _Matiere:
     projet tenaient (#1717).
     """
 
-    projet: Projet
+    projet: Project
     racine: Path
     constats: Constats
     recommandation: Recommandation
@@ -403,14 +403,14 @@ class ServicePieces:
         *,
         verificateur: Verificateur | None = None,
         correction: CorrectionModele | None = None,
-        redacteur: RedacteurDeCommits | None = None,
+        redacteur: CommitDrafter | None = None,
         equipe: ConfigurationAgents | None = None,
     ) -> None:
         self._outillage = outillage
         self._projets = projets
         self._verificateur = verificateur
         self._correction = correction or CorrectionModele()
-        self._redacteur = redacteur or RedacteurDeCommits()
+        self._redacteur = redacteur or CommitDrafter()
         self._equipe = equipe
         self._lues: dict[tuple[str, str], Analyse] = {}
 
@@ -418,7 +418,7 @@ class ServicePieces:
 
     def nom(self, projet_id: str) -> str:
         """Le nom déclaré du projet — ce que les phrases du fil en disent."""
-        return self._outillage.entite(projet_id).nom
+        return self._outillage.entite(projet_id).name
 
     async def a_ses_fichiers(self, projet_id: str) -> bool:
         """Le projet porte-t-il des fichiers **à lui** — hors de l'outillage de Maestro ?
@@ -526,7 +526,7 @@ class ServicePieces:
             racine,
             matiere.constats,
             matiere.recommandation,
-            perimetre=matiere.projet.perimetre,
+            perimetre=matiere.projet.perimeter,
             portees=portees_declarees(racine),
             connues={v.commande: v for v in verifications_declarees(racine) if v.etat == VERIFIEE},
         )
@@ -586,7 +586,7 @@ class ServicePieces:
                 (verdict,) = verificateur.verifier_commandes(
                     racine,
                     (CommandeEcrite(lue_ici.usage, lue_ici.commande, lue_ici.chemin),),
-                    perimetre=matiere.projet.perimetre,
+                    perimetre=matiere.projet.perimeter,
                     portees=portees,
                     installation=installation_de(matiere.constats),
                 )
@@ -625,7 +625,7 @@ class ServicePieces:
         """Ce que `phrase` corrige de l'outillage — le modèle comprend, le code vérifie."""
         matiere = await self._matiere(projet_id, fil_du_projet(fil, projet_id))
         return await self._correction.comprendre(
-            projet=matiere.projet.nom,
+            projet=matiere.projet.name,
             constats=constats_en_texte(matiere.constats),
             corrections=corrections_en_texte(matiere.corrections),
             phrase=phrase,
@@ -660,12 +660,12 @@ class ServicePieces:
         if not nommes:
             return ""
         projet = self._outillage.entite(projet_id)
-        racine = await asyncio.to_thread(valider_racine, projet.racine)
+        racine = await asyncio.to_thread(validate_root, projet.root)
         for chemin in nommes:
-            if await asyncio.to_thread(fichier_du_projet, racine, chemin, projet.perimetre):
+            if await asyncio.to_thread(fichier_du_projet, racine, chemin, projet.perimeter):
                 continue
             return (
-                f"`{chemin}` n'est pas un fichier que je peux lire dans « {projet.nom} » — "
+                f"`{chemin}` n'est pas un fichier que je peux lire dans « {projet.name} » — "
                 "dites-moi son chemin depuis la racine du projet."
             )
         return ""
@@ -700,8 +700,8 @@ class ServicePieces:
         Revérifie le disque d'abord : si le fichier a bougé depuis la carte,
         `PieceChangee` et rien n'est écrit. Puis écrit au régime du projet : en place,
         ou sur une branche fusionnée sous l'accord de la carte (`AccordDeLaCarte`).
-        Lève les refus motivés de ses couches (`ProjetInconnu`, `RacineRefusee`,
-        `EspaceProjetIndisponible`, `ApplicationRefusee`) ; tout le reste est une ligne
+        Lève les refus motivés de ses couches (`ProjetInconnu`, `RootRejected`,
+        `EspaceProjetIndisponible`, `ApplyRejected`) ; tout le reste est une ligne
         du fait rendu.
 
         Une pièce que le projet porte désormais rebranche ensuite l'équipe du projet, et
@@ -710,7 +710,7 @@ class ServicePieces:
         fil ne dit « partout » que quand c'est vrai.
         """
         projet = self._outillage.entite(piece.projet_id)
-        racine = valider_racine(projet.racine)
+        racine = validate_root(projet.root)
         # Ce que le manifeste prescrivait avant l'écriture : ce qu'elle peut remplacer.
         avant = await asyncio.to_thread(verifications_declarees, racine)
         fait = await self._ecrire(projet, racine, piece)
@@ -720,7 +720,7 @@ class ServicePieces:
 
     def _constater(
         self,
-        projet: Projet,
+        projet: Project,
         racine: Path,
         piece: PieceProposee,
         fait: PieceEcrite,
@@ -746,7 +746,7 @@ class ServicePieces:
             remplacees=constat,
         )
 
-    async def _ecrire(self, projet: Projet, racine: Path, piece: PieceProposee) -> PieceEcrite:
+    async def _ecrire(self, projet: Project, racine: Path, piece: PieceProposee) -> PieceEcrite:
         """L'écriture elle-même, au régime du projet — voir `ecrire`."""
         fichier = Fichier(
             chemin=piece.chemin,
@@ -755,7 +755,7 @@ class ServicePieces:
             contenu=piece.contenu,
             executable=piece.executable,
         )
-        frontiere = FrontiereEcriture.pour(racine, projet.perimetre)
+        frontiere = FrontiereEcriture.pour(racine, projet.perimeter)
         prevision = await asyncio.to_thread(prevoir, racine, fichier, frontiere=frontiere)
         if _empreinte_de(prevision.avant) != piece.empreinte_avant:
             raise PieceChangee(
@@ -764,7 +764,7 @@ class ServicePieces:
             )
         if not prevision.ecrirait:
             return _fait(piece, prevision.etat, prevision.raison, str(racine), REGIME_EN_PLACE)
-        if not projet.versionne:
+        if not projet.versioned:
             rapport = await asyncio.to_thread(
                 poser_piece,
                 racine,
@@ -789,7 +789,7 @@ class ServicePieces:
         self._projets.reprendre_outillage(projet_id)
 
     async def _ecrire_sur_branche(
-        self, projet: Projet, racine: Path, fichier: Fichier, piece: PieceProposee
+        self, projet: Project, racine: Path, fichier: Fichier, piece: PieceProposee
     ) -> PieceEcrite:
         """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte.
 
@@ -808,7 +808,7 @@ class ServicePieces:
         tache = nouvel_id_de_generation()
         branche = branche_de_tache(tache)
         message_piece, message_fusion = await self._messages_de_la_piece(projet, piece, branche)
-        manifeste = ManifesteHorsBranche(racine, projet.perimetre)
+        manifeste = ManifesteHorsBranche(racine, projet.perimeter)
 
         def preparer() -> PieceEcrite | None:
             with espace_de_travail(projet, tache_id=tache) as espace:
@@ -817,7 +817,7 @@ class ServicePieces:
                     espace.path,
                     fichier,
                     source=piece.source,
-                    frontiere=FrontiereEcriture.pour(espace.path, projet.perimetre),
+                    frontiere=FrontiereEcriture.pour(espace.path, projet.perimeter),
                     verifications=_des_commandes(piece.verifications),
                     corrections=piece.corrections_prises,
                 )
@@ -829,8 +829,8 @@ class ServicePieces:
                 # Maestro : ce qui part sur la branche est le même.
                 if ecrite and message_piece:
                     try:
-                        commiter_en_attente(espace.path, branche, message=message_piece)
-                    except ApplicationRefusee:
+                        commit_pending(espace.path, branche, message=message_piece)
+                    except ApplyRejected:
                         pass  # le démontage commitera, sous le message de Maestro
             if not ecrite:
                 etat = ecriture.etat if ecriture is not None else "refuse"
@@ -846,10 +846,10 @@ class ServicePieces:
             tache_id=tache,
             validateur=AccordDeLaCarte({piece.chemin, CHEMIN_MANIFESTE}),
             branche=branche,
-            titre=f"Écrire {piece.chemin} dans {projet.nom}",
+            titre=f"Écrire {piece.chemin} dans {projet.name}",
             message=message_fusion,
         )
-        if resultat.approuvee:
+        if resultat.approved:
             await asyncio.to_thread(manifeste.poser)
             return _fait(
                 piece,
@@ -867,7 +867,7 @@ class ServicePieces:
         )
 
     async def _messages_de_la_piece(
-        self, projet: Projet, piece: PieceProposee, branche: str
+        self, projet: Project, piece: PieceProposee, branche: str
     ) -> tuple[str, str]:
         """Le commit de la pièce et celui de sa fusion, dans la convention du projet (#1507).
 
@@ -882,13 +882,13 @@ class ServicePieces:
         if not convention:
             return "", ""
         verbe = _VERBE_DU_SORT.get(piece.sort, "écrit")
-        base = projet.vcs.branche_base if projet.vcs is not None else ""
+        base = projet.vcs.base_branch if projet.vcs is not None else ""
         quoi = f"`{piece.chemin}` ({piece.nom}), une pièce de l'outillage du projet pour ses agents"
         piece_seule, fusion = await asyncio.gather(
-            self._redacteur.message(convention=convention, changement=f"{verbe} {quoi}"),
+            self._redacteur.message(convention=convention, change=f"{verbe} {quoi}"),
             self._redacteur.message(
                 convention=convention,
-                changement=(
+                change=(
                     f"fusionne dans `{base or 'la branche de travail'}` la branche "
                     f"`{branche}`, qui {verbe} {quoi}"
                 ),
@@ -924,7 +924,7 @@ class ServicePieces:
         l'analyse et le questionnaire recommandent.
         """
         projet = self._outillage.entite(projet_id)
-        racine = await asyncio.to_thread(valider_racine, projet.racine)
+        racine = await asyncio.to_thread(validate_root, projet.root)
         retenues = retenir(
             await asyncio.to_thread(corrections_declarees, racine),
             _corrections_du_fil_datees(fil),
@@ -971,7 +971,7 @@ class ServicePieces:
             lecture=lecture,
         )
 
-    async def _analyse(self, projet: Projet, fil: Sequence[MessageChat]) -> Analyse:
+    async def _analyse(self, projet: Project, fil: Sequence[MessageChat]) -> Analyse:
         """La lecture du projet, **épinglée pour cette conversation** (voir le module)."""
         cle = (projet.id, fil[0].conversation if fil else "")
         lue = self._lues.get(cle)
@@ -1015,7 +1015,7 @@ class ServicePieces:
         """
         racine, projet = matiere.racine, matiere.projet
         portees = portees_declarees(racine)
-        frontiere = FrontiereEcriture.pour(racine, projet.perimetre)
+        frontiere = FrontiereEcriture.pour(racine, projet.perimeter)
         verdicts_connus = {
             v.commande: v
             for v in verifications_declarees(racine)
@@ -1047,7 +1047,7 @@ class ServicePieces:
                 for v in verificateur.verifier_commandes(
                     racine,
                     [c for c in ecrites if c.commande not in deja_revues],
-                    perimetre=projet.perimetre,
+                    perimetre=projet.perimeter,
                     portees=portees,
                     connues=verdicts_connus,
                     installation=installation_de(matiere.constats),
@@ -1087,7 +1087,7 @@ class ServicePieces:
                     garde,
                     chemin=fichier.chemin,
                     texte=prevision.apres or "",
-                    perimetre=projet.perimetre,
+                    perimetre=projet.perimeter,
                     installation=installation_de(matiere.constats),
                 )
             )
@@ -1153,7 +1153,7 @@ def _proposee(
         raison = _raison_gardee(raison, entree, *garde)
     return PieceProposee(
         projet_id=projet.id,
-        projet_nom=projet.nom,
+        projet_nom=projet.name,
         cible=matiere.racine.as_posix(),
         chemin=fichier.chemin,
         nom=entree.nom,
@@ -1179,7 +1179,7 @@ def _proposee(
         rang=rang,
         total=total,
         source=matiere.source,
-        regime=REGIME_BRANCHE if projet.versionne else REGIME_EN_PLACE,
+        regime=REGIME_BRANCHE if projet.versioned else REGIME_EN_PLACE,
         corrigees=_commandes_de(matiere.constats, verdicts, ORIGINE_DITE),
         corrections_prises=tuple(c for c in matiere.corrections if c.cle in CLES_CORRIGEABLES),
         proposees=_commandes_de(matiere.constats, verdicts, ORIGINE_PROPOSEE),
@@ -1421,15 +1421,15 @@ def _des_commandes(verdicts: Sequence[Verification]) -> tuple[Verification, ...]
     return tuple(v for v in verdicts if v.usage != USAGE_GARDE)
 
 
-def _a_revoir(projet: Projet) -> bool:
+def _a_revoir(projet: Project) -> bool:
     """Une commande de l'outillage n'a pas passé, et le projet a ses fichiers — bloquant (#1343)."""
-    racine = valider_racine(projet.racine)
+    racine = validate_root(projet.root)
     if all(v.etat == VERIFIEE for v in verifications_declarees(racine)):
         return False
     return projet_a_ses_fichiers(projet)
 
 
-def projet_a_ses_fichiers(projet: Projet) -> bool:
+def projet_a_ses_fichiers(projet: Project) -> bool:
     """Le dossier du projet porte-t-il un fichier que Maestro n'a pas déclaré ? — bloquant.
 
     La règle qui départage un projet **lu** d'un projet **décrit** : l'outillage dans le
@@ -1437,11 +1437,11 @@ def projet_a_ses_fichiers(projet: Projet) -> bool:
     #1350 (`maestro.controltower.equipe`) — une seule règle pour les deux, sans quoi un
     même dossier serait décrit pour son outillage et lu pour son équipe.
     """
-    racine = valider_racine(projet.racine)
+    racine = validate_root(projet.root)
     declares = set(portees_declarees(racine))
     return any(
         relatif not in declares
         for relatif in fichiers_du_perimetre(
-            racine, motifs_compiles(projet.perimetre.exclus), hors=(DOSSIER_ATELIER,)
+            racine, compiled_patterns(projet.perimeter.excluded), hors=(DOSSIER_ATELIER,)
         )
     )

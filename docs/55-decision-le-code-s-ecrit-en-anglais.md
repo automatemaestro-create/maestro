@@ -328,6 +328,30 @@ prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
   la remet, sans rien toucher d'autre.
 - **Les erreurs de mypy sur les tests se comparent à leur relevé sans les colonnes.** Un nom plus
   court déplace la fin d'une erreur déjà là, qui se lit alors comme une erreur neuve.
+- **mypy compte ses colonnes en octets sur une ligne accentuée** (#1671), quand Python compte en
+  caractères. Une correction guidée par la colonne tombe à côté sur une ligne de prose française :
+  quand la ligne ne porte qu'une lecture `.<ancien>`, c'est elle que l'erreur désigne.
+- **Une erreur déjà relevée sur un `**champs` masque ses clés** (#1671). `Project(**champs)` portait
+  avant le lot une erreur `arg-type` sur le type des valeurs. Après, la même erreur ne diffère que
+  par les noms de types, et se lit comme un renommage, alors que les clés `nom` et `racine` du
+  dictionnaire ne correspondent plus à rien. Treize tests ont rougi au passage des suites. Une
+  erreur qui désigne un `**` se relit donc à sa ligne, même quand elle était déjà là.
+- **La cible d'un `monkeypatch.setattr("<module>.<nom>", …)` est une chaîne** (#1671). mypy ne la
+  voit pas, et le test ne rougit qu'à son passage : `test_ecriture_temps_reel` remplaçait
+  `maestro.engine.executor.verifier_perimetre`. Les anciens noms se cherchent donc aussi dans les
+  chaînes des suites.
+- **Une citation vit aussi dans un fichier qui n'importe pas le paquet** (#1671). La liste des
+  appelants ne couvre que les imports : une vingtaine de fichiers citaient `valider_racine` ou
+  `RacineRefusee` en prose sans rien importer. Le balayage des citations porte sur tout l'arbre, et
+  un nom nu entre backticks ne se renomme qu'une fois son propriétaire vérifié : `appliquer` est
+  aussi une méthode de `RunState`, et `SYSTEME` le cadre du récit et du vérificateur.
+- **Une citation qualifiée se suit en entier** (#1671). Le chemin du module renommé d'abord,
+  `maestro.projects.perimeter.exclu_par` garde son dernier nom en français. Le balayage cherche donc
+  aussi `<nouveau module>.<ancien nom>` et `<nouvelle classe>.<ancien membre>`.
+- **Une fonction homonyme de son sous-module le masque** (#1671). Un `__init__` qui importe la
+  fonction `apply` du module `apply` fait de `maestro.projects.apply` la fonction, et
+  `from maestro.projects import apply` ne rend plus le module. La fonction se nomme donc autrement
+  que son module (`apply_diff`).
 - **Les numéros de ligne cités dans `docs/` bougent avec la réécriture.** Ils se suivent comme les
   noms.
 - **Le sha d'un lot n'existe qu'après son merge**, puisque le merge se fait en squash. Le pilote a

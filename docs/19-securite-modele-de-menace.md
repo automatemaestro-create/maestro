@@ -105,18 +105,18 @@ vigueur**, et non plus ce qui l'attend. Où chaque contre-mesure vit dans le cod
   (`LocalExecutor._accord_de_fusion`). Sur refus, rien n'est écrit et le travail reste
   consultable sur sa branche ; sans validateur, l'application est refusée (fail-safe des
   garde-fous, #9) ;
-- **racine canonicalisée et racines interdites** — `maestro.projets.racine` (#221) : `..` écrasés
+- **racine canonicalisée et racines interdites** — `maestro.projects.root` (#221) : `..` écrasés
   et liens résolus **avant** toute comparaison, refus **motivé** (jamais un `False` muet), et
-  `chemin_dans_racine` par où passe toute écriture. La même frontière borne l'explorateur de
+  `path_in_root` par où passe toute écriture. La même frontière borne l'explorateur de
   l'API (#223), pour qu'une zone interdite à la déclaration ne devienne pas lisible par ailleurs ;
 - **exclusions du périmètre** — les gisements de secrets (`.env`, `**/secrets/**`, `.git`,
   `node_modules`) sont écartés de l'espace de travail et masqués dans le conteneur, et
-  `maestro.projets.secrets` fait couvrir par la rédaction (#109) les valeurs lues dans le projet
+  `maestro.projects.secrets` fait couvrir par la rédaction (#109) les valeurs lues dans le projet
   de l'utilisateur — pas seulement celles de Maestro.
 
 Deux réserves demeurent, inchangées : l'**égress n'est toujours pas filtré par domaine** (§5) —
 la Phase 7 rend cette limite nettement plus gênante sans la traiter —, et le verdict de
-`chemin_dans_racine` porte sur l'état du disque **au moment de l'appel** (TOCTOU) : refermer
+`path_in_root` porte sur l'état du disque **au moment de l'appel** (TOCTOU) : refermer
 cette fenêtre revient à qui *ouvre* le fichier, pas à qui calcule le chemin.
 
 ### 2.2 Ce que les sources d'un objectif ajoutent *(en vigueur — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8** livrée)*
@@ -265,7 +265,7 @@ hostile par défaut.
 | **IPC** — deux canaux | `ipcMain.handle` sur `maestro:ouvrir-dossier` et `maestro:choisir-dossier`, **nommés**, et rien d'autre ; chaque argument est **revalidé** côté processus principal, sans faire confiance au typage du preload | L'**émetteur n'est pas vérifié** (`senderFrame`). Ce qui rend cela tenable est une hypothèse à quatre termes — une seule fenêtre, une seule origine, aucun `<webview>`, aucune iframe tierce dans le front — et non un contrôle. Elle tombe le jour où l'un des quatre change : c'est alors qu'il faudra filtrer l'émetteur |
 | **Navigation et ouverture de fenêtres** | `will-navigate` n'autorise que les deux noms de l'hôte local **sur le port de l'UI** ; `setWindowOpenHandler` rend `deny` sans exception — jamais de seconde fenêtre de coque ; ce qui est refusé part au navigateur du système **si et seulement si** son schéma est `http(s)`, tout autre étant refusé net | Une URL externe en `http(s)` s'ouvre **sans confirmation**, et rien ne distingue un clic d'une navigation déclenchée par du script. C'est un canal de sortie *visible* (une fenêtre s'ouvre) mais réel — une URL porte ce qu'on met dans sa requête —, et il relève de la même limite que l'**égress non filtré** (§5) |
 | **Contenu distant affiché** — aucun | La fenêtre ne charge que l'origine locale ; `webviewTag: false` ; le contenu extérieur qui entre dans le produit (document, URL — §2.2) entre par l'**API**, converti en Markdown, et le front ne pose aucun HTML brut (`apps/web/lib/markdown.ts`). Il n'est donc jamais *rendu* comme une page | **Aucune CSP** n'est posée sur l'origine locale : la fenêtre n'en pose pas plus que l'onglet, et lui en poser une ferait diverger les deux régimes sans qu'ENF-12 l'appelle. Une ressource distante demandée par la page (police, image) se charge — dans la fenêtre comme dans l'onglet |
-| **Ouvrir un chemin** (#928) — `shell.openPath` | Refusé par défaut, puis trois gardes : chaîne non vide, chemin **absolu**, **existant**, et **répertoire**. La dernière est celle qui porte la menace — `openPath` sur un `.exe`, un `.bat` ou un `.lnk` l'**exécuterait** avec les droits de l'utilisateur. Le pont n'ouvre donc que des répertoires, ce qui suffit au livrable d'un run et ne lance rien | **N'importe quel** répertoire du poste, pas seulement celui d'un projet déclaré : la coque ne connaît pas les racines interdites, et c'est voulu (porte unique, ci-dessous). La garde a la même fenêtre **TOCTOU** que `chemin_dans_racine` (§2.1) — entre le contrôle et l'ouverture, un lien peut changer. Ce qu'on accepte ici et nulle part ailleurs, c'est que le dégât borné soit « un dossier s'affiche dans l'explorateur » |
+| **Ouvrir un chemin** (#928) — `shell.openPath` | Refusé par défaut, puis trois gardes : chaîne non vide, chemin **absolu**, **existant**, et **répertoire**. La dernière est celle qui porte la menace — `openPath` sur un `.exe`, un `.bat` ou un `.lnk` l'**exécuterait** avec les droits de l'utilisateur. Le pont n'ouvre donc que des répertoires, ce qui suffit au livrable d'un run et ne lance rien | **N'importe quel** répertoire du poste, pas seulement celui d'un projet déclaré : la coque ne connaît pas les racines interdites, et c'est voulu (porte unique, ci-dessous). La garde a la même fenêtre **TOCTOU** que `path_in_root` (§2.1) — entre le contrôle et l'ouverture, un lien peut changer. Ce qu'on accepte ici et nulle part ailleurs, c'est que le dégât borné soit « un dossier s'affiche dans l'explorateur » |
 | **Désigner un dossier** (#938) — dialogue natif, dossier déposé | Les deux ne font que **rendre une chaîne**. Le dialogue est **modal** sur la fenêtre, donc il ne s'empile pas — là où celui du backend a dû se donner un verrou, N requêtes HTTP pouvant empiler N fenêtres (#278) ; `webUtils.getPathForFile` s'exécute dans le rendu et rend `null` pour ce qui ne vient pas du disque | La coque lit ainsi le chemin de n'importe quel dossier, **y compris une racine interdite** — et c'est correct : lire un chemin n'est pas y accéder. Le refus arrive à la **porte**, avec son motif (§2.1) |
 
 #### Les réglages de sûreté, rattachés à la menace qu'ils traitent
@@ -290,7 +290,7 @@ quelque chose derrière lui :
 pour tout ce qui viendra ensuite. Un chemin peut désormais entrer par cinq portes : saisi au
 clavier, choisi dans l'explorateur servi par l'API (#223), rendu par le dialogue que le backend
 ouvre (#278), rendu par le dialogue de la fenêtre (#938), lu sur un dossier déposé (#938). Toutes
-aboutissent à `valider_racine` **côté backend** (EF-38, #221) — canonicalisation, racines
+aboutissent à `validate_root` **côté backend** (EF-38, #221) — canonicalisation, racines
 interdites, refus motivé — et à lui seul.
 
 La coque n'en applique **aucune**, et ne doit jamais en appliquer : deux formules à tenir d'accord

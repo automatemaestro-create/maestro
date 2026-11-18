@@ -103,7 +103,7 @@ from maestro.engine.questions import DemandeQuestion
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.plan_run import NoeudPlan
-from maestro.projets import MESSAGE_PREMIER_COMMIT, Projet, ProjetStore, detecter_vcs
+from maestro.projects import FIRST_COMMIT_MESSAGE, Project, ProjectStore, detect_vcs
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import STEP_CADENCE, RunCost, RunJournal
@@ -149,18 +149,18 @@ def _git(cwd: Path, *arguments: str) -> str:
     return resultat.stdout
 
 
-def _projet_nu(tmp_path: Path, nom: str = "p3") -> tuple[ProjetStore, Projet]:
+def _projet_nu(tmp_path: Path, nom: str = "p3") -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **non versionné** — le `p3` du retour d'expérience."""
     racine = tmp_path / "projets" / nom
     racine.mkdir(parents=True)
     (racine / "README.md").write_text("# p3\n", encoding="utf-8")
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer(nom, racine)
-    assert not projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create(nom, racine)
+    assert not projet.versioned, projet
     return depot, projet
 
 
-def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_git(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un projet **versionné** : dépôt jetable, un commit, VCS détecté."""
     racine = tmp_path / "projets" / "versionne"
     racine.mkdir(parents=True)
@@ -168,9 +168,9 @@ def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
     _git(racine, "init", "--quiet")
     _git(racine, "add", "-A")
     _git(racine, "-c", "user.email=t@m", "-c", "user.name=T", "commit", "--quiet", "-m", "socle")
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("versionné", racine)
-    assert projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("versionné", racine)
+    assert projet.versioned, projet
     return depot, projet
 
 
@@ -297,7 +297,7 @@ class _Fil:
         return self._reponse or ""
 
 
-def _executeur(fournisseur: ModelProvider, depot: ProjetStore | None, **kwargs) -> LocalExecutor:
+def _executeur(fournisseur: ModelProvider, depot: ProjectStore | None, **kwargs) -> LocalExecutor:
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
     return LocalExecutor(
         fournisseur,
@@ -310,7 +310,7 @@ def _executeur(fournisseur: ModelProvider, depot: ProjetStore | None, **kwargs) 
 
 def _moteur(
     fournisseur: ModelProvider,
-    depot: ProjetStore,
+    depot: ProjectStore,
     plan: str,
     *,
     fil: _Fil | None = None,
@@ -411,7 +411,7 @@ def test_sur_accord_le_projet_devient_un_depot_et_ses_taches_partent_chacune_dan
 ) -> None:
     """Le second critère : la proposition, sa raison, l'accord, puis l'isolation par tâche."""
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _Ecrivain(de_front=2)
     fil = _Fil(CHOIX_VERSIONNER)
     plan = _plan(("t1", ()), ("t2", ()), ("t3", ()))
@@ -434,9 +434,9 @@ def test_sur_accord_le_projet_devient_un_depot_et_ses_taches_partent_chacune_dan
     assert "le projet « p3 » n'est pas versionné" in demande.question
     assert "deux agents écriraient dans le même dossier" in demande.question
     # L'accord : un dépôt Git local, un premier commit de l'existant.
-    assert detecter_vcs(racine) is not None
-    assert depot.lire(projet.id).versionne
-    assert MESSAGE_PREMIER_COMMIT in _git(racine, "log", "--format=%s")
+    assert detect_vcs(racine) is not None
+    assert depot.read(projet.id).versioned
+    assert FIRST_COMMIT_MESSAGE in _git(racine, "log", "--format=%s")
     # Dit au journal : la cause, puis sa levée — sans mention désormais.
     lignes = _cadences(journal)
     assert [ligne.statut for ligne in lignes] == [STATUT_UNE_A_UNE, STATUT_PROJET_VERSIONNE]
@@ -454,7 +454,7 @@ def test_sur_accord_le_projet_devient_un_depot_et_ses_taches_partent_chacune_dan
 @avec_git
 def test_un_refus_laisse_tout_en_l_etat_et_les_taches_passent_une_a_une(tmp_path: Path) -> None:
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _Ecrivain(de_front=2, patience=0.2)
     journal = RunJournal(run_id=RUN)
 
@@ -465,7 +465,7 @@ def test_un_refus_laisse_tout_en_l_etat_et_les_taches_passent_une_a_une(tmp_path
     )
 
     assert all(resultat.ok for resultat in rapport.resultats)
-    assert not (racine / ".git").exists() and not depot.lire(projet.id).versionne
+    assert not (racine / ".git").exists() and not depot.read(projet.id).versioned
     lignes = _cadences(journal)
     assert [ligne.statut for ligne in lignes] == [STATUT_UNE_A_UNE, STATUT_VERSIONNEMENT_DECLINE]
     assert "décliné d'un geste" in lignes[-1].sortie
@@ -486,7 +486,7 @@ def test_une_phrase_n_est_pas_un_accord_d_ecriture(tmp_path: Path) -> None:
         )
     )
 
-    assert not (Path(projet.racine) / ".git").exists()
+    assert not (Path(projet.root) / ".git").exists()
     derniere = _cadences(journal)[-1]
     assert derniere.statut == STATUT_VERSIONNEMENT_DECLINE
     assert f"seul le geste « {CHOIX_VERSIONNER} » écrit dans le projet" in derniere.sortie
@@ -516,7 +516,7 @@ def test_sans_reponse_le_run_continue_une_tache_a_la_fois(tmp_path: Path) -> Non
         )
     )
 
-    assert not (Path(projet.racine) / ".git").exists()
+    assert not (Path(projet.root) / ".git").exists()
     assert [ligne.statut for ligne in _cadences(journal)] == [
         STATUT_UNE_A_UNE,
         STATUT_VERSIONNEMENT_SANS_REPONSE,
@@ -537,7 +537,7 @@ def test_un_run_fini_avant_la_reponse_retire_la_proposition_et_le_dit(tmp_path: 
     )
 
     assert all(resultat.ok for resultat in rapport.resultats)
-    assert not (Path(projet.racine) / ".git").exists()
+    assert not (Path(projet.root) / ".git").exists()
     derniere = _cadences(journal)[-1]
     assert derniere.statut == STATUT_VERSIONNEMENT_SANS_SUITE
     assert "le run s'est achevé avant la réponse" in derniere.cadence["phrase"]
@@ -558,7 +558,7 @@ def test_un_plan_en_chaine_le_dit_sans_rien_proposer(tmp_path: Path) -> None:
     assert fil.demandes == []
     [ligne] = _cadences(journal)
     assert ligne.cadence["cause"] == CAUSE_CHAINE
-    assert not (Path(projet.racine) / ".git").exists()
+    assert not (Path(projet.root) / ".git").exists()
 
 
 @avec_git
@@ -625,7 +625,7 @@ def test_le_versionnement_accorde_passe_devant_les_taches_qui_attendaient_l_atel
     sa copie, **ensemble**. `t1`, elle, se solde en place : elle n'a pas de branche.
     """
     depot, projet = _projet_nu(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _Ecrivain(de_front=2)
     fournisseur.retenues["t1.md"] = asyncio.Event()
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
@@ -656,7 +656,7 @@ def test_le_versionnement_accorde_passe_devant_les_taches_qui_attendaient_l_atel
 
     premiere, suivantes, versionne = asyncio.run(_scenario())
 
-    assert versionne.versionne and detecter_vcs(racine) is not None
+    assert versionne.versioned and detect_vcs(racine) is not None
     initial = _git(racine, "rev-list", "--max-parents=0", "HEAD").strip()
     assert _git(racine, "show", f"{initial}:t1.md").strip() == "fait par t1.md"
     assert premiere.ok and all(resultat.ok for resultat in suivantes)
@@ -685,14 +685,14 @@ def test_une_tache_qui_a_ecrit_en_place_se_solde_en_place_meme_versionnee_entre_
     async def _scenario():
         t1 = asyncio.create_task(executeur.execute(_tache("t1", projet.id), [], journal))
         await fournisseur.entrees.setdefault("t1.md", asyncio.Event()).wait()
-        await asyncio.to_thread(depot.versionner, projet.id)
+        await asyncio.to_thread(depot.enable_versioning, projet.id)
         fournisseur.retenues["t1.md"].set()
         return await t1
 
     resultat = asyncio.run(_scenario())
 
     assert resultat.ok
-    assert fournisseur.espaces["t1.md"] == Path(projet.racine)
+    assert fournisseur.espaces["t1.md"] == Path(projet.root)
     assert _fusions(journal) == {"t1": STATUT_ECRITURE_EN_PLACE}
 
 

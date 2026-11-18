@@ -534,7 +534,7 @@ class ClientAPI:
     def versionner_projet(self, projet_id: str) -> dict[str, Any]:
         """Met le projet sous Git par le geste de l'écran Projets (#855) et rend sa fiche.
 
-        Le verbe du produit (`ProjetStore.versionner`, #704) : `git init` et un
+        Le verbe du produit (`ProjectStore.enable_versioning`, #704) : `git init` et un
         premier commit de la racine. Le banc ne touche jamais à Git lui-même.
         """
         fiche: dict[str, Any] = dict(

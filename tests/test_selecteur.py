@@ -36,7 +36,7 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app, selecteur
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 
 WINDOWS = selecteur.Outil("powershell", "C:/Windows/powershell.exe")
 MACOS = selecteur.Outil("osascript", "/usr/bin/osascript")
@@ -301,7 +301,7 @@ def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture()
 def service(tmp_path: Path, maison: Path) -> ServiceProjets:
     """Service des projets sur un dépôt jetable, borné au dossier utilisateur factice."""
-    return ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(maison,))
+    return ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(maison,))
 
 
 @pytest.fixture()

@@ -174,8 +174,8 @@ from maestro.installation import LecteurInstallation
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.outillage.contexte import outillage_du_projet
 from maestro.poste import SondePoste
-from maestro.projets import (
-    Projet,
+from maestro.projects import (
+    Project,
 )
 from maestro.providers.base import ModelProvider
 from maestro.sources import UploadStore
@@ -1101,13 +1101,13 @@ def regime_du_projet(ctx: Contexte, projet_id: str | None) -> str:
         else:
             membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
     try:
-        versionne: bool | None = projets.entite(projet_id).versionne
+        versionne: bool | None = projets.entite(projet_id).versioned
     except (ProjetInconnu, ProjetIllisible):
         versionne = None
     return regime_d_un_run(membres, mode_brief=mode_brief_du_fil, versionne=versionne)
 
 
-def projet_du_fil(ctx: Contexte, projet_id: str) -> Projet | None:
+def projet_du_fil(ctx: Contexte, projet_id: str) -> Project | None:
     """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
 
     `ServiceProjets.entite` et lui seul (#1223) : les lectures de
@@ -1134,7 +1134,7 @@ def projet_nomme(ctx: Contexte, projet_id: str) -> ProjetVise | None:
     projet = projet_du_fil(ctx, projet_id)
     if projet is None:
         return None
-    return ProjetVise(id=projet.id, nom=projet.nom, racine=projet.racine)
+    return ProjetVise(id=projet.id, nom=projet.name, racine=projet.root)
 
 
 def outillage_du_fil(ctx: Contexte, projet_id: str) -> str:
@@ -1160,7 +1160,7 @@ async def consulter(ctx: Contexte, demande: Demande, projet_id: str | None) -> L
     return await asyncio.to_thread(consultations.executer, demande, projet_id)
 
 
-def projet_du_run(ctx: Contexte, projet_id: str | None) -> Projet | None:
+def projet_du_run(ctx: Contexte, projet_id: str | None) -> Project | None:
     """Le projet d'un run — `None` s'il n'en relève d'aucun, ou s'il a disparu.
 
     Un `None` et non une exception : un run hors projet est un cas normal

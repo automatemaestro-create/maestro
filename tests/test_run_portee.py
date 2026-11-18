@@ -78,7 +78,7 @@ RUN = "run-un"
 AUTRE_RUN = "run-deux"
 PROJET = "prj-0001"
 #: La vue transverse : un mot réservé, donc lisible sans dépôt de projets déclaré
-#: (`?projet=<id>` exigerait un `ProjetStore`, hors sujet ici — voir
+#: (`?projet=<id>` exigerait un `ProjectStore`, hors sujet ici — voir
 #: `tests/test_appartenance_projet.py`, qui éprouve précisément cette porte-là).
 TRANSVERSE = "tous"
 

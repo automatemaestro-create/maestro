@@ -61,7 +61,7 @@ from maestro.outillage import (
     recommandation_depuis_choix,
     source_manifeste_des_choix,
 )
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 
 #: Les contraintes de la spécification (relue le 2026-09-20), en un seul endroit.
 #: `name` : 1-64, minuscules/chiffres/tirets, ni en tête ni en fin, jamais
@@ -347,7 +347,7 @@ class TestValidateurProuve:
 
 @pytest.fixture(autouse=True)
 def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un `Path.home()` sous `tmp_path` : sans lui, `valider_racine` refuse AppData (#221)."""
+    """Un `Path.home()` sous `tmp_path` : sans lui, `validate_root` refuse AppData (#221)."""
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
@@ -395,7 +395,7 @@ def _projet_genere(tmp_path: Path, profil: str) -> Path:
     for chemin, contenu in PROFILS[profil].items():
         ecrire(racine, chemin, contenu)
     analyse = analyser(racine, projet_id="prj-0000dead")
-    projet = Projet(id="prj-0000dead", nom=profil, racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name=profil, root=racine.as_posix())
     generer_outillage(
         projet,
         analyse.constats,
@@ -491,7 +491,7 @@ def test_un_projet_neuf_questionne_rend_lui_aussi_des_skills_valides(tmp_path: P
         Choix("ci", ".github/workflows/ci.yml"),
         Choix("conventions", "conventional-commits"),
     ]
-    projet = Projet(id="prj-0000dead", nom="Neuf", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Neuf", root=racine.as_posix())
 
     generer_outillage(
         projet,

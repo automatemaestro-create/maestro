@@ -53,7 +53,7 @@ from maestro.controltower.chat import ChatStore
 from maestro.controltower.outillage import ComprehensionModele
 from maestro.controltower.projets import ServiceProjets
 from maestro.outillage import CHEMIN_MANIFESTE
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 
 #: Le fil de l'orchestration : le seul qui conduise un questionnaire d'outillage.
@@ -112,7 +112,7 @@ def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Le dossier où naissent les projets, sous un dossier utilisateur factice.
 
     Même raison qu'en #221 : sous Windows le `tmp_path` de pytest vit dans
-    `AppData/Local/Temp`, que `valider_racine` refuse à raison.
+    `AppData/Local/Temp`, que `validate_root` refuse à raison.
     """
     maison = tmp_path / "maison"
     maison.mkdir()
@@ -136,7 +136,7 @@ def client(tmp_path: Path, atelier: Path) -> Iterator[TestClient]:
         state=ControlTowerState(),
         chat_store=ChatStore(tmp_path / "chat"),
         projets=ServiceProjets(
-            ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)
+            ProjectStore(tmp_path / "depot"), racines_exploration=(atelier,)
         ),
         comprehension=ComprehensionModele(_Comprend()),
     )

@@ -106,7 +106,7 @@ from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.controltower.purge import ClientRedis as ClientRedisPurge
 from maestro.controltower.purge import hotes_vivants, port_api
 from maestro.fichiers import retirer_arbre
-from maestro.projets.modele import ID_PROJET
+from maestro.projects.model import ID_PROJET
 from maestro.queue.celery_app import TASKS_QUEUE
 from maestro.scenarios.modele import Rapport
 from maestro.scenarios.projets import racine_atelier, racines_des_passages

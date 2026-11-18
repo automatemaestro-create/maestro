@@ -75,6 +75,15 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | projet | `project` | ce que la personne déclare et sur quoi travaille l'équipe |
 | racine (d'un projet) | `root` | le dossier du projet sur le poste |
 | périmètre (d'un projet) | `perimeter` | les motifs de chemins qu'un projet inclut ou exclut |
+| inclus, exclus (d'un périmètre) | `included`, `excluded` | les motifs qu'un périmètre expose aux agents, et ceux qu'il leur retire. Les clés enregistrées (`inclus`, `exclus`) ne changent pas |
+| origine (d'un projet) | `origin` | `nouveau` (un dossier qu'on initie) ou `existant` (un projet qu'on reprend). Ces valeurs ne changent pas |
+| zone interdite | `forbidden_zone` | un chemin qu'aucune racine ne peut être ni contenir : racine de disque, dossier personnel nu, `.ssh`, dépôt de Maestro… |
+| dossier autorisé | `allowed_folder` | un dossier que la personne ouvre à l'explorateur depuis *Paramètres › Projets*, en plus de la frontière |
+| branche de travail (d'un projet) | `base_branch` | la branche sur laquelle le projet est posé, d'où partent les branches des tâches et vers laquelle elles se fusionnent |
+| report (de l'outillage) | `defer` | le « plus tard » que la personne répond à l'étape d'outillage (`ProjectStore.defer_tooling`, `ToolingDecision.deferred`) |
+| modification (d'un fichier) | `file_change` | un fichier du diff du travail, ce qui lui arrive et de combien de lignes (`FileChange`) |
+| nature (d'une modification) | `kind` | ajouté, modifié ou supprimé (`KIND_ADDED`…). Les valeurs enregistrées (`ajoute`, `modifie`, `supprime`) ne changent pas. À distinguer de la nature d'un échec (`nature`) |
+| rédacteur (de commits) | `commit_drafter` | ce qui écrit, dans la convention du projet, le message d'un commit que Maestro fait (`CommitDrafter`) |
 | appartenance | `ownership` | le rattachement d'un travail à un projet (`projet_id` sur le fil) |
 | objectif | `goal` | ce que la personne demande à un run |
 | brief | `brief` | l'objectif structuré, validé avant la décomposition |

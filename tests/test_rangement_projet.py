@@ -50,7 +50,7 @@ from maestro.agents.store import (
     SurchargeAgent,
     SurchargeStore,
 )
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 
 PROJET = "prj-depensio"
 AUTRE = "prj-autre"
@@ -66,7 +66,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path`, comme dans les tests du socle (#221).
 
     Indispensable sous Windows : le `tmp_path` de pytest vit sous `AppData`, que
-    `valider_racine` interdit à juste titre — sans cette isolation, toute racine
+    `validate_root` interdit à juste titre — sans cette isolation, toute racine
     de projet déclarée ici serait refusée avant même le test.
     """
     maison = tmp_path / "maison"
@@ -97,13 +97,13 @@ def _fiche(nom: str = "analyste") -> AgentDefinition:
     )
 
 
-def _projets_avec(racine: Path, *noms: str) -> ProjetStore:
+def _projets_avec(racine: Path, *noms: str) -> ProjectStore:
     """Un dépôt de projets jetable, `noms` déclarés sur des dossiers réels."""
-    depot = ProjetStore(racine / "projets")
+    depot = ProjectStore(racine / "projets")
     for nom in noms:
         dossier = Path.home() / nom
         dossier.mkdir(parents=True, exist_ok=True)
-        depot.creer(nom, dossier)
+        depot.create(nom, dossier)
     return depot
 
 
@@ -313,7 +313,7 @@ def test_un_seul_projet_declare_est_par_construction_celui_qui_les_utilise(
 
 
 def test_sans_projet_declare_il_n_y_a_personne_a_qui_rattacher(tmp_path: Path) -> None:
-    cible, motif = projet_cible(projets=ProjetStore(tmp_path / "projets"))
+    cible, motif = projet_cible(projets=ProjectStore(tmp_path / "projets"))
 
     assert cible is None
     assert motif == "aucun projet déclaré"
