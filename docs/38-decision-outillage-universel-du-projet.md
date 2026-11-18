@@ -347,6 +347,20 @@ demande le filet du diff.
   le fichier changé, garde comprise.
 - **Un fichier d'instructions se lit en entier** : servi tronqué, il se relit pour en avoir la suite.
   C'est une lecture de plus, sous la même borne (`lectures_max`).
+- **Une commande garde la forme que l'instruction lui donne** (#1717) : `CLAUDE.md` écrit
+  `pytest tests/…`, où `tests/…` est la suite qu'on vise. Une commande que le fichier cité n'écrit
+  qu'en tête d'une forme plus longue, comme `pytest tests/` ou `pytest.sh` sans ses
+  `<arguments pytest>`, jouerait tout ce que la forme laisse à choisir. La confrontation l'écarte,
+  avec la forme dont elle est coupée. Les portions de code du fichier font foi : c'est la lecture
+  d'un format, pas un lexique. Une commande que le fichier écrit aussi entière reste, comme celle
+  que le modèle tire d'un script que les instructions nomment.
+- **Après un run, les instructions tiennent encore** (#1717) : la revue d'après un run (#1381) relit
+  le projet pour ses usages en échec, et pour eux seuls. Un usage que les instructions tiennent,
+  prescrit ou écarté, ne se remplace que par une commande qu'elles prescrivent, jamais par la
+  commande déduite qu'elles laissaient derrière la leur. Elles le tiennent si la relecture le dit,
+  ou si la lecture de l'import l'a dit d'un fichier dont le contenu n'a pas changé depuis
+  (empreinte SHA-256 du fichier entier, pas sa date). Un fichier qui a changé rend la parole à la
+  relecture.
 
 Ne bougent pas : Maestro ne recopie pas les instructions dans `AGENTS.md`, il les nomme (« Lis-les en
 entier »). La commande déduite reste dans les constats, derrière la prescrite, et n'est jamais

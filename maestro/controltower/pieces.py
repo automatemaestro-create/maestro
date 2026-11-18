@@ -132,6 +132,7 @@ from maestro.outillage.ecriture import (
     ManifesteHorsBranche,
     nouvel_id_de_generation,
 )
+from maestro.outillage.exploration import tenus_par_les_instructions
 from maestro.outillage.generation import (
     Prevision,
     corrections_declarees,
@@ -143,11 +144,13 @@ from maestro.outillage.generation import (
 )
 from maestro.outillage.modele import (
     ORIGINE_DITE,
+    ORIGINE_PRESCRITE,
     ORIGINE_PROPOSEE,
     Analyse,
     Constats,
     Entree,
     FichierGarde,
+    Lecture,
     Recommandation,
 )
 from maestro.outillage.questionnaire import (
@@ -349,7 +352,9 @@ class _Matiere:
     `corrections` sont celles qui ont corrigé les constats — reprises du manifeste, puis
     dites ou proposées sur le fil, la plus récente de chaque sujet (`retenir`). `clients`
     sont ceux dont la recommandation a tiré ses ponts : une commande proposée (#1381) la
-    fait recalculer, avec les mêmes.
+    fait recalculer, avec les mêmes. `lecture` est celle d'un projet **lu** (#1158), `None`
+    pour un projet décrit : la revue d'après un run y relit ce que les instructions du
+    projet tenaient (#1717).
     """
 
     projet: Projet
@@ -359,6 +364,7 @@ class _Matiere:
     source: dict[str, Any]
     corrections: tuple[CorrectionPrise, ...] = ()
     clients: tuple[Client, ...] = ()
+    lecture: Lecture | None = None
 
     def proposant(self, proposees: Sequence[CorrectionPrise]) -> _Matiere:
         """Cette matière, les commandes que Maestro propose (#1381) posées par-dessus."""
@@ -541,6 +547,13 @@ class ServicePieces:
         prescrivait celle qui a échoué. Vu sur S9 (passage `20260929-130422`) : la commande
         de style « lue » dans le skill que Maestro avait écrit, en y corrigeant le nom du
         script — une preuve circulaire.
+
+        Un usage que les instructions du projet **tiennent** (#1717) — prescrit, ou écarté,
+        par la lecture de l'import sur un fichier qui n'a pas changé, ou par la relecture —
+        ne se remplace que par une commande qu'elles prescrivent : l'échec de
+        `bash scripts/ci/local.sh` ne fait pas jouer le `pytest` nu que les tables lisent dans
+        `pyproject.toml`, la suite entière que `CLAUDE.md` écarte. Un usage écarté n'essaie
+        rien.
         """
         verificateur = self._verificateur or Verificateur()
         racine = matiere.racine
@@ -553,15 +566,21 @@ class ServicePieces:
         )
         rangees = sorted(lues, key=lambda c: c not in retenues)
         ecartees = {v.commande for v in echecs}
+        prescrits, exclus = tenus_par_les_instructions(
+            racine, matiere.constats, matiere.lecture, lue.constats
+        )
         essais: dict[str, Verification] = {}
         proposees: dict[str, CorrectionPrise] = {}
         for echec in echecs:
+            if echec.usage in exclus:
+                continue
             for lue_ici in rangees:
                 if (
                     echec.usage in proposees
                     or lue_ici.usage != echec.usage
                     or lue_ici.commande in ecartees
                     or lue_ici.commande in essais
+                    or (echec.usage in prescrits and lue_ici.origine != ORIGINE_PRESCRITE)
                 ):
                     continue
                 (verdict,) = verificateur.verifier_commandes(
@@ -917,6 +936,7 @@ class ServicePieces:
         proposees = tuple(c for c in retenues if c.proposee)
         compris = tuple(acquis) if acquis is not None else acquis_du_fil(fil)
         clients = await self._outillage.clients_du_poste()
+        lecture: Lecture | None = None
         if compris:
             # La réponse corrigée cède sa place dans les constats mêmes (#1443) : c'est
             # d'eux que le manifeste garde ce que le projet est, et que l'équipe se compose.
@@ -938,6 +958,7 @@ class ServicePieces:
             analyse = await self._analyse(projet, fil)
             constats = corriger(analyse.constats, prises)
             source = analyse.source_manifeste()
+            lecture = analyse.lecture
         constats = adopter(constats, proposees)
         return _Matiere(
             projet=projet,
@@ -947,6 +968,7 @@ class ServicePieces:
             source=source,
             corrections=retenues,
             clients=tuple(clients),
+            lecture=lecture,
         )
 
     async def _analyse(self, projet: Projet, fil: Sequence[MessageChat]) -> Analyse:

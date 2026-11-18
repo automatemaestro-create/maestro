@@ -3337,13 +3337,14 @@ du répertoire de travail : lisible d'un clic en session interactive, hors de po
 autonome. Le pourquoi et la règle générale qui en découle sont en §8.5. Table rase à chaque
 lancement — un journal d'hier à côté d'un run qui n'a pas joué ce job-là mentirait.
 
-Le périmètre se calcule sur `origin/main..HEAD` **plus le travail non commité** (c'est ce qui
-partira au push), fichier par fichier :
+Le périmètre se calcule depuis **le point d'où la branche part de `main`** — `origin/main`, ou la
+`main` locale quand la branche en a reçu des commits non poussés (#1713, ci-dessous) — **plus le
+travail non commité** (c'est ce qui partira au push), fichier par fichier :
 
 | Ce qui change | Ce qui se joue |
 |---|---|
 | `maestro/**` | les suites qui **nomment le module** ; une donnée, celles du module qui la lit ; personne → les suites **applicatives** (#1242, ci-dessous) |
-| `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
+| `scripts/**`, `.claude/**`, `.github/**`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) ; un nom nu que d'autres fichiers portent, celles qui le **lisent** (#1713, ci-dessous) |
 | `tests/test_*.py` | elles-mêmes ; une suite **supprimée**, celles qui la **nomment**, et personne → la suite entière (#1252, ci-dessous) |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | les suites qui les **lisent**, et aucune s'il n'y en a pas (`web-build` couvre le front) (#1689, ci-dessous) |
@@ -3394,6 +3395,37 @@ Deux limites sont assumées. Une suite qui joint la racine à un nom pris dans u
 `README.md`, et le pipeline la rattrape. Un décor de test qui écrit `RACINE / "CLAUDE.md"` d'un
 tenant dans une chaîne passe pour une lecture : `tests/test_ci_local.py` compose donc ses jointures
 (`jointure`), pour ne pas se jouer à chaque retouche de prose.
+
+**Le diff est ce que la branche a changé, et rien d'autre (#1713).** Il part du point où la branche
+quitte `main`, et c'est le plus récent des deux : la `main` locale l'emporte sur `origin/main`
+quand elle est en avance dans l'histoire de la branche. La branche d'une tâche de Maestro part de
+la `main` locale du projet, où l'outillage a commité ses pièces sans les pousser. Comparée à
+`origin/main`, chaque tâche portait ces pièces dans son diff. Mesuré par #1688 sur le dépôt de
+Maestro importé : la tâche touchait trois fichiers, le filet en voyait dix, et il jouait 52 suites
+au lieu de 31 (docs/56 §4.1). Une telle base se dit dans l'en-tête du filet
+(`base    : main, en avance de 16 commit(s) sur origin/main`). Deux cas gardent `origin/main` : un
+clone de développement dont la `main` a du retard, et `main` elle-même, dont les commits non
+poussés sont ce que le push emportera. Sans `origin/main`, la base est la `main` locale : sur un
+projet sans dépôt distant, le filet ne voyait jusque-là que le travail non commité. Rejoué le
+2026-11-18 sur les pièces du clone de #1688 et le commit de son agent, la tête du jour pour
+`origin/main` : 34 suites, celles qui nomment `maestro.providers.claude` et les deux suites
+modifiées, contre 64 avec le filet d'avant (`SKILL.md, CLAUDE.md, …`).
+
+**Un nom nu que d'autres fichiers portent ne désigne aucun d'eux (#1713).** `SKILL.md` est cité par
+les suites qui lisent les skills de `.claude/skills/`. La règle du nom leur rattachait les
+`.agents/skills/<nom>/SKILL.md` que l'outillage pose dans un projet, et que personne ne lit. C'est
+ainsi que `test_orchestrate`, la plus lente des suites en natif, entrait au périmètre d'une tâche
+d'un seul module. Un fichier imbriqué dont le nom est aussi celui d'un autre fichier du dépôt se
+classe donc par la règle de la lecture : les suites qui le lisent, ou qui lisent un dossier qui le
+contient. Personne ne le lit : la prose reste sans effet, comme celle de la racine, et le reste
+passe au repli par le dossier, puis à l'élargissement. Le nom d'un fichier de la racine est son
+chemin : il le désigne toujours.
+
+Mesuré le 2026-11-18 sur les 147 fichiers imbriqués que la règle du nom classe : 47 changent. Tous
+sont des homonymes (24 `README.md`, 11 `.gitignore`, 4 `SKILL.md`, 6 fichiers de `core/` et les deux
+`package*.json` de la coque), et aucun ne passe à la suite entière. `.claude/skills/verify/SKILL.md`
+passe de 26 suites à 7, celles qui le lisent ou lisent un dossier qui le contient.
+`agents/qa/README.md` passe de 45 à aucune.
 
 **La coque de bureau est le seul chemin qui échappe aux deux voisins, et il le faut (#948).** La
 ranger avec `apps/web/**`, quand le front ne jouait aucune suite, la rendait **silencieusement

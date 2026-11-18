@@ -74,11 +74,26 @@ la même lecture est rejouée avec ces échecs pour indice (`echecs`) : le modè
 commande de même usage que le projet montre, et la rend comme toute autre, confrontée au
 fichier qu'il a lu. Ce module ne la joue pas : c'est l'appelant qui la vérifie avant de
 la proposer.
+
+Cette relecture ne redécide pas le reste (#1717) : seules les commandes des usages en échec
+entrent, et un usage que les instructions du projet tiennent — à l'import, sur un fichier
+qui n'a pas changé depuis, ou à la relecture — ne se remplace que par une commande qu'elles
+prescrivent (`tenus_par_les_instructions`). Ce que la lecture de l'import a laissé de côté
+n'y revient que si le projet a changé sur ce point.
+
+## Une commande garde la forme que son fichier lui donne (#1717)
+
+`CLAUDE.md` écrit `pytest tests/…` : `tests/…` est la suite qu'on vise, et `pytest tests/`
+jouerait la suite entière. Une commande que le fichier cité n'écrit **qu'en tête** d'une
+forme plus longue — dans ses portions de code, en Markdown — est écartée, avec la forme dont
+elle est coupée. C'est la lecture d'un format, pas d'un vocabulaire : rien ne reconnaît un
+motif, le fichier dit seulement qu'il écrit la commande plus longue, et jamais entière.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import unicodedata
@@ -230,6 +245,10 @@ Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
 « convention » : c'est la commande usuelle de l'outil que le fichier prouve, sans
 que le projet l'écrive. Ne présente jamais une convention comme déclarée.
+Une commande que le fichier écrit avec une part à choisir — la suite, le fichier ou
+le job qu'on vise (`tests/…`, `<suite>`) — est une forme, pas une commande : ne la
+rends pas, et jamais amputée de cette part, qui jouerait alors tout ce qu'elle
+laissait à choisir.
 
 Les instructions du projet l'emportent sur les indices. Quand un fichier
 d'instructions dit aux agents comment installer, tester ou vérifier leur travail —
@@ -315,6 +334,10 @@ class Explorateur:
     Il ne lève jamais : une demande qu'il ne sert pas rend un texte qui dit
     pourquoi, et le modèle continue. Un dossier illisible ou un fichier disparu
     entre deux tours sont des faits du projet, pas une panne de la lecture.
+
+    Il garde aussi, par fichier lu, le texte qu'il a servi (`textes`) et l'empreinte du
+    fichier entier (`empreintes`, #1717) : le premier est ce contre quoi la forme d'une
+    commande se confronte, la seconde ce qui dira après un run si le fichier a changé.
     """
 
     racine: Path
@@ -327,6 +350,8 @@ class Explorateur:
     refus: list[Refus] = field(default_factory=list)
     troncatures: list[str] = field(default_factory=list)
     tronques: list[str] = field(default_factory=list)
+    textes: dict[str, list[str]] = field(default_factory=dict)
+    empreintes: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._motifs = motifs_compiles(self.perimetre.exclus)
@@ -346,6 +371,10 @@ class Explorateur:
         """Enregistre une borne atteinte, une seule fois."""
         if motif not in self.troncatures:
             self.troncatures.append(motif)
+
+    def texte_servi(self, relatif: str) -> str:
+        """Ce que le modèle a reçu de `relatif`, tranches bout à bout — `""` s'il ne l'a pas lu."""
+        return "".join(self.textes.get(relatif, ()))
 
     def servir(self, demande: Demande) -> str:
         """Ce que le modèle recevra pour `demande` : le contenu, la liste, ou le refus motivé."""
@@ -494,6 +523,7 @@ class Explorateur:
         if not debut:
             self.lus.append(relatif)
             self.vus.add(relatif)
+            self.empreintes[relatif] = _empreinte(chemin)
         if "\x00" in texte:
             self._servis[relatif] = (taille, taille)
             return (
@@ -501,6 +531,7 @@ class Explorateur:
                 "contenu non servi -----"
             )
         self._servis[relatif] = (fin, taille)
+        self.textes.setdefault(relatif, []).append(texte)
         coupe = fin < taille
         if coupe:
             self.noter_troncature("fichier-tronque")
@@ -575,6 +606,71 @@ def _tranche(chemin: Path, debut: int, octets_max: int) -> tuple[str, int]:
     return brut.decode("utf-8", errors="replace"), debut + len(brut)
 
 
+def _empreinte(chemin: Path) -> str:
+    """Le SHA-256 du contenu entier de `chemin`, `""` s'il est illisible — jamais une exception.
+
+    Le fichier entier, pas la tranche servie : c'est le fichier qui change ou non après un
+    run, quelle que soit la part que le modèle en a lue. Rien n'en est servi au modèle.
+    """
+    empreinte = hashlib.sha256()
+    try:
+        with chemin.open("rb") as flux:
+            for bloc in iter(lambda: flux.read(1 << 16), b""):
+                empreinte.update(bloc)
+    except OSError:
+        return ""
+    return empreinte.hexdigest()
+
+
+#: Une portion de code en ligne, en Markdown : le texte entre deux accents graves simples.
+_PORTION_DE_CODE = re.compile(r"`([^`\n]+)`")
+
+#: Ce qui ouvre ou ferme un bloc de code en Markdown.
+_CLOTURES = ("```", "~~~")
+
+#: L'invite qu'une ligne d'un bloc de code écrit devant sa commande.
+_INVITE = "$ "
+
+
+def _formes_ecrites(texte: str) -> tuple[str, ...]:
+    """Les commandes telles qu'un fichier les **écrit** : ses portions de code, en Markdown.
+
+    Une portion en ligne (`` `bash scripts/ci/local.sh` ``) ou une ligne d'un bloc de code,
+    son invite `$ ` ôtée, espaces resserrés. C'est la lecture d'un format, pas d'un
+    vocabulaire : rien ici ne reconnaît ce qu'une forme veut dire. Un fichier sans portion de
+    code — un manifeste, de la prose nue — n'écrit aucune forme.
+    """
+    formes: list[str] = []
+    dans_un_bloc = False
+    for ligne in texte.splitlines():
+        nue = ligne.strip()
+        if nue.startswith(_CLOTURES):
+            dans_un_bloc = not dans_un_bloc
+            continue
+        if dans_un_bloc:
+            formes.append(" ".join(nue.removeprefix(_INVITE).split()))
+            continue
+        formes.extend(" ".join(portion.split()) for portion in _PORTION_DE_CODE.findall(ligne))
+    return tuple(forme for forme in formes if forme)
+
+
+def _forme_ecourtee(commande: str, texte: str) -> str:
+    """La forme plus longue dont `commande` n'est que le début, `""` si elle n'en coupe aucune.
+
+    `commande` est coupée quand le fichier l'écrit **seulement** en tête d'une forme plus
+    longue (#1717) — `pytest tests/` là où il écrit `pytest tests/…`, `pytest.sh` là où il
+    écrit `pytest.sh <arguments pytest>` : la part retirée était ce qu'on choisit, et la
+    commande coupée jouerait tout ce qu'elle laissait à choisir. Un fichier qui l'écrit aussi
+    entière ne la coupe pas, et une commande qu'il n'écrit pas — tirée d'un script qu'il
+    nomme — n'est pas une forme coupée.
+    """
+    cible = " ".join(commande.split())
+    formes = _formes_ecrites(texte)
+    if not cible or cible in formes:
+        return ""
+    return next((forme for forme in formes if forme.startswith(cible)), "")
+
+
 def _est_dossier(entree: os.DirEntry[str]) -> bool:
     """`entree` est-elle un dossier ? Faux si l'OS refuse de le dire."""
     try:
@@ -610,7 +706,9 @@ async def lire_le_projet(
     projet tel qu'il est — la revue d'après un run. Elles sont dites au modèle, sortie
     comprise, pour qu'il cherche celle de même usage que le projet montre. La sortie est
     une **donnée**, comme le contenu d'un fichier : rien n'en est reconnu ici (#1315), et
-    ce qu'il rend passe par la même confrontation que le reste.
+    ce qu'il rend passe par la même confrontation que le reste. La question est celle de
+    ces usages (#1717) : une commande rendue pour un autre usage est écartée, et la lecture
+    que la revue ne remplace pas garde le sien.
 
     Le déroulé : la racine est listée, puis le modèle demande ce qu'il veut lire
     — au plus `Bornes.tours_max` tours et `Bornes.lectures_max` lectures —, et
@@ -640,7 +738,9 @@ async def lire_le_projet(
             )
         reponse = _decoder(texte)
         if reponse.conclut:
-            retenus, ecartes = _confronter(reponse.constats, explorateur, analyse)
+            retenus, ecartes = _confronter(
+                reponse.constats, explorateur, analyse, cherches=_usages_en_echec(echecs)
+            )
             return _conclure(analyse, explorateur, "lue", tour, "", retenus, ecartes)
         if not reponse.demandes:
             return _conclure(
@@ -662,6 +762,41 @@ async def lire_le_projet(
         bornes.tours_max,
         f"le modèle n'a pas conclu en {bornes.tours_max} tour(s)",
     )
+
+
+def tenus_par_les_instructions(
+    racine: Path,
+    avant: Constats,
+    lecture_d_avant: Lecture | None,
+    relus: Constats,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Les usages que les instructions du projet tiennent après un run : prescrits, écartés (#1717).
+
+    Ce que la lecture de l'import (`avant`, `lecture_d_avant`) a tiré d'un fichier
+    d'instructions tient encore **tant que ce fichier n'a pas changé** : son contenu entier,
+    relu maintenant sur le disque, a l'empreinte qu'il avait quand elle l'a ouvert. Un modèle
+    n'est pas tenu de répondre deux fois pareil, et la revue ne relit pas le projet pour
+    redécider ce que ses instructions disaient déjà. Ce que la relecture (`relus`) en tire
+    s'y ajoute : c'est le projet tel qu'il est. Un fichier qui a changé, ou disparu, rend la
+    parole à la relecture seule.
+
+    Un usage tenu ne se remplace que par une commande prescrite : jamais par celle que les
+    instructions mettaient derrière la leur (le `pytest` nu de `pyproject.toml`). Un usage à
+    la fois prescrit et écarté garde sa prescription, comme à l'import. Bloquant : le disque
+    est relu.
+    """
+
+    def inchange(chemin: str) -> bool:
+        empreinte = lecture_d_avant.empreinte_de(chemin) if lecture_d_avant is not None else ""
+        return not empreinte or empreinte == _empreinte(racine / chemin)
+
+    prescrits = {c.usage for c in relus.commandes if c.origine == ORIGINE_PRESCRITE}
+    prescrits |= {
+        c.usage for c in avant.commandes if c.origine == ORIGINE_PRESCRITE and inchange(c.chemin)
+    }
+    exclus = {piece.nom for piece in relus.usages_exclus}
+    exclus |= {piece.nom for piece in avant.usages_exclus if inchange(piece.chemin)}
+    return frozenset(prescrits), frozenset(exclus - prescrits)
 
 
 def sans_lecture(analyse: Analyse, motif: str) -> Analyse:
@@ -700,8 +835,14 @@ def _conclure(
         tronques=tuple(explorateur.tronques),
         retenus=retenus if retenus is not None else Constats(),
         ecartes=ecartes,
+        empreintes=tuple(explorateur.empreintes.items()),
     )
     return completer(analyse, lecture)
+
+
+def _usages_en_echec(echecs: Sequence[Verification]) -> frozenset[str]:
+    """Les usages dont une commande a échoué — ceux que la revue d'après un run cherche."""
+    return frozenset(verdict.usage for verdict in echecs if verdict.usage)
 
 
 def _court(texte: str) -> str:
@@ -807,10 +948,13 @@ def _echecs(echecs: Sequence[Verification]) -> str:
                 verdict.sortie.strip(),
                 "----- fin de la sortie -----",
             ]
+    usages = ", ".join(sorted(_usages_en_echec(echecs)))
     lignes.append(
         "Pour chacun de ces usages, cherche la commande que le projet montre — un script, "
         "une cible, un usage écrit dans un fichier — et rends-la en COMMANDE avec le "
         "fichier lu qui la justifie, même si les indices en portent une pour cet usage. "
+        f"Ne rends de COMMANDE que pour ces usages ({usages}) : les autres restent ceux "
+        "que l'outillage écrit déjà. "
         "N'en rends aucune si rien de ce que tu lis ne la justifie. Ce que l'outillage de "
         "Maestro a écrit (les SKILL.md sous .agents/skills/, l'AGENTS.md qu'il a posé, "
         ".maestro/) ne justifie pas une commande : c'est lui qui prescrivait celle qui a "
@@ -871,6 +1015,8 @@ def _confronter(
     bruts: tuple[_ConstatBrut, ...],
     explorateur: Explorateur,
     analyse: Analyse,
+    *,
+    cherches: frozenset[str] = frozenset(),
 ) -> tuple[Constats, tuple[ConstatEcarte, ...]]:
     """Les constats du modèle **confrontés** à ce qu'il a lu — retenus, ou écartés avec leur raison.
 
@@ -878,9 +1024,14 @@ def _confronter(
     prouve, ou n'entre pas*. Un gestionnaire, une commande ou une CI doivent
     citer un fichier **lu** pendant cette lecture ; un langage, un fichier au
     moins **vu** (on ne lit pas le code pour dire qu'il est en Zig). Ce que les
-    tables avaient déjà constaté n'entre pas une seconde fois, et le dit.
+    tables avaient déjà constaté n'entre pas une seconde fois, et le dit. Une
+    commande garde la forme que son fichier lui donne (#1717) : coupée d'une forme
+    plus longue, elle n'entre pas.
+
+    `cherches` sont les usages en échec d'une revue d'après un run (#1717) : seules leurs
+    commandes entrent. Vide, la lecture est celle de l'import, et tous les usages comptent.
     """
-    confronteur = _Confronteur(explorateur, analyse)
+    confronteur = _Confronteur(explorateur, analyse, cherches)
     for brut in bruts:
         confronteur.confronter(brut)
     return confronteur.resultat()
@@ -893,7 +1044,14 @@ class _Confronteur:
     c'est le même argument que `_Releve` pour le parcours.
     """
 
-    def __init__(self, explorateur: Explorateur, analyse: Analyse) -> None:
+    def __init__(
+        self,
+        explorateur: Explorateur,
+        analyse: Analyse,
+        cherches: frozenset[str] = frozenset(),
+    ) -> None:
+        self._explorateur = explorateur
+        self._cherches = cherches
         self._parcours = analyse.parcours
         self._lus = {chemin.casefold(): chemin for chemin in explorateur.lus}
         self._vus = {chemin.casefold(): chemin for chemin in explorateur.vus}
@@ -1017,6 +1175,9 @@ class _Confronteur:
         chemin, raison = self._preuve(chemin_brut, lu=True)
         if chemin is None:
             return raison
+        raison = self._hors_de_la_question(usage) or self._coupee(commande, chemin)
+        if raison:
+            return raison
         origine = origine.lower()
         lue = Commande(
             usage=usage,
@@ -1036,6 +1197,28 @@ class _Confronteur:
         self._commandes[(usage, commande)] = _LECTURE
         self.commandes.append(lue)
         return ""
+
+    def _hors_de_la_question(self, usage: str) -> str:
+        """Pourquoi la revue d'après un run n'en veut pas — `""` si `usage` est l'un des siens.
+
+        La revue cherche les usages en échec (#1717) ; une lecture d'import, tous.
+        """
+        if not self._cherches or usage in self._cherches:
+            return ""
+        return (
+            f"la revue d'après le run cherche {', '.join(sorted(self._cherches))} : "
+            f"« {usage} » reste ce que l'outillage écrit déjà"
+        )
+
+    def _coupee(self, commande: str, chemin: str) -> str:
+        """Pourquoi `commande` n'a pas la forme que `chemin` lui donne, `""` si elle l'a (#1717)."""
+        forme = _forme_ecourtee(commande, self._explorateur.texte_servi(chemin))
+        if not forme:
+            return ""
+        return (
+            f"{chemin} l'écrit `{forme}` : coupée de cette forme, elle jouerait tout ce "
+            "que la forme laisse à choisir"
+        )
 
     def _exclu_de(self, champs: tuple[str, ...], ligne: str = "") -> str:
         """Un usage que les instructions écartent (#1678) — tranché à la fin, dans `resultat`."""

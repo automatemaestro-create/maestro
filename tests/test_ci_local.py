@@ -1360,6 +1360,172 @@ def test_ce_qu_aucune_suite_ne_lit_reste_sans_effet(clone: Clone, fichier: str) 
     assert "aucune suite concernée" in ligne and "aucune suite ne lit" in ligne, ligne
 
 
+# --- Ce que la branche a changé, et rien d'autre (#1713) ------------------------------------------
+# Mesuré par #1688 sur le dépôt de Maestro importé : une tâche d'un seul module jouait 52 suites au
+# lieu de 31. Deux mécanismes se cumulaient. Maestro commite ses pièces d'outillage sur la `main`
+# du projet sans les pousser, et le filet comparait la branche à `origin/main` : chaque tâche
+# portait donc ces pièces dans son diff. Et la règle du nom rattachait
+# `.agents/skills/<nom>/SKILL.md` aux suites qui citent `SKILL.md`, alors qu'elles lisent
+# `.claude/skills/`.
+
+#: Une pièce que personne ne nomme : dans le diff, elle ramène la suite entière. C'est ce qui rend
+#: visible qu'elle y est entrée.
+PIECE = {".mcp.json": '{"serveurs": {"outil": {}}}\n'}
+
+
+def pose_sur_main_sans_pousser(clone: Clone, fichiers: dict[str, str]) -> None:
+    """Des commits sur la `main` locale, qu'`origin` n'a pas : les pièces de l'outillage."""
+    for chemin, contenu in fichiers.items():
+        cible = clone.racine / chemin
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(contenu, encoding="utf-8", newline="\n")
+    clone.git("add", "-A")
+    clone.git("commit", "--quiet", "-m", "chore(outillage): les pièces de Maestro")
+
+
+@pytest.mark.parametrize("pousse", [False, True], ids=["non-poussees", "poussees"])
+def test_les_pieces_posees_sur_main_n_elargissent_pas_la_branche(
+    clone: Clone, pousse: bool
+) -> None:
+    """La branche d'une tâche part de la `main` locale. Ce que cette `main` portait avant elle n'est
+    pas son travail, que la personne l'ait poussé ou non."""
+    clone.equipe_tout()
+    pose_sur_main_sans_pousser(clone, PIECE)
+    if pousse:
+        clone.git("push", "--quiet", "origin", "main")
+    clone.git("switch", "--quiet", "-c", "maestro/tache")
+    clone.modifie("maestro/moteur.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_moteur.py"]
+    # Une base qui n'est pas origin/main se dit, avec ce qu'elle retire du diff ; la base
+    # ordinaire reste muette.
+    annonce = "base    : main, en avance de 1 commit(s) sur origin/main"
+    assert (annonce in acheve.stdout) is not pousse, acheve.stdout
+
+
+def test_sur_main_ses_commits_non_pousses_restent_ce_qui_partira(clone: Clone) -> None:
+    """Le sens inverse : sur `main` elle-même, ses commits non poussés sont ce que le push
+    emportera. Ils restent dans le diff."""
+    clone.equipe_tout()
+    pose_sur_main_sans_pousser(clone, PIECE)
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    assert "aucune suite ne nomme .mcp.json" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_une_main_locale_en_retard_ne_recule_pas_la_base(clone: Clone) -> None:
+    """Le cas du développement : la branche part d'`origin/main`, et la `main` du clone a du
+    retard. Comparer à elle ferait entrer dans le diff ce que d'autres ont mergé entre-temps."""
+    clone.equipe_tout()
+    clone.pose_et_pousse(PIECE, message="chore: une PR voisine, mergée")
+    clone.git("switch", "--quiet", "-c", "fix/1-un-ticket", "origin/main")
+    clone.git("branch", "--force", "main", "main~1")
+    clone.modifie("maestro/moteur.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_moteur.py"]
+    assert "base    :" not in acheve.stdout
+
+
+def test_sans_origin_la_branche_se_compare_a_la_main_locale(clone: Clone) -> None:
+    """Un projet versionné sans dépôt distant : sans `origin/main`, le filet ne voyait que le
+    travail non commité. Les commits de la tâche n'entraient pas dans son périmètre."""
+    clone.equipe_tout()
+    clone.git("remote", "remove", "origin")
+    clone.git("switch", "--quiet", "-c", "maestro/tache")
+    clone.modifie("maestro/moteur.py")
+    clone.git("commit", "--quiet", "-am", "feat: le travail de la tâche")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_moteur.py"]
+    assert "base    : main, sans origin/main" in acheve.stdout, acheve.stdout
+
+
+#: Le décor des homonymes : un `SKILL.md` du dépôt, et trois façons de citer le nom nu.
+HOMONYMES = {
+    ".claude/skills/verifier/SKILL.md": "---\nname: verifier\n---\n",
+    # Lit les skills du dépôt, leur dossier écrit depuis la racine : la forme de
+    # test_audit_commandes.
+    "tests/test_skills.py": (
+        "from pathlib import Path\n\n"
+        "RACINE = Path(__file__).resolve().parents[1]\n"
+        f"SKILLS = {jointure('RACINE', '.claude', 'skills')}  # chaque SKILL.md\n"
+    ),
+    # Écrit les skills d'un projet jetable, au chemin que l'outillage leur donne : la forme de
+    # test_outillage_contexte. Elle cite le chemin du skill de l'outillage en entier.
+    "tests/test_pieces.py": 'SKILL = ".agents/skills/lancer-les-tests/SKILL.md"\n',
+    "tests/test_frontmatter.py": '"""Un SKILL.md porte un frontmatter."""\n',
+}
+
+
+def pose_les_homonymes(clone: Clone) -> None:
+    """Le décor, commité et poussé : hors du diff, il ne joue que par la règle éprouvée."""
+    clone.equipe_tout()
+    clone.pose_et_pousse(HOMONYMES, message="test: un nom nu que plusieurs fichiers portent")
+
+
+def test_un_skill_que_personne_ne_lit_n_ajoute_aucune_suite(clone: Clone) -> None:
+    """Le défaut mesuré : `SKILL.md` est aussi le nom des skills de `.claude/skills/`. Les suites
+    qui le citent ne lisent pas celui de `.agents/skills/`, même celle qui écrit son chemin dans un
+    projet jetable."""
+    pose_les_homonymes(clone)
+    clone.modifie(".agents/skills/lancer-les-tests/SKILL.md", "---\nname: lancer-les-tests\n---\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_pytest(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "aucune suite concernée" in ligne and "aucune suite ne lit" in ligne, ligne
+
+
+def test_un_skill_du_depot_joue_les_suites_qui_lisent_son_dossier(clone: Clone) -> None:
+    """Le nom nu ne désigne plus le skill, mais ce qui le lit le désigne toujours."""
+    pose_les_homonymes(clone)
+    clone.pose_et_pousse({".agents/skills/lancer-les-tests/SKILL.md": "---\n---\n"})
+    clone.modifie(".claude/skills/verifier/SKILL.md", "Une étape de plus.\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_skills.py"]
+    assert ".claude/skills/" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_seul_fichier_qui_porte_le_nom_garde_la_regle_du_nom(clone: Clone) -> None:
+    """La frontière : seul à porter son nom, le skill est désigné par lui, comme avant."""
+    pose_les_homonymes(clone)
+    clone.modifie(".claude/skills/verifier/SKILL.md", "Une étape de plus.\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == [
+        "tests/test_frontmatter.py",
+        "tests/test_pieces.py",
+        "tests/test_skills.py",
+    ]
+
+
+def test_un_script_homonyme_ne_prend_pas_les_suites_de_l_autre(clone: Clone) -> None:
+    """Hors de la prose, le repli par le dossier et l'élargissement tiennent : un `lib.sh` que
+    personne ne lit ni ne désigne ramène la suite entière, et celui que sa suite désigne par son
+    dossier la garde."""
+    clone.equipe_tout()
+    clone.pose_et_pousse({"scripts/autre/lib.sh": "#!/usr/bin/env bash\necho autre\n"})
+    clone.modifie("scripts/autre/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    assert "aucune suite ne nomme scripts/autre/lib.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_le_script_que_sa_suite_designe_par_son_dossier_la_garde(clone: Clone) -> None:
+    clone.equipe_tout()
+    clone.pose_et_pousse({"scripts/autre/lib.sh": "#!/usr/bin/env bash\necho autre\n"})
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+    assert "scripts/gitlab/" in ligne_du_job(acheve.stdout, "pytest")
+
+
 def test_le_mode_rapide_n_impose_pas_le_seuil_de_couverture(clone: Clone) -> None:
     """Un sous-ensemble ne peut pas tenir le seuil : l'exiger rendrait un rouge mensonger."""
     clone.equipe_tout()
