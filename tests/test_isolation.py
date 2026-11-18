@@ -225,12 +225,16 @@ def test_seules_les_variables_d_auth_entrent_dans_le_conteneur():
     assert "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdef" in transmises
     assert not any(v.startswith(("GITLAB_TOKEN", "PATH")) for v in transmises)
     # Hors auth, rien ne vient de l'hôte : seules entrent en plus les déclarations que
-    # la commande pose elle-même — `/workspace` sûr pour git (#1599), et l'identité de
-    # Maestro pour les commits de l'agent (#1507, #1602), prise à ses constantes.
+    # la commande pose elle-même — le home de `agent` (#1725), `/workspace` sûr pour git
+    # (#1599), et l'identité de Maestro pour les commits de l'agent (#1507, #1602), prise
+    # à ses constantes.
     venues = {paire.split("=", 1)[0] for paire in transmises} - set(ENV_TRANSMISES)
-    assert venues == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} | set(
-        GIT_IDENTITY_ENV
-    )
+    assert venues == {
+        "HOME", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"
+    } | set(GIT_IDENTITY_ENV)
+    assert "HOME=/home/agent" in transmises
+    # L'utilisateur est forcé sur toute image, pas laissé à celle-ci (#1725).
+    assert commande[commande.index("--user") + 1] == "10001:10001"
     assert {f"{cle}={valeur}" for cle, valeur in GIT_IDENTITY_ENV.items()} <= set(transmises)
     # La liste des accès accordés est fermée et documentée (docs/17 §3).
     assert set(ENV_TRANSMISES) == {

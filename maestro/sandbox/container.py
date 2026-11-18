@@ -166,15 +166,19 @@ ENV_TRANSMISES: tuple[str, ...] = (
 )
 
 #: uid/gid de l'utilisateur non-root `agent` de l'image dédiée (infra/sandbox/
-#: Dockerfile) — repris pour le tmpfs monté sur son home.
-_UID_AGENT = 10001
+#: Dockerfile) — forcé par `--user` sur toute image, et repris pour le tmpfs de son home.
+UID_AGENT = 10001
+
+#: Le home de l'utilisateur `agent` : un tmpfs jetable, déclaré par `HOME` pour une image
+#: qui n'a aucun compte à cet uid.
+_HOME_AGENT = "/home/agent"
 
 #: Plafonds de ressources du conteneur (anti-emballement : un agent qui compile
 #: ou boucle ne met pas le poste à genoux). Fixes au POC — à rendre configurables
 #: si un rôle légitime les crève.
-_PIDS_MAX = 256
-_MEMOIRE_MAX = "2g"
-_CPUS_MAX = "2"
+PIDS_MAX = 256
+MEMOIRE_MAX = "2g"
+CPUS_MAX = "2"
 
 #: Nom du shim (point d'entrée console déclaré dans pyproject.toml).
 _NOM_SHIM = "maestro-sandbox-shim"
@@ -247,31 +251,7 @@ class IsolationConfig:
         `DepotIndisponible` (une `ConfigError`) si le dépôt du conteneur ne peut
         pas être construit : sans lui, l'agent ne pourrait ni committer ni brancher.
         """
-        protocole = {
-            ENV_IMAGE: self.image,
-            ENV_RESEAU: self.reseau,
-            ENV_WORKSPACE: str(workspace),
-        }
-        if projet is None:
-            return protocole
-        racine = canonical(projet.root_path)
-        if projet.versioned:
-            _refuse_la_racine(workspace, racine)
-            protocole[ENV_PROJET] = str(racine)
-        masques = exclusions(workspace, projet.perimeter)
-        if len(masques) > _MASQUES_MAX:
-            raise ConfigError(
-                f"Périmètre du projet {projet.id} : {len(masques)} chemins exclus "
-                f"présents dans l'espace de travail, au-delà des {_MASQUES_MAX} que "
-                "le conteneur sait masquer. Élargissez les motifs (un dossier plutôt "
-                "que ses fichiers) — l'exécution est refusée plutôt que de monter "
-                "une partie de ce qui est exclu."
-            )
-        if projet.versioned:
-            protocole[ENV_DEPOT] = str(preparer(workspace, projet.perimeter))
-        return protocole | {
-            ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
-        }
+        return protocole_sandbox(workspace, image=self.image, reseau=self.reseau, projet=projet)
 
     def rapatrier(self, workspace: Path, env: Mapping[str, str]) -> Rapatriement | None:
         """Ramène la branche de la tâche du dépôt du conteneur, à la fin de la session (#1602).
@@ -286,6 +266,44 @@ class IsolationConfig:
         if not depot:
             return None
         return rapatrier(workspace, Path(depot), _serveur_git(depot, self.image))
+
+
+def protocole_sandbox(
+    workspace: Path, *, image: str, reseau: str, projet: Project | None = None
+) -> dict[str, str]:
+    """Le protocole `MAESTRO_SANDBOX_*` d'un conteneur sur `workspace` : le contrat de docs/17 §3.
+
+    C'est le corps de `IsolationConfig.env_sandbox`, et ce que le courtier de conteneur
+    compose pour une commande de l'agent (`maestro.sandbox.container_broker`, #1725) :
+    un seul contrat pour les deux. Le dépôt du conteneur d'un projet versionné est
+    construit ici, à côté de l'espace. Les refus et les erreurs sont ceux que
+    `env_sandbox` décrit.
+    """
+    protocole = {
+        ENV_IMAGE: image,
+        ENV_RESEAU: reseau,
+        ENV_WORKSPACE: str(workspace),
+    }
+    if projet is None:
+        return protocole
+    racine = canonical(projet.root_path)
+    if projet.versioned:
+        _refuse_la_racine(workspace, racine)
+        protocole[ENV_PROJET] = str(racine)
+    masques = exclusions(workspace, projet.perimeter)
+    if len(masques) > _MASQUES_MAX:
+        raise ConfigError(
+            f"Périmètre du projet {projet.id} : {len(masques)} chemins exclus "
+            f"présents dans l'espace de travail, au-delà des {_MASQUES_MAX} que "
+            "le conteneur sait masquer. Élargissez les motifs (un dossier plutôt "
+            "que ses fichiers) — l'exécution est refusée plutôt que de monter "
+            "une partie de ce qui est exclu."
+        )
+    if projet.versioned:
+        protocole[ENV_DEPOT] = str(preparer(workspace, projet.perimeter))
+    return protocole | {
+        ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
+    }
 
 
 def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> list[str]:
@@ -308,19 +326,52 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
       recouvert, toujours, d'un pointeur vers lui en lecture seule : l'agent ne
       peut pas réécrire le `.git` que le git de l'hôte suivra au démontage ;
     - **réseau restreint** : `bridge` (sortant seul, aucun port publié) ou `none` ;
-    - **privilèges retirés** : utilisateur non-root (image), `--cap-drop ALL`,
-      `--security-opt no-new-privileges`, plafonds pids/mémoire/CPU ;
+    - **privilèges retirés** : utilisateur non-root `agent` forcé (`--user`, sur
+      toute image), `--cap-drop ALL`, `--security-opt no-new-privileges`, plafonds
+      pids/mémoire/CPU ;
     - **environnement minimal** : de l'hôte, seules les variables d'auth
       `ENV_TRANSMISES` entrent — jamais l'environnement hôte entier ; s'y ajoutent
-      deux déclarations que la commande pose elle-même : `/workspace` sûr pour
-      git (`_git_tient_pour_sur`), et l'identité de Maestro pour les commits de
-      l'agent (`GIT_IDENTITY_ENV`, #1507).
+      les déclarations que la commande pose elle-même : le home de `agent`,
+      `/workspace` sûr pour git (`_git_tient_pour_sur`), et l'identité de Maestro
+      pour les commits de l'agent (`GIT_IDENTITY_ENV`, #1507).
 
     Lève `ConfigError` si le protocole `MAESTRO_SANDBOX_*` est absent : le shim
     ne s'invoque que via le mode isolé du fournisseur, pas à la main. Et si le
     workspace à monter, ou le dépôt du conteneur, est la racine du projet (ou vit
     dedans) : c'est le dernier contrôle avant `docker run`, celui que rien ne
     contourne.
+    """
+    image, commande = _durci(environ, interactif=True)
+    for variable in ENV_TRANSMISES:
+        if variable in environ:
+            commande += ["--env", f"{variable}={environ[variable]}"]
+    return [*commande, image, "claude", *arguments]
+
+
+def commande_courtier(
+    environ: Mapping[str, str], commande: Sequence[str], *, nom: str
+) -> list[str]:
+    """Le `docker run` qu'un courtier de conteneur joue pour une commande de l'agent (#1725).
+
+    `environ` est le protocole que `protocole_sandbox` a composé sur l'espace de la
+    session, l'image comprise ; `commande` est ce que l'agent demande, posé après
+    l'image et donc jamais lu par docker comme une option. Le durcissement est celui
+    du CLI en mode isolé (`commande_docker`), sans entrée ni variable d'authentification :
+    la commande n'a pas à joindre le modèle. `nom` désigne le conteneur, pour que le
+    courtier l'arrête si la demande s'en va.
+    """
+    image, docker = _durci(environ, interactif=False, nom=nom)
+    return [*docker, image, *commande]
+
+
+def _durci(
+    environ: Mapping[str, str], *, interactif: bool, nom: str | None = None
+) -> tuple[str, list[str]]:
+    """L'image et le `docker run` durci sur le protocole `environ`, sans ce qui suit l'image.
+
+    Le contrat de docs/17 §3, écrit une fois pour le CLI en mode isolé et pour le
+    courtier. L'utilisateur est forcé (`--user`), et son home déclaré : une image que
+    l'agent nomme peut n'avoir que root, et aucun compte pour l'uid de l'agent.
     """
     image = (environ.get(ENV_IMAGE) or "").strip()
     reseau = (environ.get(ENV_RESEAU) or "").strip()
@@ -337,11 +388,12 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
         _refuse_la_racine(Path(workspace), Path(racine))
         if depot:
             _refuse_la_racine(Path(depot), Path(racine))
-    commande = [
-        "docker",
-        "run",
-        "--rm",
-        "--interactive",
+    commande = ["docker", "run", "--rm"]
+    if interactif:
+        commande.append("--interactive")
+    if nom is not None:
+        commande += ["--name", nom]
+    commande += [
         "--init",
         "--network",
         reseau,
@@ -349,17 +401,19 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
         "--tmpfs",
         "/tmp:rw,exec,size=512m",
         "--tmpfs",
-        f"/home/agent:rw,exec,size=1g,uid={_UID_AGENT},gid={_UID_AGENT}",
+        f"{_HOME_AGENT}:rw,exec,size=1g,uid={UID_AGENT},gid={UID_AGENT}",
+        "--user",
+        f"{UID_AGENT}:{UID_AGENT}",
         "--cap-drop",
         "ALL",
         "--security-opt",
         "no-new-privileges",
         "--pids-limit",
-        str(_PIDS_MAX),
+        str(PIDS_MAX),
         "--memory",
-        _MEMOIRE_MAX,
+        MEMOIRE_MAX,
         "--cpus",
-        _CPUS_MAX,
+        CPUS_MAX,
         "--volume",
         f"{workspace}:{POINT_MONTAGE}",
         "--workdir",
@@ -368,13 +422,11 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
     commande += _montages_masques(environ.get(ENV_MASQUES) or "", sans_git=bool(depot))
     if depot:
         commande += _montages_depot(depot)
+    commande += ["--env", f"HOME={_HOME_AGENT}"]
     commande += _git_tient_pour_sur(POINT_MONTAGE)
     for variable, valeur in GIT_IDENTITY_ENV.items():
         commande += ["--env", f"{variable}={valeur}"]
-    for variable in ENV_TRANSMISES:
-        if variable in environ:
-            commande += ["--env", f"{variable}={environ[variable]}"]
-    return [*commande, image, "claude", *arguments]
+    return image, commande
 
 
 def _montages_depot(depot: str) -> list[str]:
@@ -412,9 +464,9 @@ def _serveur_git(depot: str, image: str) -> list[str]:
         "--security-opt",
         "no-new-privileges",
         "--pids-limit",
-        str(_PIDS_MAX),
+        str(PIDS_MAX),
         "--memory",
-        _MEMOIRE_MAX,
+        MEMOIRE_MAX,
         "--volume",
         f"{depot}:{POINT_DEPOT}:ro",
         *_git_tient_pour_sur(POINT_DEPOT),

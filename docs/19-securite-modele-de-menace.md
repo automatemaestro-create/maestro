@@ -359,12 +359,25 @@ réponse en trois couches :
   d'une tâche y passera ([docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md), #1728).
 
 **Le régime conteneur, sans le tube du moteur** ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
-décidé le 2026-11-18). Le moteur de Docker Desktop refuse un processus abaissé (#1714), et ouvrir son
-tube à l'agent serait une sortie générale du confinement. L'agent obtiendra donc le conteneur par un
-**courtier** : il demande une commande dans un conteneur, et Maestro compose lui-même ce conteneur
-sur l'espace de la session, sur le contrat de [docs/17 §3](./17-isolation-execution.md). Ce que le
-courtier ouvre, à savoir un verbe, la construction d'une image, le disque du moteur et la frontière
-du conteneur, est nommé au §4 de la note.
+en vigueur depuis #1725). Le moteur de Docker Desktop refuse un processus abaissé (#1714), et ouvrir
+son tube à l'agent serait une sortie générale du confinement. L'agent obtient donc le conteneur par
+un **courtier** : il lance `maestro-container IMAGE COMMANDE`, et Maestro compose lui-même ce
+conteneur, au niveau de la personne, sur l'espace de la session et sur le contrat de
+[docs/17 §3](./17-isolation-execution.md). La demande ne nomme que l'image et la commande. Un
+montage, un réseau, un privilège ou un dossier y sont refusés avec leur raison, comme un jeton qui
+n'est pas celui d'une session vivante.
+
+Ce que le courtier **ouvre** :
+- un verbe, que le jeton de la session lie à son espace ;
+- le disque du moteur, où les images nommées restent ;
+- la frontière du conteneur, celle du mode isolé ;
+- le réseau sortant, comme celui de l'agent.
+
+Ce qu'il **ne couvre pas** :
+- un commit fait dans le conteneur, qui n'en revient pas ;
+- un filet qui commande docker lui-même ;
+- une image construite depuis un Dockerfile de l'espace (#1726) ;
+- le filet du dépôt de Maestro joué par un agent (#1727) et la vérification d'une tâche (#1728).
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
 n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.

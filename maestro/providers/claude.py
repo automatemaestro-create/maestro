@@ -132,7 +132,7 @@ from maestro.providers.base import (
     motif_du_statut_http,
 )
 from maestro.providers.claude_runtime import ClaudeRuntime
-from maestro.sandbox import low_session, session_env
+from maestro.sandbox import container_broker, low_session, session_env
 from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import MODE_INTEGRITE_BASSE, IsolationConfig, mode_isolation
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
@@ -465,6 +465,7 @@ class ClaudeProvider(ModelProvider):
         dossier_cli: Path | None = None,
         env_agent: Sequence[str] = (),
         lecteur_versions: ClaudeRuntime | None = None,
+        courtier: container_broker.ContainerBroker | None = None,
     ) -> None:
         self._credentials = credentials
         # Les variables du poste que la personne nomme pour les sessions d'agent,
@@ -478,6 +479,10 @@ class ClaudeProvider(ModelProvider):
         # abaissé, et ce qu'il écrit reçoit son étiquette (`maestro.sandbox.low_session`).
         # Sans effet en mode isolé, où le conteneur est la frontière.
         self._integrite_basse = integrite_basse and isolation is None
+        # Le courtier de conteneur (#1725, docs/57) : une session abaissée y obtient le
+        # verdict au conteneur sans le tube du moteur. Rien hors de l'intégrité basse,
+        # où l'agent a docker lui-même (hôte) ou travaille déjà dans un conteneur.
+        self._courtier = courtier if self._integrite_basse else None
         # Le dossier du CLI de **toutes** les sessions (#1515, `CLAUDE_CONFIG_DIR`) :
         # connexion, transcriptions — que la reprise d'une session relit (#1513) —,
         # et le reste de ce que le CLI écrit. None : le CLI garde le sien.
@@ -513,6 +518,11 @@ class ClaudeProvider(ModelProvider):
         """Vrai quand le CLI des sessions outillées naît à l'intégrité basse (#1515)."""
         return self._integrite_basse
 
+    @property
+    def courtier_conteneur(self) -> bool:
+        """Vrai quand une session abaissée reçoit le courtier de conteneur (#1725)."""
+        return self._courtier is not None
+
     @classmethod
     def from_settings(cls, settings: Settings) -> ClaudeProvider:
         """Construit le fournisseur en dérivant credentials et isolation de la config.
@@ -534,6 +544,7 @@ class ClaudeProvider(ModelProvider):
                 "pour utiliser l'abonnement Claude Code."
             )
         isolation = IsolationConfig.from_settings(settings)
+        basse = mode_isolation(settings) == MODE_INTEGRITE_BASSE
         return cls(
             Credentials(
                 auth_mode=mode,
@@ -542,11 +553,15 @@ class ClaudeProvider(ModelProvider):
             ),
             isolation=isolation,
             arbitrage=BornesArbitrage.from_settings(settings),
-            integrite_basse=mode_isolation(settings) == MODE_INTEGRITE_BASSE,
+            integrite_basse=basse,
             dossier_cli=dossier_du_cli_claude(),
             env_agent=session_env.parse_names(settings.env_agent),
             lecteur_versions=ClaudeRuntime(
                 image=isolation.image if isolation is not None else None
+            ),
+            # Le fait qui choisit le régime (docs/57 §4) : le programme de docker est là.
+            courtier=(
+                container_broker.shared() if basse and container_broker.available() else None
             ),
         )
 
@@ -601,7 +616,9 @@ class ClaudeProvider(ModelProvider):
             env["CLAUDE_CODE_OAUTH_TOKEN"] = creds.oauth_token
         return env
 
-    def _session_basse(self, workspace: Path) -> low_session.LowSession | None:
+    def _session_basse(
+        self, workspace: Path, projet: Project | None = None
+    ) -> low_session.LowSession | None:
         """Ce que reçoit une session à l'intégrité basse — None quand elle n'en est pas une.
 
         Une étiquette que le système refuse lève `LowIntegrityError` : la session
@@ -610,6 +627,10 @@ class ClaudeProvider(ModelProvider):
         Les variables que les `.env` de Maestro déclarent sont retenues, sauf celles
         de l'espace du fournisseur (`ESPACE_DU_CLI`) : c'est par elles que le CLI joint
         le modèle.
+
+        Avec un courtier de conteneur (#1725), la session y est ouverte sur `workspace`
+        et `projet` : l'agent reçoit son adresse et son jeton, et `maestro-container` en
+        tête de son `PATH`. Elle se ferme avec la session basse.
         """
         if not self._integrite_basse:
             return None
@@ -627,6 +648,18 @@ class ClaudeProvider(ModelProvider):
         if session.bash is not None:
             # Le Git Bash que le CLI lance : la copie, seule à démarrer abaissée.
             session.env["CLAUDE_CODE_GIT_BASH_PATH"] = str(session.bash)
+        if self._courtier is not None:
+            try:
+                ouverte = self._courtier.open(workspace, projet)
+            except BaseException:
+                session.close()
+                raise
+            session.closers.append(ouverte.close)
+            chemin = session.env.get("PATH", os.environ.get("PATH", ""))
+            session.env |= ouverte.env
+            session.env["PATH"] = str(ouverte.launchers) + (
+                os.pathsep + chemin if chemin else ""
+            )
         return session
 
     def _ambiantes_retenues(
@@ -1075,7 +1108,7 @@ class ClaudeProvider(ModelProvider):
             # À l'intégrité basse (#1515), il fait naître le CLI abaissé, et ce que
             # l'agent écrit reçoit d'abord son étiquette. À tous les niveaux, il ne
             # laisse passer du poste que les variables nommées (#1312).
-            basse = self._session_basse(workspace)
+            basse = self._session_basse(workspace, projet)
             confinement = SessionConfinee.preparer(
                 _commande_du_cli(),
                 basse=basse,

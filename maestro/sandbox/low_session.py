@@ -54,7 +54,7 @@ import hashlib
 import os
 import shutil
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -99,10 +99,17 @@ class LowSession:
     bash: Path | None = None
     #: The variables the launcher withholds from the CLI, on top of `MAESTRO_*`.
     withheld: frozenset[str] = frozenset()
+    #: What ends with the session besides its workbench: the container broker's
+    #: session, when the agent has one (`maestro.sandbox.container_broker`).
+    closers: list[Callable[[], None]] = field(default_factory=list)
 
     def close(self) -> None:
-        """Removes the workbench — what the agent left there leaves with the session."""
-        retirer_arbre(self.workbench)
+        """Ends what the session opened, then removes the workbench with what the agent left."""
+        try:
+            while self.closers:
+                self.closers.pop()()
+        finally:
+            retirer_arbre(self.workbench)
 
 
 def withhold(environ: Mapping[str, str], withheld: Iterable[str] = ()) -> dict[str, str]:
