@@ -545,7 +545,7 @@ _fige_espace()
 def _reglages_du_poste_isoles(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Coupe le dépôt des **réglages du poste** de celui du dépôt Git (#1022).
 
-    `ReglagesProjetsStore.default()` retombe sur `core/reglages/` du dépôt, que
+    `ProjectSettingsStore.default()` retombe sur `core/reglages/` du dépôt, que
     la Control Tower du poste remplit dès qu'on ouvre l'écran Projets. Un
     répertoire des projets réglé à la main y ferait apparaître un **point
     d'entrée de plus** dans l'explorateur : le verdict de la suite dépendrait

@@ -402,7 +402,7 @@ class RacineRequete(BaseModel):
     """Corps d'un verdict de racine (#938) : le chemin proposé, tel que l'OS l'a rendu.
 
     Non canonicalisé, et c'est voulu : la canonicalisation fait partie de ce
-    qu'EF-38 vérifie (`valider_racine`), pas de ce que l'appelant prépare.
+    qu'EF-38 vérifie (`validate_root`), pas de ce que l'appelant prépare.
     """
 
     chemin: str
@@ -415,7 +415,7 @@ class RepertoireRequete(BaseModel):
     `chemin` à `null` **revient au défaut** (`~/Maestro`) — ce n'est pas « pas
     de répertoire », c'est « celui que Maestro propose ». Non canonicalisé, pour
     la même raison que `RacineRequete` : la canonicalisation appartient à
-    `valider_racine`.
+    `validate_root`.
     """
 
     chemin: str | None = None
@@ -426,7 +426,7 @@ class DossierAutoriseRequete(BaseModel):
     """Corps d'une autorisation de dossier (#1610) : le dossier que l'explorateur a refusé.
 
     Non canonicalisé, pour la même raison que `RacineRequete` : la
-    canonicalisation appartient à `valider_racine`.
+    canonicalisation appartient à `validate_root`.
     """
 
     chemin: str

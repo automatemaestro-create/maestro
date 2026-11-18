@@ -66,7 +66,7 @@ un shell peut écrire n'importe où, c'était déjà vrai de la copie et du work
 
 ⚠ `Glob`/`Grep` **ne sont plus** de ce côté-là (#1304). Ils n'étaient pas
 confrontés, au motif qu'ils ne modifient rien et que la rédaction (#109,
-`maestro.projets.secrets`) couvrirait ce qu'ils pourraient citer — or `Grep` rend
+`maestro.projects.secrets`) couvrirait ce qu'ils pourraient citer — or `Grep` rend
 le **contenu** des fichiers, et un `.env` que `Read` refusait se lisait par une
 recherche. Un contenu exclu ne sort désormais par aucun outil de lecture ou de
 recherche ; seuls des **noms** sortent encore d'un `Glob` qui traverse la racine.
@@ -84,7 +84,7 @@ approuvé. Ce qui reste est donc entier ici — le périmètre écrit à l'agent
 outils de fichiers confrontés à la frontière — et c'est ce qui rend le **mode
 isolé** (`maestro.sandbox.container`) plus pressant, pas moins.
 
-`Perimetre.inclus` ne restreint rien ici : l'inclusion disait ce qu'on **montrait**
+`Perimeter.included` ne restreint rien ici : l'inclusion disait ce qu'on **montrait**
 à l'agent, or l'agent est dans la racine. Seules les exclusions tiennent — et
 elles tiennent à l'écriture. Le worktree ne l'appliquait pas davantage (une copie
 conforme de la branche) : depuis ce lot, `inclus` ne restreint aucun espace dérivé.
@@ -138,9 +138,9 @@ from pathlib import Path
 from typing import Any
 
 from maestro.portee import PorteeProjet, etabli_de
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.perimetre import motifs_compiles
-from maestro.projets.racine import RacineRefusee, canonique, chemin_dans_racine
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.perimeter import compiled_patterns
+from maestro.projects.root import RootRejected, canonical, path_in_root
 from maestro.sandbox.verification import (
     CopieImpossible,
     MiroirDeVerification,
@@ -305,7 +305,7 @@ class EspaceEnPlace(Workspace):
     ce qui a changé depuis.
     """
 
-    perimetre: Perimetre = field(default_factory=Perimetre)
+    perimetre: Perimeter = field(default_factory=Perimeter)
     atelier: str = ""
     miroir: MiroirDeVerification | None = field(default=None, compare=False, repr=False)
 
@@ -341,7 +341,7 @@ class EspaceEnPlace(Workspace):
         davantage le livrable de celle-ci, et les tâches d'un projet non
         versionné se succèdent dans la même racine.
         """
-        exclus = motifs_compiles(self.perimetre.exclus)
+        exclus = compiled_patterns(self.perimetre.excluded)
         for relatif in fichiers_du_perimetre(self.path, exclus, hors=(DOSSIER_ATELIER,)):
             yield self.path / relatif
 
@@ -398,9 +398,9 @@ class EspaceEnPlace(Workspace):
         une exclusion que l'utilisateur ajoute est dite à l'agent sans une ligne de
         plus, et un périmètre sans exclusion n'ajoute rien au message.
         """
-        if not self.perimetre.exclus:
+        if not self.perimetre.excluded:
             return ""
-        motifs = ", ".join(f"`{motif}`" for motif in self.perimetre.exclus)
+        motifs = ", ".join(f"`{motif}`" for motif in self.perimetre.excluded)
         return (
             f"\n\nCes chemins sont **hors du périmètre du projet** : {motifs}. Ils ne "
             "sont ni lus, ni écrits, ni renommés, ni supprimés — tes outils de fichiers "
@@ -465,13 +465,13 @@ def fichiers_du_perimetre(
 class FrontiereEcriture:
     """La frontière que les outils de fichiers de l'agent ne franchissent pas (#839, EF-38).
 
-    `racine` est **canonique** (`valider_racine`/`canonique`), `exclus` sont les
+    `racine` est **canonique** (`validate_root`/`canonical`), `exclus` sont les
     motifs compilés du périmètre. `refus` rend le motif qui interdit un appel
     d'outil, ou `None` s'il passe — c'est la seule question que le hook lui pose.
 
     Trois refus, dans cet ordre, chacun avec sa phrase :
 
-    1. **hors de la racine** — `chemin_dans_racine` (#221) résout le chemin puis
+    1. **hors de la racine** — `path_in_root` (#221) résout le chemin puis
        le vérifie **sous** la racine : un `..`, un chemin absolu d'ailleurs ou un
        lien pointant dehors sortent par là. Une **lecture** hors racine n'est pas
        refusée : le périmètre borne ce qu'on écrit chez l'utilisateur, pas ce
@@ -501,9 +501,9 @@ class FrontiereEcriture:
     exclus: tuple[re.Pattern[str], ...]
 
     @classmethod
-    def pour(cls, racine: Path | str, perimetre: Perimetre) -> FrontiereEcriture:
+    def pour(cls, racine: Path | str, perimetre: Perimeter) -> FrontiereEcriture:
         """La frontière de `racine` sous `perimetre` — racine canonicalisée, motifs compilés."""
-        return cls(racine=canonique(racine), exclus=motifs_compiles(perimetre.exclus))
+        return cls(racine=canonical(racine), exclus=compiled_patterns(perimetre.excluded))
 
     def refus(self, outil: str, arguments: Any) -> str | None:
         """Le motif qui interdit l'appel `outil(arguments)`, ou `None` s'il passe.
@@ -596,8 +596,8 @@ class FrontiereEcriture:
         """
         candidat = self._candidat(chemin)
         try:
-            cible = chemin_dans_racine(self.racine, candidat)
-        except RacineRefusee:
+            cible = path_in_root(self.racine, candidat)
+        except RootRejected:
             try:
                 resolu = candidat.resolve()
             except OSError:  # chemin illisible : la recherche ne lira rien non plus
@@ -659,11 +659,11 @@ class FrontiereEcriture:
         """Le motif qui interdit d'atteindre `brut` pour `geste`, ou `None`."""
         candidat = self._candidat(brut)
         try:
-            cible = chemin_dans_racine(self.racine, candidat)
-        except RacineRefusee as refus:
+            cible = path_in_root(self.racine, candidat)
+        except RootRejected as refus:
             if not ecriture:
                 return None
-            return self._refus_hors_racine(brut, geste, candidat, refus.motif)
+            return self._refus_hors_racine(brut, geste, candidat, refus.reason)
         if not _meme_chemin(cible, candidat):
             return (
                 f"{geste} refusée : {brut} passe par un lien symbolique (→ {cible}). "
@@ -729,7 +729,7 @@ class FrontiereEcriture:
         return Path(os.path.normpath(chemin))
 
 
-def frontiere_de(workspace: Path | str, projet: Projet | None) -> FrontiereEcriture | None:
+def frontiere_de(workspace: Path | str, projet: Project | None) -> FrontiereEcriture | None:
     """La frontière à armer sur `workspace`, ou `None` — le régime en place, et lui seul.
 
     Armée si et seulement si l'espace de travail **est** la racine du projet :
@@ -742,12 +742,12 @@ def frontiere_de(workspace: Path | str, projet: Projet | None) -> FrontiereEcrit
     """
     if projet is None:
         return None
-    if not _meme_chemin(canonique(workspace), canonique(projet.racine)):
+    if not _meme_chemin(canonical(workspace), canonical(projet.root)):
         return None
-    return FrontiereEcriture.pour(projet.racine, projet.perimetre)
+    return FrontiereEcriture.pour(projet.root, projet.perimeter)
 
 
-def presents_de(racine: Path, perimetre: Perimetre) -> frozenset[str]:
+def presents_de(racine: Path, perimetre: Perimeter) -> frozenset[str]:
     """Ce qui se trouve **déjà** dans `racine` — chemins relatifs POSIX (#1226).
 
     C'est l'oracle de « ce que l'agent n'a pas produit » : relevé avant qu'il ne
@@ -770,7 +770,7 @@ def presents_de(racine: Path, perimetre: Perimetre) -> frozenset[str]:
     ni `node_modules`) sur un projet **non versionné**, donc petit par
     construction.
     """
-    exclus = motifs_compiles(perimetre.exclus)
+    exclus = compiled_patterns(perimetre.excluded)
     presents: set[str] = set()
     for relatif in fichiers_du_perimetre(racine, exclus, hors=(DOSSIER_ATELIER,)):
         presents.add(relatif)
@@ -783,7 +783,7 @@ def presents_de(racine: Path, perimetre: Perimetre) -> frozenset[str]:
     return frozenset(presents)
 
 
-def portee_de(workspace: Path | str, projet: Projet | None) -> PorteeProjet:
+def portee_de(workspace: Path | str, projet: Project | None) -> PorteeProjet:
     """La portée « projet » de cette session — sa racine **est** l'espace de travail.
 
     Toujours rendue, dans les trois régimes, et c'est ce qui rend le cran
@@ -798,10 +798,10 @@ def portee_de(workspace: Path | str, projet: Projet | None) -> PorteeProjet:
     rien. L'écriture en place, elle, n'a ni fusion ni diff (docs/24 §2.4) : c'est
     exactement là que la garde vaut.
     """
-    racine = canonique(workspace)
-    if projet is None or not _meme_chemin(racine, canonique(projet.racine)):
+    racine = canonical(workspace)
+    if projet is None or not _meme_chemin(racine, canonical(projet.root)):
         return PorteeProjet(racine=racine)
-    return PorteeProjet(racine=racine, presents=presents_de(racine, projet.perimetre))
+    return PorteeProjet(racine=racine, presents=presents_de(racine, projet.perimeter))
 
 
 def _meme_chemin(un: Path, autre: Path) -> bool:

@@ -69,10 +69,10 @@ from maestro.outillage.verification import (
     commandes_ecrites,
     sonde,
 )
-from maestro.projets import ProjetStore
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.perimetre import motifs_compiles
-from maestro.projets.racine import detecter_vcs
+from maestro.projects import ProjectStore
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.perimeter import compiled_patterns
+from maestro.projects.root import detect_vcs
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 
@@ -98,7 +98,7 @@ FAUX_BASH = ("bash", "-c")
 
 @pytest.fixture(autouse=True)
 def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`Path.home()` sous `tmp_path` : `valider_racine` refuse `AppData` sous Windows (#221)."""
+    """`Path.home()` sous `tmp_path` : `validate_root` refuse `AppData` sous Windows (#221)."""
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
@@ -146,8 +146,8 @@ def _racine(tmp_path: Path, *fichiers: str) -> Path:
     return racine
 
 
-def _projet(racine: Path, **kwargs: Any) -> Projet:
-    return Projet(id="prj-0000beef", nom="Dépensio", racine=racine.as_posix(), **kwargs)
+def _projet(racine: Path, **kwargs: Any) -> Project:
+    return Project(id="prj-0000beef", name="Dépensio", root=racine.as_posix(), **kwargs)
 
 
 def _generer(racine: Path, verificateur: Verificateur, constats: Constats | None = None) -> Any:
@@ -529,7 +529,7 @@ def test_la_copie_suit_le_perimetre_sans_atelier_et_disparait_en_sortie(tmp_path
     )
 
     with execution.copie_de_verification(
-        racine, exclus=motifs_compiles(Perimetre().exclus), hors=(".maestro",)
+        racine, exclus=compiled_patterns(Perimeter().excluded), hors=(".maestro",)
     ) as copie:
         copies = {p.relative_to(copie).as_posix() for p in copie.rglob("*") if p.is_file()}
         assert not copie.is_relative_to(racine)
@@ -665,7 +665,7 @@ def test_la_branche_d_un_projet_versionne_ne_porte_rien_de_ce_que_les_commandes_
     )
 
     preparation = generer_outillage(
-        _projet(racine, vcs=detecter_vcs(racine)),
+        _projet(racine, vcs=detect_vcs(racine)),
         constats,
         recommander(constats),
         source=SOURCE,
@@ -710,7 +710,7 @@ def test_sur_un_projet_versionne_une_commande_qui_lit_l_historique_trouve_son_de
         CommandeEcrite("verifier", "test ! -e brouillon.txt && git diff --quiet origin/main"),
     )
 
-    verdicts = Verificateur().verifier_commandes(racine, commandes, perimetre=Perimetre())
+    verdicts = Verificateur().verifier_commandes(racine, commandes, perimetre=Perimeter())
 
     assert [v.etat for v in verdicts] == [VERIFIEE] * 3, verdicts
     assert verdicts[0].sortie == sha
@@ -740,7 +740,7 @@ def test_sur_un_projet_versionne_l_installation_se_joue_d_abord_dans_le_meme_clo
     verdicts = Verificateur().verifier_commandes(
         racine,
         (CommandeEcrite("tester", "test -f .venv/installe", "pyproject.toml"),),
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
         installation=installation,
     )
 
@@ -783,7 +783,7 @@ def test_l_installation_demandee_apres_une_autre_commande_se_joue_quand_meme_d_a
     joueur = _Joueur()
 
     verdicts = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
-        racine, (PYTEST, UV_SYNC), perimetre=Perimetre(), installation=UV_SYNC
+        racine, (PYTEST, UV_SYNC), perimetre=Perimeter(), installation=UV_SYNC
     )
 
     assert clones == [racine]
@@ -804,7 +804,7 @@ def test_une_installation_deja_verifiee_se_rejoue_dans_chaque_clone_neuf(
     verdicts = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
         racine,
         (UV_SYNC, PYTEST),
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
         connues={"uv sync": connue},
         installation=UV_SYNC,
     )
@@ -824,7 +824,7 @@ def test_une_autre_installation_essayee_tient_lieu_de_celle_de_l_outillage(
     Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
         racine,
         (CommandeEcrite("installer", "make install", "pyproject.toml"),),
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
         installation=UV_SYNC,
     )
 
@@ -837,7 +837,7 @@ def test_un_projet_non_versionne_ne_prepare_aucune_installation(tmp_path: Path) 
     joueur = _Joueur()
 
     Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
-        racine, (PYTEST,), perimetre=Perimetre(), installation=UV_SYNC
+        racine, (PYTEST,), perimetre=Perimeter(), installation=UV_SYNC
     )
 
     assert [commande for commande, _, _ in joueur.joues] == ["pytest"]
@@ -860,7 +860,7 @@ def test_un_clone_impossible_rend_chaque_commande_a_verifier_sans_rien_jouer_ail
     joueur = _Joueur()
 
     (verdict,) = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier_commandes(
-        racine, (PYTEST,), perimetre=Perimetre()
+        racine, (PYTEST,), perimetre=Perimeter()
     )
 
     assert joueur.joues == []
@@ -988,7 +988,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
         projets=ServiceProjets(
-            ProjetStore(tmp_path / "depot"), racines_exploration=(tmp_path / "atelier",)
+            ProjectStore(tmp_path / "depot"), racines_exploration=(tmp_path / "atelier",)
         ),
         agents_store=AgentStore(core / "agents"),
         surcharges=SurchargeStore(core / "surcharges"),

@@ -75,7 +75,7 @@ from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.verification import VerificateurTaches
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, validate_task
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, collect_usage
 
@@ -193,7 +193,7 @@ def _get_executor() -> LocalExecutor:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
-            projets=ProjetStore.default(settings),
+            projets=ProjectStore.default(settings),
             # The agents of the task's project (#1038), as in process and on the
             # Celery side: three wirings, one routing contract.
             agents_store=agents_store,

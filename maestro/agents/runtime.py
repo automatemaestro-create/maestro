@@ -34,8 +34,8 @@ from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.machine import Machine
 from maestro.outillage import outillage_du_projet
-from maestro.projets.modele import Projet
-from maestro.projets.secrets import enregistre_secrets_du_projet
+from maestro.projects.model import Project
+from maestro.projects.secrets import register_project_secrets
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, TraceOutil
 from maestro.providers.base import (
     PLAFOND_TOURS_DEFAUT,
@@ -272,7 +272,7 @@ class AgentRuntime:
         on_courrier: Courrier | None = None,
         on_question: Questionneur | None = None,
         on_processus: Callable[[ReleveConfinement], None] | None = None,
-        projet: Projet | None = None,
+        projet: Project | None = None,
         tache_id: str = "",
         reprend: str = "",
         effort: str | None = None,
@@ -514,7 +514,7 @@ class AgentRuntime:
         # Maestro ni les motifs de clés connus n'attrapent — ressortirait en clair
         # dans un résumé d'agent ou une trace.
         if projet is not None:
-            enregistre_secrets_du_projet(projet)
+            register_project_secrets(projet)
         # L'outillage du projet (#1032, docs/38 §5) : lu **avant** d'ouvrir
         # l'espace, parce qu'il vit dans la racine du projet et pas dans l'espace
         # dérivé — un worktree n'en porte que ce qui est commité. Vide sans

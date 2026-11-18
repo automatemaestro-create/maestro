@@ -131,7 +131,7 @@ Les humains qui utilisent la plateforme. `role` : `owner`, `admin`, `viewer`.
 ### PROJECT
 Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâches et la configuration des agents qui y interviennent.
 
-> **Implémenté** (#221, `maestro.projets` — dépôt `core/projets/`, un fichier `<id>.json` par
+> **Implémenté** (#221, `maestro.projects` — dépôt `core/projets/`, un fichier `<id>.json` par
 > projet) : l'entité porte les champs qui la relient au disque, cadrés par
 > [docs/24 §2.3](./24-projets-locaux-et-poste-de-travail.md) — `racine` (chemin absolu — la
 > **frontière unique** de ce que les agents peuvent lire et écrire, **canonicalisée** et refusée

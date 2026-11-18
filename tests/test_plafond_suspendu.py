@@ -55,7 +55,7 @@ from maestro.engine.plafond import (
     Plafonds,
 )
 from maestro.orchestrator import Orchestrator
-from maestro.projets import Projet, ProjetStore
+from maestro.projects import Project, ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
 from maestro.telemetry import STEP_SPENDING_CAP, RunCost, RunJournal, StepUsage, report_usage
@@ -325,7 +325,7 @@ def _git(cwd: Path, *arguments: str) -> str:
     return resultat.stdout
 
 
-def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_git(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet versionné : dépôt jetable, un commit."""
     racine = tmp_path / "projets" / "agenda"
     racine.mkdir(parents=True)
@@ -337,9 +337,9 @@ def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
         racine, "-c", "user.email=tests@maestro", "-c", "user.name=Tests",
         "commit", "--quiet", "-m", "socle",
     )
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("Agenda", racine)
-    assert projet.versionne, projet
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("Agenda", racine)
+    assert projet.versioned, projet
     return depot, projet
 
 
@@ -396,7 +396,7 @@ def test_le_travail_de_la_tache_en_vol_n_est_pas_perdu(
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig-absent"))
     depot, projet = _projet_git(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     fournisseur = _EcritPuisDepense()
     guardrails = Guardrails(plafond_cout_usd=0.01, validateur=_Accord())
     executeur = LocalExecutor(

@@ -62,8 +62,8 @@ from maestro.outillage import (
     outillage_du_projet,
 )
 from maestro.outillage.contexte import TITRE_CONSIGNE, TITRE_RACINE_OUTILLEE, Bornes
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.racine import detecter_vcs
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.root import detect_vcs
 from maestro.providers.base import ModelProvider
 from maestro.providers.claude import sans_reglages_du_poste, sans_skills_du_poste
 
@@ -95,7 +95,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path`, comme les tests du socle (#221).
 
     Indispensable sous Windows : le `tmp_path` de pytest vit sous `AppData`, que
-    `valider_racine` interdit à juste titre — sans cette isolation, les racines
+    `validate_root` interdit à juste titre — sans cette isolation, les racines
     de projet de ce fichier seraient refusées avant le test.
     """
     maison = tmp_path / "maison"
@@ -146,7 +146,7 @@ def entree(chemin: str, role: str, *, portee: str = "fichier") -> dict[str, Any]
     }
 
 
-def projet_outille(racine: Path, *, perimetre: Perimetre | None = None) -> Projet:
+def projet_outille(racine: Path, *, perimetre: Perimeter | None = None) -> Project:
     """Un projet outillé à la main : instructions, un pont, un skill, et le manifeste."""
     racine.mkdir(parents=True, exist_ok=True)
     ecrire(racine, "AGENTS.md", "# Dépensio\n\nmot-temoin-des-instructions\n")
@@ -160,11 +160,11 @@ def projet_outille(racine: Path, *, perimetre: Perimetre | None = None) -> Proje
             entree(".agents/skills/lancer-les-tests/SKILL.md", "skill"),
         ],
     )
-    return Projet(
+    return Project(
         id="prj-0000dead",
-        nom="Dépensio",
-        racine=racine.as_posix(),
-        perimetre=perimetre or Perimetre(),
+        name="Dépensio",
+        root=racine.as_posix(),
+        perimeter=perimetre or Perimeter(),
     )
 
 
@@ -210,7 +210,7 @@ def test_un_projet_sans_manifeste_rend_un_outillage_vide_sans_lever(tmp_path: Pa
     racine = tmp_path / "depensio"
     racine.mkdir(parents=True)
     ecrire(racine, "AGENTS.md", "# écrit avant Maestro\n")
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     outillage = outillage_du_projet(projet)
 
@@ -234,7 +234,7 @@ def test_un_manifeste_illisible_ne_se_distingue_pas_d_un_projet_non_outille(
     racine = tmp_path / "depensio"
     racine.mkdir(parents=True)
     ecrire(racine, CHEMIN_MANIFESTE, "{ ceci n'est pas du JSON")
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     assert outillage_du_projet(projet).vide
 
@@ -331,7 +331,7 @@ def test_une_portee_bloc_transmet_le_bloc_et_pas_ce_qui_l_entoure(tmp_path: Path
         f"{BALISE_DEBUT}\ncontenu-ecrit-par-maestro\n{BALISE_FIN}\n\napres-le-bloc\n",
     )
     poser_manifeste(racine, [entree("AGENTS.md", "instructions", portee="bloc")])
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     outillage = outillage_du_projet(projet)
 
@@ -348,7 +348,7 @@ def test_une_portee_bloc_sans_balises_ne_retombe_jamais_sur_le_fichier_entier(
     racine.mkdir(parents=True)
     ecrire(racine, "AGENTS.md", "# Écrit avant Maestro\n\nprose-du-projet\n")
     poser_manifeste(racine, [entree("AGENTS.md", "instructions", portee="bloc")])
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     outillage = outillage_du_projet(projet)
 
@@ -363,7 +363,7 @@ def test_une_balise_de_fin_manquante_ne_transmet_rien(tmp_path: Path) -> None:
     racine.mkdir(parents=True)
     ecrire(racine, "AGENTS.md", f"avant\n{BALISE_DEBUT}\nsans-fin\n")
     poser_manifeste(racine, [entree("AGENTS.md", "instructions", portee="bloc")])
-    projet = Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix())
+    projet = Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix())
 
     assert outillage_du_projet(projet).instructions == ""
 
@@ -546,7 +546,7 @@ def test_un_chemin_qui_ne_designe_pas_une_piece_du_projet_est_refuse_motive(
 def test_un_chemin_retire_par_le_perimetre_n_est_pas_lu_meme_declare(tmp_path: Path) -> None:
     """Le périmètre est le dernier mot de l'utilisateur, et il l'emporte sur le manifeste."""
     racine = tmp_path / "depensio"
-    projet = projet_outille(racine, perimetre=Perimetre(exclus=(".git", ".agents/**")))
+    projet = projet_outille(racine, perimetre=Perimeter(excluded=(".git", ".agents/**")))
 
     outillage = outillage_du_projet(projet)
 
@@ -558,7 +558,7 @@ def test_un_chemin_retire_par_le_perimetre_n_est_pas_lu_meme_declare(tmp_path: P
 def test_un_perimetre_qui_exclut_un_dossier_exclut_ce_qui_est_dessous(tmp_path: Path) -> None:
     """Ne tester que la feuille ferait passer `secrets/skills/fuite/SKILL.md` pour ordinaire."""
     racine = tmp_path / "depensio"
-    projet = projet_outille(racine, perimetre=Perimetre(exclus=("secrets",)))
+    projet = projet_outille(racine, perimetre=Perimeter(excluded=("secrets",)))
     ecrire(racine, "secrets/skills/fuite/SKILL.md", "---\nname: fuite\ndescription: x\n---\n")
     poser_manifeste(racine, [entree("secrets/skills/fuite/SKILL.md", "skill")])
 
@@ -1039,8 +1039,8 @@ def test_dans_un_projet_versionne_c_est_le_worktree_de_la_tache_qui_est_juge(
     ):
         subprocess.run(["git", *arguments], cwd=racine, check=True, capture_output=True)
     ecrire(racine, "brouillon-non-commite.txt", "x\n")
-    projet = Projet(
-        id="prj-0000dead", nom="Dépensio", racine=racine.as_posix(), vcs=detecter_vcs(racine)
+    projet = Project(
+        id="prj-0000dead", name="Dépensio", root=racine.as_posix(), vcs=detect_vcs(racine)
     )
     provider = _ProviderTemoin()
 

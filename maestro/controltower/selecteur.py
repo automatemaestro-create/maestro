@@ -66,7 +66,7 @@ _verrou = threading.Lock()
 
 
 class SelecteurRefuse(ValueError):
-    """Le sélecteur natif refuse, **avec son motif** — au patron de `RacineRefusee`.
+    """Le sélecteur natif refuse, **avec son motif** — au patron de `RootRejected`.
 
     `motif` est un code stable (`selecteur-hors-poste`, `selecteur-sans-outil`…) :
     c'est lui que l'écran affiche ou traduit, le message restant la phrase
@@ -164,8 +164,8 @@ def choisir_dossier(*, depart: str | None = None, titre: str = "") -> str | None
     motivé.
 
     Le chemin rendu est celui de l'OS, **non canonicalisé** : c'est à l'appelant
-    de le confronter aux frontières d'EF-38 (`verifier_zone_interdite`,
-    `valider_racine`). Ce module ouvre une fenêtre, il n'autorise rien.
+    de le confronter aux frontières d'EF-38 (`check_forbidden_zone`,
+    `validate_root`). Ce module ouvre une fenêtre, il n'autorise rien.
     """
     outil = outil_disponible()
     if outil is None:

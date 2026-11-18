@@ -46,7 +46,7 @@ from typing import IO, Any
 
 from maestro.config import Settings
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.projets.racine import RacineRefusee, chemin_dans_racine
+from maestro.projects.root import RootRejected, path_in_root
 from maestro.sources.model import TYPE_FILE, SourceRejected
 from maestro.sources.resolution import file_name, ingestion_root
 
@@ -177,8 +177,8 @@ class UploadStore:
         if not UPLOAD_ID_PATTERN.match(upload_id or ""):
             return None
         try:
-            directory = chemin_dans_racine(self._root, upload_id)
-        except RacineRefusee:  # pragma: no cover - the pattern above already bounds it
+            directory = path_in_root(self._root, upload_id)
+        except RootRejected:  # pragma: no cover - the pattern above already bounds it
             return None
         if not directory.is_dir():
             return None

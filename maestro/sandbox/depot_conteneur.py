@@ -44,8 +44,8 @@ from pathlib import Path
 
 from maestro.config import ConfigError
 from maestro.fichiers import retirer_arbre
-from maestro.projets.modele import Perimetre
-from maestro.projets.perimetre import exclu_par
+from maestro.projects.model import Perimeter
+from maestro.projects.perimeter import excluded_by
 
 #: Point de montage du dépôt du conteneur, en lecture-écriture.
 POINT_DEPOT = "/maestro/depot"
@@ -99,7 +99,7 @@ def pointeur() -> str:
     return f"gitdir: {POINT_DEPOT}\n"
 
 
-def preparer(espace: Path, perimetre: Perimetre) -> Path:
+def preparer(espace: Path, perimetre: Perimeter) -> Path:
     """Construit le dépôt du conteneur de `espace` et rend son chemin, à côté de l'espace.
 
     `espace` est le worktree de la tâche, sur sa branche `maestro/<tâche>`. Le dépôt
@@ -119,7 +119,7 @@ def preparer(espace: Path, perimetre: Perimetre) -> Path:
     exclus = [
         chemin
         for _, nature, _, chemin in entrees
-        if nature == "blob" and exclu_par(chemin, perimetre)
+        if nature == "blob" and excluded_by(chemin, perimetre)
     ]
     ecartes = set(exclus)
     # L'arbre racine se nomme : `ls-tree -t` ne rend que ce qu'il contient.

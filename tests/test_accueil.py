@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.accueil import FICHIER, DepotAccueil, ServiceAccueil
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 
 
 class Poste:
@@ -146,7 +146,7 @@ def test_par_defaut_le_parcours_se_juge_sur_les_projets_declares_et_les_reglages
     tmp_path: Path, maison: Path
 ) -> None:
     """Sans `accueil` injecté : le dépôt des réglages du poste et les projets du service."""
-    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projets = ServiceProjets(ProjectStore(tmp_path / "depot"))
     app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), projets=projets)
 
     with TestClient(app) as client:

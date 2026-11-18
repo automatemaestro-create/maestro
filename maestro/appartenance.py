@@ -19,8 +19,8 @@ couches qui ne peuvent pas dépendre les unes des autres (le journal
 `maestro.telemetry` le transporte, les événements `maestro.controltower.events`
 le diffusent, et `controltower` importe déjà `telemetry`). C'est pourquoi
 `ID_PROJET` est **défini ici** et seulement ré-exporté par
-`maestro.projets.modele`, où il vivait depuis #221 : le dépôt de projets
-(`maestro.projets.store`) et le journal partagent ainsi le même contrat
+`maestro.projects.model`, où il vivait depuis #221 : le dépôt de projets
+(`maestro.projects.store`) et le journal partagent ainsi le même contrat
 d'identifiant sans que l'un ait à importer l'autre.
 """
 
@@ -33,7 +33,7 @@ from typing import Any
 #: séparateur ni point, ce qui interdit toute traversée de chemin depuis un
 #: identifiant venu de l'API ou du flux. `\Z` et non `$` : `$` accepte un retour
 #: à la ligne final, et donc un nom de fichier qui en porte un.
-#: Source unique du motif : `maestro.projets.modele` le ré-exporte (cf. docstring).
+#: Source unique du motif : `maestro.projects.model` le ré-exporte (cf. docstring).
 ID_PROJET = re.compile(r"^[a-z0-9][a-z0-9_-]*\Z")
 
 #: Longueur au-delà de laquelle un identifiant n'est plus un identifiant : il

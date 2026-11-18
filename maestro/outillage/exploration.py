@@ -24,7 +24,7 @@ Python. C'est ce qui rend les garanties **structurelles** plutôt que promises :
 - **rien n'est exécuté** — les deux verbes sont `scandir` et une lecture plafonnée,
   et ce module n'importe pas `subprocess` (la suite de #1030 balaie le paquet) ;
 - **aucun secret n'est ouvert** — chaque chemin demandé passe, préfixe par
-  préfixe, par les motifs du **périmètre déclaré** du projet (`Perimetre.exclus`,
+  préfixe, par les motifs du **périmètre déclaré** du projet (`Perimeter.excluded`,
   qui retire d'office `.env` et `**/secrets/**`), par le moteur de motifs existant
   et jamais un second ; il y repasse sous sa **casse réelle**, sans quoi un `.ENV`
   demandé sur un disque insensible à la casse ouvrirait le `.env` ;
@@ -122,8 +122,8 @@ from maestro.outillage.modele import (
     Piece,
     Refus,
 )
-from maestro.projets.modele import Perimetre
-from maestro.projets.perimetre import exclu_par, motifs_compiles
+from maestro.projects.model import Perimeter
+from maestro.projects.perimeter import compiled_patterns, excluded_by
 
 if TYPE_CHECKING:  # typage seul : ce paquet ne tire pas la couche fournisseur
     from maestro.outillage.verification import Verification
@@ -341,7 +341,7 @@ class Explorateur:
     """
 
     racine: Path
-    perimetre: Perimetre
+    perimetre: Perimeter
     bornes: Bornes
     servies: int = 0
     lus: list[str] = field(default_factory=list)
@@ -354,7 +354,7 @@ class Explorateur:
     empreintes: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self._motifs = motifs_compiles(self.perimetre.exclus)
+        self._motifs = compiled_patterns(self.perimetre.excluded)
         self._ignores = frozenset(self.bornes.ignores)
         self._racine_reelle = self.racine.resolve()
         self._deja: set[tuple[str, str]] = set()
@@ -452,14 +452,14 @@ class Explorateur:
     def _exclu(self, segments: list[str], *, dossier: bool) -> str:
         """Le motif qui retire ce chemin — `hors-perimetre`, `dossier-ignore` —, `""` sinon.
 
-        Le périmètre se juge par `exclu_par`, la question de qui **tient déjà**
+        Le périmètre se juge par `excluded_by`, la question de qui **tient déjà**
         un chemin (#1223) : sur le chemin et chacun de ses préfixes, par le moteur
         de motifs du paquet `projets` — `secrets/prod.json` est refusé parce que
         `secrets` l'est, même si aucun motif ne nomme le fichier. Les dossiers
         ignorés ne valent que pour des **dossiers** : le dernier segment d'un
         fichier lu n'en est pas un.
         """
-        if exclu_par("/".join(segments), self.perimetre):
+        if excluded_by("/".join(segments), self.perimetre):
             return "hors-perimetre"
         for index, segment in enumerate(segments):
             est_dossier = index < len(segments) - 1 or dossier
@@ -690,7 +690,7 @@ def _taille(entree: os.DirEntry[str]) -> int:
 async def lire_le_projet(
     analyse: Analyse,
     *,
-    perimetre: Perimetre,
+    perimetre: Perimeter,
     provider: ModelProvider,
     modele: str,
     echecs: Sequence[Verification] = (),

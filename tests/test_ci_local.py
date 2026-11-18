@@ -2027,10 +2027,11 @@ def test_pytest_joue_dans_le_conteneur_quand_docker_repond(clone: Clone) -> None
 def test_le_depot_n_est_jamais_monte_a_la_racine_du_conteneur(clone: Clone) -> None:
     """Trouvé par les tests, et à ne pas défaire.
 
-    Monté à `/w`, le PARENT du dépôt est `/` : `test_projets.py::test_depot_maestro_refuse` reçoit
-    alors `racine-de-disque` là où il attend `au-dessus-du-depot-maestro`. Un rouge qui ne dit rien
-    du code et tout du point de montage — le genre d'écart qui fait douter du filet lui-même. Il
-    faut donc au moins deux niveaux, pour qu'il existe un « au-dessus » qui ne soit pas la racine.
+    Monté à `/w`, le PARENT du dépôt est `/` :
+    `test_projets.py::test_maestro_repository_rejected` reçoit alors `racine-de-disque` là où il
+    attend `au-dessus-du-depot-maestro`. Un rouge qui ne dit rien du code et tout du point de
+    montage — le genre d'écart qui fait douter du filet lui-même. Il faut donc au moins deux
+    niveaux, pour qu'il existe un « au-dessus » qui ne soit pas la racine.
     """
     clone.equipe_tout()
     clone.equipe_conteneur()
@@ -2041,7 +2042,7 @@ def test_le_depot_n_est_jamais_monte_a_la_racine_du_conteneur(clone: Clone) -> N
     segments = [morceau for morceau in montage.split("/") if morceau]
     assert len(segments) >= 2, (
         f"le dépôt est monté à {montage!r} : son parent serait la racine du disque, "
-        "et test_depot_maestro_refuse rougirait pour une raison qui n'est pas la sienne"
+        "et test_maestro_repository_rejected rougirait pour une raison qui n'est pas la sienne"
     )
 
 
@@ -2317,7 +2318,7 @@ def test_le_dockerfile_porte_git_sans_identite_globale() -> None:
     Mais git doit venir de l'IMAGE PLEINE et non d'un `apt-get install` — celui-ci met une
     dépendance aux miroirs Debian sur le chemin critique (le pipeline de !269 est mort dessus) —,
     et SANS identité globale, sous peine de remasquer le bug que #332 a trouvé : la fusion de
-    `maestro/projets/application.py` n'échouait que sur les machines sans `~/.gitconfig`.
+    `maestro/projects/apply.py` n'échouait que sur les machines sans `~/.gitconfig`.
     """
     recette = (RACINE / "scripts" / "ci" / "pytest.Dockerfile").read_text(encoding="utf-8")
     lignes = [ligne.strip() for ligne in recette.splitlines() if not ligne.strip().startswith("#")]

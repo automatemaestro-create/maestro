@@ -38,7 +38,7 @@ from maestro.agents.permissions import PermissionStore, PolitiqueOutils
 from maestro.engine import STATUT_ECHEC, OrchestrationEngine
 from maestro.engine.retry import est_transitoire
 from maestro.orchestrator import Orchestrator
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 from maestro.providers import (
     ClaudeProvider,
     Credentials,
@@ -58,7 +58,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path` : sous Windows, `AppData` est une racine refusée.
 
     Même isolation que les tests de l'espace de travail (`tests/test_espace_projet.py`) :
-    le `tmp_path` de pytest vit sous `AppData`, que `valider_racine` interdit.
+    le `tmp_path` de pytest vit sous `AppData`, que `validate_root` interdit.
     """
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
@@ -70,7 +70,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 SECRET = "sk-temoin-1304"
 
 
-def _projet(tmp_path: Path) -> Projet:
+def _projet(tmp_path: Path) -> Project:
     """Un projet non versionné plausible : du code, et les gisements que le périmètre retire."""
     racine = tmp_path / "projets" / "depensio"
     (racine / "src").mkdir(parents=True)
@@ -86,12 +86,12 @@ def _projet(tmp_path: Path) -> Projet:
     (racine / "services" / "api" / ".env").write_text(f"JETON={SECRET}\n", encoding="utf-8")
     (racine / "docs").mkdir()
     (racine / "docs" / "guide.md").write_text("Guide\n", encoding="utf-8")
-    return Projet(id="prj-00001304", nom="Démo", racine=racine.as_posix())
+    return Project(id="prj-00001304", name="Démo", root=racine.as_posix())
 
 
 def _frontiere(tmp_path: Path) -> tuple[Path, FrontiereEcriture]:
     projet = _projet(tmp_path)
-    return Path(projet.racine), FrontiereEcriture.pour(projet.racine, projet.perimetre)
+    return Path(projet.root), FrontiereEcriture.pour(projet.root, projet.perimeter)
 
 
 def _refus(sortie: object) -> str:
@@ -366,7 +366,7 @@ def _lance(
     workspace: Path,
     *,
     politique: PolitiqueOutils | None = POLITIQUE,
-    projet: Projet | None = None,
+    projet: Project | None = None,
 ) -> str:
     return asyncio.run(
         provider.run_agent(
@@ -525,7 +525,7 @@ def test_la_frontiere_seule_arme_la_sonde(tmp_path: Path, monkeypatch: pytest.Mo
     projet = _projet(tmp_path)
 
     with pytest.raises(GardeFouInoperant):
-        _lance(ClaudeProvider(Credentials()), Path(projet.racine), politique=None, projet=projet)
+        _lance(ClaudeProvider(Credentials()), Path(projet.root), politique=None, projet=projet)
 
     assert len(cli.sondes) == 1 and cli.sessions == []
 
@@ -665,7 +665,7 @@ def test_sur_le_vrai_cli_un_secret_exclu_ne_sort_par_aucune_recherche(tmp_path: 
     de contrôle a refusé ce qui l'aurait lue.
     """
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     refus: list[tuple[str, str]] = []
 
     try:

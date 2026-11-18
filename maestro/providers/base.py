@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.config import Settings
     from maestro.detail_tache import EtapeTache
-    from maestro.projets.modele import Projet
+    from maestro.projects.model import Project
     from maestro.sandbox.confinement import ReleveConfinement
 
 #: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
@@ -860,7 +860,7 @@ class ModelProvider(ABC):
         on_question: Questionneur | None = None,
         on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
-        projet: Projet | None = None,
+        projet: Project | None = None,
         effort: str | None = None,
         session: SessionAgent | None = None,
     ) -> str:

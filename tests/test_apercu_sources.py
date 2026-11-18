@@ -33,7 +33,7 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake user home -- same reason as in #221/#223.
 
     On Windows, pytest's `tmp_path` lives in `AppData/Local/Temp`, which
-    `valider_racine` rejects for good reason: without this isolation, a
+    `validate_root` rejects for good reason: without this isolation, a
     references directory declared in `tmp_path` would be rejected for a good
     reason, but not the one these tests measure.
     """

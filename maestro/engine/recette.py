@@ -62,7 +62,7 @@ tâche ne peut pas prendre (`ATELIERS_RESERVES`). Au régime du projet, comme to
 Maestro écrit chez quelqu'un (docs/24 § 2.4) :
 
 - **non versionné** : en place, sous la frontière d'écriture du projet ;
-- **versionné** : commitée sur la branche de travail (`deposer_sur_la_base`), et
+- **versionné** : commitée sur la branche de travail (`commit_to_base`), et
   **seulement sous l'accord d'écriture du run** (#706) — un run dont aucune fusion n'a
   été accordée n'écrit pas sa recette non plus. Elle reste alors au journal et dans
   le récit, et l'étape le dit.
@@ -89,9 +89,9 @@ from maestro.engine.verification import (
     VerificateurTaches,
 )
 from maestro.orchestrator.schema import Brief, Task
-from maestro.projets.application import ApplicationRefusee, deposer_sur_la_base
-from maestro.projets.modele import Projet
-from maestro.projets.racine import RacineRefusee, valider_racine
+from maestro.projects.apply import ApplyRejected, commit_to_base
+from maestro.projects.model import Project
+from maestro.projects.root import RootRejected, validate_root
 from maestro.sandbox.en_place import DOSSIER_ATELIER, FrontiereEcriture
 from maestro.telemetry import SpendingCapExceeded
 
@@ -476,7 +476,7 @@ def message_de_la_recette(run_id: str) -> str:
 
 
 def ecrire_dans_le_projet(
-    projet: Projet, run_id: str, texte: str, *, accorde: bool, message: str = ""
+    projet: Project, run_id: str, texte: str, *, accorde: bool, message: str = ""
 ) -> tuple[str, str]:
     """Écrit la recette dans le projet, au régime du projet — rend `(fichier, raison)`.
 
@@ -489,25 +489,25 @@ def ecrire_dans_le_projet(
     """
     relatif = chemin_de_la_recette(run_id)
     try:
-        racine = valider_racine(projet.racine)
-    except RacineRefusee as refus:
+        racine = validate_root(projet.root)
+    except RootRejected as refus:
         return "", f"la racine du projet n'est plus admissible : {refus}"
-    refus_frontiere = FrontiereEcriture.pour(racine, projet.perimetre).refus_chemin(
+    refus_frontiere = FrontiereEcriture.pour(racine, projet.perimeter).refus_chemin(
         relatif, ecriture=True
     )
     if refus_frontiere:
         return "", refus_frontiere
-    if projet.versionne:
+    if projet.versioned:
         if not accorde:
             return "", (
                 "ce run n'a reçu aucun accord d'écriture dans ce projet versionné — la "
                 "recette n'y est pas commitée, elle se lit au journal du run et dans son récit"
             )
         try:
-            cible = deposer_sur_la_base(
+            cible = commit_to_base(
                 projet, relatif, texte, message=message or message_de_la_recette(run_id)
             )
-        except (ApplicationRefusee, RacineRefusee) as exc:
+        except (ApplyRejected, RootRejected) as exc:
             return "", f"recette non commitée dans le projet : {exc}"
         return str(cible), ""
     cible = racine / Path(relatif)

@@ -73,7 +73,7 @@ livrable seul et sans risque, ce qui en fait le bon premier lot.
 
 ⚠ **A et B ne se choisissent pas de la même façon** (#1022). Un projet **neuf** naît dans le
 **répertoire des projets**, un réglage du poste dont le dossier parent se remplit d'office
-(`GET /api/projets/repertoire`, docs/05 §6.7 ; défaut `~/Maestro`, validé par `valider_racine` comme
+(`GET /api/projets/repertoire`, docs/05 §6.7 ; défaut `~/Maestro`, validé par `validate_root` comme
 n'importe quelle racine, créé à la première utilisation). Un projet **existant** ne se voit rien
 imposer : on le parcourt soi-même, exactement comme avant. C'est le partage qu'on retrouve dans les
 produits en service — GitHub Desktop préremplit le chemin de *Clone* et de *Create*, jamais celui
@@ -289,7 +289,7 @@ la tâche dit désormais de **commiter soi-même**, au fil des étapes, en messa
 convention que nomme l'`AGENTS.md` du projet ; la session de l'agent porte l'identité Git de Maestro
 par son environnement. Ce qu'il laisse non commité est encore commité au démontage, mais **dans son
 dernier commit** quand cette exécution l'a fait et qu'aucune autre branche ne le porte
-(`commiter_en_attente`), sous son message ; un commit de Maestro ne naît plus que d'une branche où
+(`commit_pending`), sous son message ; un commit de Maestro ne naît plus que d'une branche où
 l'agent n'a rien commité, ou de la sauvegarde d'une extinction — et celui-là ne se réécrit jamais,
 sans quoi le travail sauvé sortirait de l'histoire du projet (S12, #1507). Les fusions de Maestro
 suivent la même convention, rédigées par le modèle, et gardent dans leur corps ce que Maestro en
@@ -330,8 +330,8 @@ ce qui le garde est la frontière d'écriture et la sérialisation. Le régime v
 
 #### Le projet non versionné, noir sur blanc
 
-Un projet est non versionné quand sa racine n'a pas de `.git` (`Projet.vcs is None`, **constaté**
-par `detecter_vcs` et jamais imposé — EF-38). C'est le cas d'un projet **neuf** créé depuis la
+Un projet est non versionné quand sa racine n'a pas de `.git` (`Project.vcs is None`, **constaté**
+par `detect_vcs` et jamais imposé — EF-38). C'est le cas d'un projet **neuf** créé depuis la
 Control Tower (`origine: nouveau`), donc le cas le plus courant du premier run.
 
 - **Ce qu'il advenait de son travail jusqu'au 2026-08-30** (#224 → #839, option C) : chaque tâche
@@ -370,8 +370,8 @@ Control Tower (`origine: nouveau`), donc le cas le plus courant du premier run.
   rapport de run). Il n'y a **aucun refus de plus** : l'atelier est dans la racine et hors des
   exclusions, donc il s'écrit — et aucune règle de chemin ne saurait distinguer un livrable d'un
   brouillon, ce qui est précisément pourquoi la réponse ne pouvait pas être une frontière.
-- **Ce que le lot 1 (#704) lui offre** : **changer de régime**. `ProjetStore.versionner` /
-  `initialiser_depot` fait de la racine un dépôt Git **sur demande** — `git init`, puis un
+- **Ce que le lot 1 (#704) lui offre** : **changer de régime**. `ProjectStore.enable_versioning` /
+  `init_repository` fait de la racine un dépôt Git **sur demande** — `git init`, puis un
   **premier commit** « Maestro : état initial du projet » qui enregistre la racine telle qu'elle
   est (`git add -A`, le `.gitignore` du projet respecté, `--allow-empty` sur un projet vide) pour
   que la branche de base **résolve** : sans lui, un `HEAD` non né ferait partir le worktree de la
@@ -461,7 +461,7 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 **Élargir ce que l'explorateur parcourt n'élargit pas ce qui se déclare** (#1610). Un dossier
 refusé parce qu'il est hors des dossiers explorables s'autorise depuis l'écran, après une
 confirmation qui le nomme, et devient une racine de lecture du poste (`projets.json` de
-`core/reglages/`, retrait dans *Paramètres › Projets*). L'autorisation passe par `valider_racine`,
+`core/reglages/`, retrait dans *Paramètres › Projets*). L'autorisation passe par `validate_root`,
 sans seconde porte : un dossier qui ne pourrait pas être la racine d'un projet (partage réseau,
 dossier utilisateur nu, zone protégée) n'est pas autorisable, et le refus le dit. Chaque lecture
 de la frontière rejuge les autorisations : une entrée devenue inutilisable ne sert plus. Sous un

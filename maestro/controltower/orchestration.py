@@ -1453,7 +1453,7 @@ def _cause_en_phrase(cause: object) -> str:
     """La cause d'un refus en phrase entière : une majuscule, une seule marque finale.
 
     Les refus du dossier viennent de deux voix (#1592) : ceux d'EF-38
-    (`RacineRefusee`) sont des phrases qui portent leur point, ceux de la naissance
+    (`RootRejected`) sont des phrases qui portent leur point, ceux de la naissance
     n'en portent pas. Une phrase d'empêchement qui ajouterait son propre point
     doublerait celui des premiers : la ponctuation finale de la cause est donc
     remplacée, jamais complétée — sauf une marque qui porte un sens (`!`, `?`, `…`).

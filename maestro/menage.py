@@ -55,7 +55,7 @@ projet. Quand une de ces déclarations ne se lit pas, rien n'est retiré à l'av
 **Une déclaration dont la racine a disparu ne protège rien** (#1477). Le 2026-10-11, dix
 déclarations du banc, racines parties avec leur passage, gardaient `~/maestro-scenarios`
 « porteur d'un projet déclaré », et avec lui les worktrees de ses dépôts. Elle est `à retirer`
-à son tour : `--purger` l'oublie par le verbe du produit (`ProjetStore.supprimer`, celui de
+à son tour : `--purger` l'oublie par le verbe du produit (`ProjectStore.delete`, celui de
 `DELETE /api/projets`), jamais en effaçant son fichier, et son identifiant la désigne. Disparue
 veut dire **à coup sûr** (`racine_disparue`) : un lecteur débranché, un partage qui ne répond
 pas, un accès refusé laissent la racine protéger comme si elle était là. La rétention de
@@ -113,8 +113,8 @@ from maestro.emplacements import (
     repertoire_temporaire,
 )
 from maestro.fichiers import retirer_arbre
-from maestro.projets.reglages import ReglagesProjetsStore
-from maestro.projets.store import ProjetStore
+from maestro.projects.settings import ProjectSettingsStore
+from maestro.projects.store import ProjectStore
 from maestro.sandbox.ramassage import (
     FAMILLE_ETAT_STACK,
     FAMILLE_ETAT_STACK_JETABLE,
@@ -144,7 +144,7 @@ NOM_PROFIL_NAVIGATEUR = "chrome-profile"
 ANCIEN_ATELIER_RELECTURE = "maestro-relecture"
 
 #: Où vivent les déclarations et les réglages de projets dans une copie du dépôt — les
-#: défauts de `ProjetStore.default` et `ReglagesProjetsStore.default`, relus pour **chaque**
+#: défauts de `ProjectStore.default` et `ProjectSettingsStore.default`, relus pour **chaque**
 #: copie (voir l'en-tête).
 DECLARATIONS_DANS_UNE_COPIE = Path("core") / "projets"
 REGLAGES_DANS_UNE_COPIE = Path("core") / "reglages"
@@ -217,7 +217,7 @@ class Orpheline:
 
     @property
     def fichier(self) -> Path:
-        return ProjetStore(self.depot).fichier(self.id)
+        return ProjectStore(self.depot).file(self.id)
 
 
 @dataclass(frozen=True)
@@ -361,21 +361,21 @@ def protections(  # noqa: C901
     except (RuntimeError, OSError):  # pragma: no cover - dépend de l'environnement
         illisible.append("dossier personnel introuvable")
     for depot in depots:
-        store = ProjetStore(depot)
+        store = ProjectStore(depot)
         for id_ in store.ids():
             try:
-                projet = store.lire(id_)
+                projet = store.read(id_)
             except (OSError, ValueError, TypeError, KeyError) as exc:
-                illisible.append(f"déclaration {store.fichier(id_)} illisible ({exc})")
+                illisible.append(f"déclaration {store.file(id_)} illisible ({exc})")
                 continue
             if projet is None:
                 continue
-            if racine_disparue(Path(projet.racine)):
-                orphelines.append(Orpheline(depot, id_, projet.nom, projet.racine))
+            if racine_disparue(Path(projet.root)):
+                orphelines.append(Orpheline(depot, id_, projet.name, projet.root))
             else:
-                projets.append(Path(projet.racine))
+                projets.append(Path(projet.root))
     for dossier in reglages:
-        repertoire = ReglagesProjetsStore(dossier).lire().repertoire
+        repertoire = ProjectSettingsStore(dossier).read().directory
         if repertoire:
             projets.append(Path(repertoire).expanduser())
 
@@ -758,13 +758,13 @@ def _designes(entrees: Sequence[Entree], noms: Sequence[str]) -> tuple[list[Entr
 def _retirer(entree: Entree) -> bool:
     """Retire un élément — `True` si plus rien ne subsiste à cette adresse.
 
-    Une déclaration s'oublie par son dépôt (`ProjetStore.supprimer`, le verbe de
+    Une déclaration s'oublie par son dépôt (`ProjectStore.delete`, le verbe de
     `DELETE /api/projets`), jamais en effaçant son fichier : son format est au produit.
     """
     if entree.declaration is not None:
-        store = ProjetStore(entree.declaration.depot)
+        store = ProjectStore(entree.declaration.depot)
         try:
-            store.supprimer(entree.declaration.id)
+            store.delete(entree.declaration.id)
         except OSError:
             return False
         return entree.declaration.id not in store.ids()

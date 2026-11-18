@@ -43,8 +43,8 @@ from maestro.machine import (
 )
 from maestro.orchestrator.schema import Task
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import Credentials, ModelProvider
 from maestro.providers.claude import ClaudeProvider
 from maestro.sandbox.verification import Execution
@@ -302,7 +302,7 @@ def test_le_constat_nomme_l_interprete_de_maestro() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _projet_outille(racine: Path, commandes: Sequence[str]) -> Projet:
+def _projet_outille(racine: Path, commandes: Sequence[str]) -> Project:
     """Un projet dont le manifeste garde les verdicts de ces commandes (docs/38 §4.1)."""
     manifeste = racine / CHEMIN_MANIFESTE
     manifeste.parent.mkdir(parents=True)
@@ -319,7 +319,7 @@ def _projet_outille(racine: Path, commandes: Sequence[str]) -> Projet:
         ),
         encoding="utf-8",
     )
-    return Projet(id="prj-00001403", nom="Démo", racine=racine.as_posix(), perimetre=Perimetre())
+    return Project(id="prj-00001403", name="Démo", root=racine.as_posix(), perimeter=Perimeter())
 
 
 def test_les_programmes_sont_lus_sur_les_commandes_du_manifeste(tmp_path: Path) -> None:
@@ -332,8 +332,8 @@ def test_les_programmes_sont_lus_sur_les_commandes_du_manifeste(tmp_path: Path) 
 
 
 def test_sans_projet_ni_manifeste_aucun_programme(tmp_path: Path) -> None:
-    sans_manifeste = Projet(
-        id="prj-00001404", nom="Nu", racine=tmp_path.as_posix(), perimetre=Perimetre()
+    sans_manifeste = Project(
+        id="prj-00001404", name="Nu", root=tmp_path.as_posix(), perimeter=Perimeter()
     )
 
     assert programmes_de_l_outillage(None) == ()
@@ -474,15 +474,15 @@ def test_l_executeur_sonde_les_programmes_de_l_outillage_du_projet_de_la_tache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, constats: list[tuple[str, ...]]
 ) -> None:
     """Du manifeste du projet jusqu'au constat : ce sont ses programmes qu'on demande."""
-    # Un `Path.home()` sous `tmp_path` : sous Windows, `valider_racine` refuse `AppData` (#221).
+    # Un `Path.home()` sous `tmp_path` : sous Windows, `validate_root` refuse `AppData` (#221).
     maison = tmp_path / "maison"
     maison.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
     racine = tmp_path / "projets" / "depensio"
     racine.mkdir(parents=True)
     _projet_outille(racine, ("npm ci", "uv run pytest"))
-    depot = ProjetStore(tmp_path / "depot")
-    projet = depot.creer("Démo", racine)
+    depot = ProjectStore(tmp_path / "depot")
+    projet = depot.create("Démo", racine)
     provider = _Temoin()
     executeur = LocalExecutor(
         provider,

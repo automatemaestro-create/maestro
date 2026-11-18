@@ -87,7 +87,7 @@ from maestro.engine.executor import (
 )
 from maestro.engine.plafond import STATUT_TACHE_SUSPENDUE
 from maestro.plan_run import NoeudPlan
-from maestro.projets.application import DiffProjet
+from maestro.projects.apply import ProjectDiff
 from maestro.references import ticket_en_dict
 from maestro.sources.model import Source, sources_as_list
 from maestro.telemetry.costs import (
@@ -779,7 +779,7 @@ class EtatValidation:
     raison: str = ""
     statut: str = VALIDATION_EN_ATTENTE
     decision: str = ""
-    diff: DiffProjet | None = None
+    diff: ProjectDiff | None = None
     projet_id: str | None = None
     run_id: str = ""
     outil: str = ""

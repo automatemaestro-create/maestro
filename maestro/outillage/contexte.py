@@ -70,8 +70,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.perimetre import motifs_compiles
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.perimeter import compiled_patterns
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 
 #: Version du manifeste que ce module sait lire (docs/38 §4.1). Une version
@@ -197,7 +197,7 @@ class OutillageDuProjet:
     lue dans la source du manifeste : celle que la personne a choisie pour un projet
     neuf, ou celle que la lecture d'un projet importé a relevée dans ses fichiers
     (#1679) — `""` sans l'une ni l'autre. C'est ce que **Maestro** suit quand il écrit
-    ses propres commits (`maestro.projets.commits`), ce que la vérification d'une
+    ses propres commits (`maestro.projects.commits`), ce que la vérification d'une
     livraison relit, et ce que la consigne dit à l'agent qui commite (`consigne`).
     """
 
@@ -372,7 +372,7 @@ class OutillageDuProjet:
 
 
 def outillage_du_projet(
-    projet: Projet | None, *, bornes: Bornes | None = None
+    projet: Project | None, *, bornes: Bornes | None = None
 ) -> OutillageDuProjet:
     """L'outillage que `projet` déclare, lu et borné — jamais une exception.
 
@@ -385,7 +385,7 @@ def outillage_du_projet(
     bornes = bornes or Bornes()
     if projet is None:
         return OutillageDuProjet(bornes=bornes)
-    racine = projet.racine_chemin
+    racine = projet.root_path
     donnees = _manifeste(racine, bornes)
     if donnees is None:
         return OutillageDuProjet(bornes=bornes)
@@ -419,7 +419,7 @@ def est_au_projet(chemin: str, declares: Collection[str]) -> bool:
     return not chemin.startswith(f"{DOSSIER_ATELIER}/") and chemin not in declares
 
 
-def fichier_du_projet(racine: Path, chemin: str, perimetre: Perimetre) -> Path | None:
+def fichier_du_projet(racine: Path, chemin: str, perimetre: Perimeter) -> Path | None:
     """Le fichier `chemin` du projet s'il se lit dans ses bornes — `None` sinon (#1542).
 
     Les mêmes quatre refus qu'une pièce déclarée au manifeste (`_cible_sure`) : hors de la
@@ -428,7 +428,7 @@ def fichier_du_projet(racine: Path, chemin: str, perimetre: Perimetre) -> Path |
     à lire : un agent ne doit pas être envoyé vers un fichier qu'il ne trouvera pas, ni
     vers un chemin que le périmètre lui cache.
     """
-    return _cible_sure(racine, chemin, motifs_compiles(perimetre.exclus))
+    return _cible_sure(racine, chemin, compiled_patterns(perimetre.excluded))
 
 
 def _ou_sont_les_skills(*, designes: bool, a_lister: bool) -> str:
@@ -505,7 +505,7 @@ def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
 
 
 def _depuis_entrees(  # noqa: C901
-    racine: Path, projet: Projet, donnees: dict[str, Any], bornes: Bornes
+    racine: Path, projet: Project, donnees: dict[str, Any], bornes: Bornes
 ) -> OutillageDuProjet:
     """Les entrées déclarées, une à une, dans l'ordre du manifeste.
 
@@ -513,7 +513,7 @@ def _depuis_entrees(  # noqa: C901
     donc celui dans lequel la personne qui a relu le manifeste les a vues. Deux
     lectures du même manifeste rendent ainsi le même contexte.
     """
-    exclus = motifs_compiles(projet.perimetre.exclus)
+    exclus = compiled_patterns(projet.perimeter.excluded)
     instructions = ""
     chemin_instructions = ""
     tronquees = False

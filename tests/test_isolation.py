@@ -49,7 +49,7 @@ from pathlib import Path
 import pytest
 
 from maestro.config import ConfigError, Settings
-from maestro.projets.modele import ENV_IDENTITE_GIT, Perimetre, Projet, Vcs
+from maestro.projects.model import GIT_IDENTITY_ENV, Perimeter, Project, Vcs
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
 from maestro.sandbox import confinement, container, depot_conteneur
@@ -229,9 +229,9 @@ def test_seules_les_variables_d_auth_entrent_dans_le_conteneur():
     # Maestro pour les commits de l'agent (#1507, #1602), prise à ses constantes.
     venues = {paire.split("=", 1)[0] for paire in transmises} - set(ENV_TRANSMISES)
     assert venues == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} | set(
-        ENV_IDENTITE_GIT
+        GIT_IDENTITY_ENV
     )
-    assert {f"{cle}={valeur}" for cle, valeur in ENV_IDENTITE_GIT.items()} <= set(transmises)
+    assert {f"{cle}={valeur}" for cle, valeur in GIT_IDENTITY_ENV.items()} <= set(transmises)
     # La liste des accès accordés est fermée et documentée (docs/17 §3).
     assert set(ENV_TRANSMISES) == {
         "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
@@ -367,18 +367,18 @@ def test_from_settings_valide_l_isolation_au_cablage():
 # --- ⑤ Le second montage du projet (#226, Phase 7) --------------------------------------
 
 
-def _projet_sur(racine: Path, **surcharges) -> Projet:
+def _projet_sur(racine: Path, **surcharges) -> Project:
     """Un projet déclaré sur `racine`, avec le périmètre par défaut sauf surcharge."""
     champs = {
         "id": "prj-depensio",
-        "nom": "Dépensio",
-        "racine": racine.as_posix(),
-        "origine": "existant",
+        "name": "Dépensio",
+        "root": racine.as_posix(),
+        "origin": "existant",
         "vcs": None,
-        "perimetre": Perimetre(),
+        "perimeter": Perimeter(),
     }
     champs.update(surcharges)
-    return Projet(**champs)
+    return Project(**champs)
 
 
 def _montages(commande: list[str]) -> list[str]:
@@ -398,7 +398,7 @@ def test_sans_projet_le_protocole_reste_celui_d_avant(shim_resolu, tmp_path):
 #: Un projet **versionné** : c'est pour lui que la racine n'est jamais montée —
 #: son espace est un worktree hors de la racine (#224). Le refus ci-dessous est
 #: le sien depuis #839 ; un projet non versionné travaille **dans** sa racine.
-_VERSIONNE = Vcs(type="git", branche_base="main")
+_VERSIONNE = Vcs(type="git", base_branch="main")
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git introuvable")
@@ -544,7 +544,7 @@ def test_un_perimetre_qui_deborde_est_un_refus_franc(shim_resolu, tmp_path, monk
         (espace / f"secrets{index}").mkdir()
     monkeypatch.setattr(container, "_MASQUES_MAX", 1)
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
-    projet = _projet_sur(racine, perimetre=Perimetre(exclus=("secrets*",)))
+    projet = _projet_sur(racine, perimeter=Perimeter(excluded=("secrets*",)))
 
     with pytest.raises(ConfigError, match="chemins exclus"):
         config.env_sandbox(espace, projet=projet)
@@ -654,7 +654,7 @@ def _git_ok(depot: Path, *arguments: str) -> str:
     return resultat.stdout.strip()
 
 
-def _projet_versionne(tmp_path: Path) -> tuple[Path, Path, Projet]:
+def _projet_versionne(tmp_path: Path) -> tuple[Path, Path, Project]:
     """Un projet versionné qui versionne un `.env` et un `secrets/`, et le worktree d'une tâche."""
     racine = tmp_path / "depensio"
     racine.mkdir()
@@ -874,7 +874,7 @@ def _volumes_vers(commande: list[str], cible: str) -> list[str]:
     return [v for v in _montages(commande) if _source_et_cible(v)[1] == cible]
 
 
-@pytest.mark.parametrize("exclus", [Perimetre().exclus, (".env",)])
+@pytest.mark.parametrize("exclus", [Perimeter().excluded, (".env",)])
 def test_le_git_de_l_espace_est_recouvert_d_un_pointeur_vers_le_depot(tmp_path, exclus):
     """Que le périmètre exclue `.git` ou non : sinon l'agent pourrait le réécrire pour l'hôte."""
     espace = tmp_path / "espace"

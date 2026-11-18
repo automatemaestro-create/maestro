@@ -273,10 +273,10 @@ from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
 from maestro.orchestrator.schema import Brief
 from maestro.outillage.contexte import outillage_du_projet
-from maestro.projets.application import ApplicationRefusee
-from maestro.projets.commits import RedacteurDeCommits
-from maestro.projets.racine import RacineRefusee
-from maestro.projets.store import ProjetStore
+from maestro.projects.apply import ApplyRejected
+from maestro.projects.commits import CommitDrafter
+from maestro.projects.root import RootRejected
+from maestro.projects.store import ProjectStore
 from maestro.references import ReferenceTicket
 from maestro.sandbox.projet import (
     EspaceProjetIndisponible,
@@ -502,7 +502,7 @@ class ServiceExecutions:
     câble le dépôt de l'app (`create_app`).
 
     `redacteur` (#1507) rédige le message de ces sauvegardes dans la convention de
-    commit du projet, quand la personne en a choisi une (`maestro.projets.commits`) ;
+    commit du projet, quand la personne en a choisi une (`maestro.projects.commits`) ;
     le fournisseur est résolu au premier usage. Sans convention, il n'est pas appelé.
     """
 
@@ -521,12 +521,12 @@ class ServiceExecutions:
         periode_battement_s: float = PERIODE_BATTEMENT_S,
         hote: HoteRun | None = None,
         acquis: MagasinAcquis | None = None,
-        projets: ProjetStore | None = None,
-        redacteur: RedacteurDeCommits | None = None,
+        projets: ProjectStore | None = None,
+        redacteur: CommitDrafter | None = None,
     ) -> None:
         self._bus = bus
         self._projets = projets
-        self._redacteur = redacteur if redacteur is not None else RedacteurDeCommits()
+        self._redacteur = redacteur if redacteur is not None else CommitDrafter()
         self._acquis = acquis if acquis is not None else MagasinAcquisMemoire()
         # Les runs dont une reprise sur le plan est **en train** de partir (#1391) —
         # le garde-fou du double clic, parce que la reprise relit son état hors du
@@ -1821,7 +1821,7 @@ class ServiceExecutions:
             )
 
     async def _messages_des_sauvegardes(
-        self, projets: ProjetStore, taches: Sequence[EtatTache], *, demande: str = ""
+        self, projets: ProjectStore, taches: Sequence[EtatTache], *, demande: str = ""
     ) -> dict[str, str]:
         """Le message de chaque sauvegarde, dans la convention de commit du projet (#1507).
 
@@ -1841,7 +1841,7 @@ class ServiceExecutions:
         def conventions() -> dict[str, str]:
             vues: dict[str, str] = {}
             for tache in taches:
-                projet = projets.lire(tache.projet_id or "")
+                projet = projets.read(tache.projet_id or "")
                 if projet is not None:
                     vues[tache.id] = outillage_du_projet(projet).convention_de_commit
             return vues
@@ -1856,12 +1856,12 @@ class ServiceExecutions:
                     *(
                         self._redacteur.message(
                             convention=par_tache[t.id],
-                            changement=(
+                            change=(
                                 "sauvegarde le travail en cours de la tâche "
                                 f"« {t.titre or t.id} », interrompue avant sa fin "
                                 f"(branche `{branche_de_tache(t.id)}`)"
                             ),
-                            demande=demande,
+                            request=demande,
                         )
                         for t in a_rediger
                     )
@@ -2450,7 +2450,7 @@ class ServiceExecutions:
 
 
 def _porter_sur_les_branches(
-    projets: ProjetStore,
+    projets: ProjectStore,
     run_id: str,
     en_vol: Sequence[tuple[str, str]],
     messages: Mapping[str, str] | None = None,
@@ -2463,14 +2463,14 @@ def _porter_sur_les_branches(
     message rédigé dans la convention du projet ; absent, celui de Maestro.
     """
     for tache_id, projet_id in en_vol:
-        projet = projets.lire(projet_id)
+        projet = projets.read(projet_id)
         if projet is None:
             continue
         try:
             porte = sauver_le_travail_en_vol(
                 projet, tache_id, message=(messages or {}).get(tache_id, "")
             )
-        except (ApplicationRefusee, RacineRefusee, EspaceProjetIndisponible) as refus:
+        except (ApplyRejected, RootRejected, EspaceProjetIndisponible) as refus:
             _LOGGER.warning(
                 "Travail en vol de la tâche %s (run %s) non porté sur %s : %s",
                 tache_id,

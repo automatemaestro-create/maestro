@@ -109,8 +109,8 @@ from maestro.outillage.contexte import est_au_projet
 from maestro.outillage.modele import USAGES, Constats, Entree, FichierGarde, Recommandation
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
 from maestro.portee import PorteeProjet
-from maestro.projets.modele import Perimetre
-from maestro.projets.perimetre import motifs_compiles
+from maestro.projects.model import Perimeter
+from maestro.projects.perimeter import compiled_patterns
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import DOSSIER_ATELIER, fichiers_du_perimetre
 from maestro.shell import Illisible, Simple, lis, simples
@@ -380,7 +380,7 @@ class Verificateur:
         constats: Constats,
         recommandation: Recommandation,
         *,
-        perimetre: Perimetre,
+        perimetre: Perimeter,
         portees: Mapping[str, str] | None = None,
         connues: Mapping[str, Verification] | None = None,
     ) -> tuple[Verification, ...]:
@@ -413,7 +413,7 @@ class Verificateur:
         racine: Path,
         commandes: Sequence[CommandeEcrite],
         *,
-        perimetre: Perimetre,
+        perimetre: Perimeter,
         portees: Mapping[str, str] | None = None,
         connues: Mapping[str, Verification] | None = None,
         installation: CommandeEcrite | None = None,
@@ -472,7 +472,7 @@ class Verificateur:
         *,
         chemin: str,
         texte: str,
-        perimetre: Perimetre,
+        perimetre: Perimeter,
         installation: CommandeEcrite | None = None,
     ) -> Verification:
         """Le verdict de ce qui garde `chemin`, joué sur une copie qui porte `texte` (#1716).
@@ -570,7 +570,7 @@ class Verificateur:
         self,
         racine: Path,
         commandes: Sequence[tuple[CommandeEcrite, str]],
-        perimetre: Perimetre,
+        perimetre: Perimeter,
         interprete: tuple[str, ...],
         installation: CommandeEcrite | None = None,
     ) -> dict[str, Verification]:
@@ -737,14 +737,14 @@ def installation_de(constats: Constats) -> CommandeEcrite | None:
 
 
 @contextmanager
-def _espace_de_jeu(racine: Path, perimetre: Perimetre, *, versionne: bool) -> Iterator[Path]:
+def _espace_de_jeu(racine: Path, perimetre: Perimeter, *, versionne: bool) -> Iterator[Path]:
     """Où les commandes se jouent : le clone neuf d'un projet versionné, sinon la copie."""
     if versionne:
         with execution.clone_neuf(racine) as clone:
             yield clone
         return
     with execution.copie_de_verification(
-        racine, exclus=motifs_compiles(perimetre.exclus), hors=(DOSSIER_ATELIER,)
+        racine, exclus=compiled_patterns(perimetre.excluded), hors=(DOSSIER_ATELIER,)
     ) as copie:
         yield copie
 
@@ -783,7 +783,7 @@ def _sous_la_borne(
         yield functools.partial(joueur, abaissement=abaisse), abaisse.interprete
 
 
-def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -> bool:
+def _projet_vide(racine: Path, perimetre: Perimeter, declares: frozenset[str]) -> bool:
     """Le projet ne porte-t-il encore aucun fichier **à lui** ?
 
     Ni l'atelier, ni ce que le manifeste déclare (`declares`) : c'est l'outillage de
@@ -795,7 +795,7 @@ def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -
     qu'une orthographe : `est_au_projet`.
     """
     fichiers = fichiers_du_perimetre(
-        racine, motifs_compiles(perimetre.exclus), hors=(DOSSIER_ATELIER,)
+        racine, compiled_patterns(perimetre.excluded), hors=(DOSSIER_ATELIER,)
     )
     return not any(est_au_projet(relatif, declares) for relatif in fichiers)
 

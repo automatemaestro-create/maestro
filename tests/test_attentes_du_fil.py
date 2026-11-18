@@ -92,7 +92,7 @@ from maestro.engine import OrchestrationEngine
 from maestro.engine.guardrails import DemandeValidation
 from maestro.engine.questions import DemandeQuestion
 from maestro.orchestrator import Orchestrator
-from maestro.projets.application import DiffProjet
+from maestro.projects.apply import ProjectDiff
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
@@ -710,7 +710,7 @@ def test_une_validation_se_tranche_par_une_carte_confirmee_jusqu_au_moteur(
 def test_ce_qui_reprend_se_lit_sur_la_structure_de_la_demande() -> None:
     """Un acte, une écriture dans le projet, le reste — jamais deviné d'un texte."""
     acte = EtatValidation(tache_id="t", outil="Bash")
-    ecriture = EtatValidation(tache_id="t", diff=DiffProjet())
+    ecriture = EtatValidation(tache_id="t", diff=ProjectDiff())
     tache = EtatValidation(tache_id="t")
 
     assert suite_de_la_decision(acte, approuve=True) == "l'appel s'exécute et la tâche reprend"

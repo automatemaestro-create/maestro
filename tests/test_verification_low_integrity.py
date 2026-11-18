@@ -39,7 +39,7 @@ from maestro.outillage.verification import (
     Delais,
     Verificateur,
 )
-from maestro.projets.modele import Perimetre
+from maestro.projects.model import Perimeter
 from maestro.sandbox import low_integrity, low_session, verification_cache
 from maestro.sandbox import verification as execution
 
@@ -169,7 +169,7 @@ def test_under_low_integrity_everything_played_in_the_copy_is_lowered(
     root = _doubled_project(tmp_path)
 
     verdicts = Verificateur(joueur=player, interprete=FAKE_BASH).verifier_commandes(
-        root, COMMANDS, perimetre=Perimetre()
+        root, COMMANDS, perimetre=Perimeter()
     )
 
     assert [v.etat for v in verdicts] == [VERIFIEE, A_VERIFIER]
@@ -194,7 +194,7 @@ def test_where_the_agents_run_at_the_person_s_level_the_verification_does_too(
     player = _Player()
 
     Verificateur(joueur=player, interprete=FAKE_BASH).verifier_commandes(
-        _doubled_project(tmp_path), COMMANDS, perimetre=Perimetre()
+        _doubled_project(tmp_path), COMMANDS, perimetre=Perimeter()
     )
 
     assert player.played and all("abaissement" not in opts for _, _, opts in player.played)
@@ -309,7 +309,7 @@ def test_a_bound_the_machine_cannot_hold_plays_nothing_and_copies_nothing(
     player = _Player()
 
     tests, lint = Verificateur(joueur=player, interprete=FAKE_BASH).verifier_commandes(
-        _doubled_project(tmp_path), COMMANDS, perimetre=Perimetre()
+        _doubled_project(tmp_path), COMMANDS, perimetre=Perimeter()
     )
 
     assert player.played == []
@@ -351,7 +351,7 @@ def test_a_lowering_the_system_refuses_plays_nothing_and_says_why_without_a_path
     player = _Player()
 
     tests, _ = Verificateur(joueur=player, interprete=FAKE_BASH).verifier_commandes(
-        _doubled_project(tmp_path), COMMANDS, perimetre=Perimetre()
+        _doubled_project(tmp_path), COMMANDS, perimetre=Perimeter()
     )
 
     assert player.played == []
@@ -413,7 +413,7 @@ def test_a_verified_command_writes_nothing_outside_its_copy(
         CommandeEcrite("tester", "bash scripts/tests.sh", "scripts/tests.sh"),
     )
 
-    installer, tests = Verificateur().verifier_commandes(root, commands, perimetre=Perimetre())
+    installer, tests = Verificateur().verifier_commandes(root, commands, perimetre=Perimeter())
 
     assert _fingerprint(profile) == before, profile.read_text(encoding="utf-8")
     assert installer.etat == ECHOUEE, installer
@@ -444,7 +444,7 @@ def test_a_lowered_command_receives_its_workbench_and_none_of_maestro_s_names(
     )
 
     (verdict,) = Verificateur().verifier_commandes(
-        _project(tmp_path, {}), (command,), perimetre=Perimetre()
+        _project(tmp_path, {}), (command,), perimetre=Perimeter()
     )
 
     assert verdict.etat == VERIFIEE, verdict
@@ -489,7 +489,7 @@ def test_what_a_lowered_command_caches_is_found_by_its_project_s_next_verificati
     command = (CommandeEcrite("installer", "bash scripts/install.sh", "scripts/install.sh"),)
 
     def verify(root: Path) -> str:
-        (verdict,) = Verificateur().verifier_commandes(root, command, perimetre=Perimetre())
+        (verdict,) = Verificateur().verifier_commandes(root, command, perimetre=Perimeter())
         assert verdict.etat == VERIFIEE, verdict
         return verdict.sortie.strip()
 

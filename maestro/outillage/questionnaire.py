@@ -170,7 +170,7 @@ SUJET_CLIENTS = "clients"
 
 #: Le sujet de la convention de message de commit — « Conventional Commits ». Nommé
 #: depuis #1507 : Maestro le relit pour écrire ses propres commits dans cette convention
-#: (`convention_de_commit`, `maestro.projets.commits`), et pas seulement pour la dire.
+#: (`convention_de_commit`, `maestro.projects.commits`), et pas seulement pour la dire.
 SUJET_CONVENTIONS = "conventions"
 
 #: Ce que la pièce de convention d'un projet neuf dit d'elle-même (`constats_depuis_choix`)
@@ -1291,7 +1291,7 @@ def convention_de_commit(choix: Sequence[Choix]) -> str:
 
     Le sujet `conventions` acquis, tel que la personne l'a dit ou que le modèle l'a
     compris, sur une ligne : c'est la phrase que Maestro donne au modèle pour écrire
-    ses propres commits dans cette convention (`maestro.projets.commits`). « aucun »
+    ses propres commits dans cette convention (`maestro.projects.commits`). « aucun »
     n'en est pas une.
     """
     acquis = {c.cle: c for c in acquis_de(choix)}

@@ -48,8 +48,8 @@ from maestro.engine import OrchestrationEngine
 from maestro.engine.cadence import CAUSE_CHAINE
 from maestro.orchestrator import Orchestrator
 from maestro.plan_run import NoeudPlan, largeur_du_plan
-from maestro.projets.modele import Projet
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Project
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import STEP_CADENCE, STEP_TEAM, RunJournal
 
@@ -202,22 +202,22 @@ class _Seule(ModelProvider):
         return "Étape faite."
 
 
-def _projet(tmp_path: Path, *, versionne: bool = True) -> tuple[ProjetStore, Projet]:
+def _projet(tmp_path: Path, *, versionne: bool = True) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet déclaré — versionné par le verbe du produit (#704)."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     racine = tmp_path / "projets" / "vitrine"
-    projet = depot.creer("Vitrine", racine, origine="nouveau")
+    projet = depot.create("Vitrine", racine, origin="nouveau")
     (racine / "README.md").write_text("# Site vitrine\n", encoding="utf-8")
     if versionne:
-        projet = depot.versionner(projet.id)
-        assert projet.versionne, projet
+        projet = depot.enable_versioning(projet.id)
+        assert projet.versioned, projet
     return depot, projet
 
 
 def _moteur(
     fournisseur: ModelProvider,
     plan: list[dict[str, Any]],
-    depot: ProjetStore,
+    depot: ProjectStore,
     capacites: CapacityStore,
     *,
     max_parallele: int | None = None,

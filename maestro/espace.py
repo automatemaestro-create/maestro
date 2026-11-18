@@ -7,7 +7,7 @@
 
 Chaque copie de travail avait déjà ses ports (`worktree.sh ensure`, #152) et ses
 dépôts de fichiers — fils, projets, équipes vivent sous `core/` **de la copie**
-(`ChatStore.default`, `ProjetStore.default`…, résolus depuis l'emplacement du
+(`ChatStore.default`, `ProjectStore.default`…, résolus depuis l'emplacement du
 code). Il lui manquait la moitié Redis : toutes les stacks réelles du poste
 parlaient à la même instance (`REDIS_URL`) sous les mêmes noms, si bien qu'une
 relecture lancée depuis un worktree rejouait au démarrage le journal d'un autre,

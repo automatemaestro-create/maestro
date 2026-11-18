@@ -122,11 +122,11 @@ from maestro.outillage.verification import (
     Verificateur,
     Verification,
 )
-from maestro.projets import ProjetStore
-from maestro.projets.application import DiffProjet, Modification
-from maestro.projets.commits import RedacteurDeCommits
-from maestro.projets.modele import Perimetre
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.apply import FileChange, ProjectDiff
+from maestro.projects.commits import CommitDrafter
+from maestro.projects.model import Perimeter
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.team import SKILLS_HEADING
@@ -175,7 +175,7 @@ def _git_isole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def projets(tmp_path: Path) -> ServiceProjets:
     """Le service des projets sur un dépôt et des réglages jetables — jamais ceux du poste."""
     return ServiceProjets(
-        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+        ProjectStore(tmp_path / "depot"), reglages=ProjectSettingsStore(tmp_path / "reglages")
     )
 
 
@@ -540,7 +540,7 @@ def test_une_commande_deja_jouee_ne_se_rejoue_pas_mais_un_a_verifier_si(tmp_path
     }
 
     verdicts = Verificateur(joueur=joueur, interprete=FAUX_BASH).verifier(
-        racine, constats, recommander(constats), perimetre=Perimetre(), connues=connues
+        racine, constats, recommander(constats), perimetre=Perimeter(), connues=connues
     )
 
     assert joueur.joues == ["npm install"]
@@ -658,7 +658,7 @@ def test_un_projet_importe_propose_sa_premiere_piece_verifiee_sans_rien_ecrire(
 ) -> None:
     """Critère 1, projet importé : lu, puis sa première pièce, montrée avec ce qui changera."""
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     joueur = _Joueur()
 
     piece = asyncio.run(_service(projets, joueur).prochaine(projet_id, []))
@@ -710,7 +710,7 @@ def test_ecrire_une_piece_n_ecrit_qu_elle_et_la_suivante_vient_sans_rien_rejouer
     projets: ServiceProjets, _maison: Path
 ) -> None:
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     joueur = _Joueur()
     service = _service(projets, joueur)
     agents = asyncio.run(service.prochaine(projet_id, []))
@@ -735,7 +735,7 @@ def test_passer_une_piece_ne_l_ecrit_pas_et_elle_ne_revient_pas_telle_quelle(
     projets: ServiceProjets, _maison: Path
 ) -> None:
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     service = _service(projets, _Joueur())
     agents = asyncio.run(service.prochaine(projet_id, []))
     assert agents is not None
@@ -794,7 +794,7 @@ def test_revenir_a_une_version_deja_ecrite_puis_remplacee_la_repropose(
     une version d'avant en la taisant, mais en **redisant** ce qu'elle disait — ici
     `dotnet test`, écrit, puis `node --test`, écrit, puis `dotnet test` à nouveau."""
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     service = _service(projets, _Joueur())
 
     def dite(valeur: str, phrase: str) -> tuple[Choix, ...]:
@@ -849,7 +849,7 @@ def test_une_piece_dont_le_fichier_a_bouge_depuis_la_carte_ne_s_ecrit_pas(
     projets: ServiceProjets, _maison: Path
 ) -> None:
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     service = _service(projets, _Joueur())
     agents = asyncio.run(service.prochaine(projet_id, []))
     assert agents is not None
@@ -866,7 +866,7 @@ def _apres_agents_ecrit(
 ) -> tuple[str, Path, ServicePieces, list[MessageChat], PieceProposee]:
     """Un projet importé dont `AGENTS.md` vient d'être écrit, et la pièce suivante qui attend."""
     projet_id = _importe(projets, maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     service = _service(projets, joueur, modele)
     agents = asyncio.run(service.prochaine(projet_id, []))
     assert agents is not None
@@ -1029,7 +1029,7 @@ def test_accord_de_la_carte_ne_vaut_que_pour_le_diff_montre() -> None:
             agent="",
             role="",
             raison="application de l'outillage",
-            diff=DiffProjet(modifications=tuple(Modification(chemin=c) for c in chemins)),
+            diff=ProjectDiff(changes=tuple(FileChange(path=c) for c in chemins)),
         )
 
     assert asyncio.run(accord(demande("AGENTS.md", CHEMIN_MANIFESTE)))
@@ -1095,7 +1095,7 @@ def test_la_piece_et_sa_fusion_suivent_la_convention_de_commit_choisie(
     projets.versionner(neuf)
     modele = _RedacteurDesCommits()
     service = _service(projets, _Joueur())
-    service._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    service._redacteur = CommitDrafter(modele, model="modele-du-test")
     acquis = [
         Choix(cle="langages", valeur="TypeScript"),
         Choix(cle="conventions", valeur="Conventional Commits"),
@@ -1134,7 +1134,7 @@ def test_sans_convention_choisie_la_piece_ne_coute_aucun_appel(
     projets.versionner(neuf)
     modele = _RedacteurDesCommits()
     service = _service(projets, _Joueur())
-    service._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    service._redacteur = CommitDrafter(modele, model="modele-du-test")
     agents = asyncio.run(
         service.prochaine(neuf, [], acquis=[Choix(cle="langages", valeur="TypeScript")])
     )
@@ -1440,13 +1440,13 @@ def test_reprendre_l_outillage_d_un_projet_reporte_leve_le_report(
     racine = _maison / "Maestro" / "api"
     projet_id = str(projets.creer("api", str(racine), origine=ORIGINE_NOUVEAU)["id"])
     projets.reporter_outillage(projet_id)
-    assert projets.entite(projet_id).outillage.reporte
+    assert projets.entite(projet_id).tooling.deferred
     repondeur = _repondeur(projets, _Modele(comprehension=COMPRIS_FLUTTER))
 
     ouverture = asyncio.run(repondeur._conducteur.ouvrir([], projet_id=projet_id))
 
     assert ouverture.question is not None or ouverture.piece is not None
-    assert not projets.entite(projet_id).outillage.reporte
+    assert not projets.entite(projet_id).tooling.deferred
     piece = asyncio.run(
         repondeur._conducteur.ouvrir(
             [_message(UTILISATEUR, "Une application mobile Flutter")], projet_id=projet_id
@@ -1454,7 +1454,7 @@ def test_reprendre_l_outillage_d_un_projet_reporte_leve_le_report(
     ).piece
     assert piece is not None
     asyncio.run(repondeur._conducteur.trancher([], piece=piece, decision="plus-tard"))
-    assert projets.entite(projet_id).outillage.reporte
+    assert projets.entite(projet_id).tooling.deferred
 
 
 def test_la_fin_du_questionnaire_annonce_les_pieces_et_rien_d_autre(
@@ -1821,7 +1821,7 @@ def test_un_oui_tape_sur_une_piece_l_ecrit_comme_le_clic(
     modele = _Modele(_dicte("Je l'écris.", VERDICT_ACCORD))
     repondeur = _repondeur(projets, modele)
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     agents = asyncio.run(repondeur._conducteur.ouvrir([], projet_id=projet_id)).piece
     assert agents is not None
 
@@ -1941,7 +1941,7 @@ def client_pieces(
         orchestration_repondeur=_repondeur(projets, _Modele()),
     )
     with TestClient(app) as client:
-        yield client, projet_id, projets.entite(projet_id).racine_chemin
+        yield client, projet_id, projets.entite(projet_id).root_path
 
 
 def test_la_route_ouvre_l_outillage_d_un_projet_ecrit_la_piece_et_refuse_le_double_clic(
@@ -2187,7 +2187,7 @@ def test_une_correction_dite_reste_acquise_dans_une_autre_conversation(
     personne, par `npm run test`, que le projet déclare.
     """
     projet_id = _importe(projets, _maison)
-    racine = projets.entite(projet_id).racine_chemin
+    racine = projets.entite(projet_id).root_path
     modele = _Modele(
         _dicte("Vos tests tournent avec node --test : je revérifie.", VERDICT_OUTILLAGE),
         correction=CORRIGE_NODE,

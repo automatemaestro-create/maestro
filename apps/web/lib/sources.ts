@@ -26,7 +26,7 @@ import {
  * peut faire, là où le `message` du backend dit ce qui s'est passé.
  *
  * Les motifs d'un `dossier` ne sont **pas** répétés ici : la résolution conserve
- * tels quels ceux de `valider_racine` (docs/05 §6.8), donc leur conseil est déjà
+ * tels quels ceux de `validate_root` (docs/05 §6.8), donc leur conseil est déjà
  * écrit — `conseilSource` délègue à celui de l'écran Projets. Deux tables pour
  * un même code finiraient par diverger, et c'est la moins relue qui gagnerait.
  */

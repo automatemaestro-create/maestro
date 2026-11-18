@@ -95,7 +95,7 @@ Sa règle centrale, elle, disparaît : *une hypothèse énoncée vaut mieux qu'u
    > ⚠ **Renversé le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)), à la demande de la personne : l'outillage n'est plus une **étape de formulaire**. Un projet naît dans la conversation (#1294), et son outillage s'y construit **pièce par pièce**, chaque pièce proposée puis écrite sur accord (#1161, **livré** — [docs/05 §6.20](./05-interface-control-tower.md) « Pièce par pièce, dans le fil »). L'étape d'outillage de l'écran Projets est retirée ; un projet reporté le dit sur sa carte, et « Outiller dans la conversation » l'y reprend. L'étape d'équipe qu'elle enchaînait n'est plus montée : l'équipe se propose dans le fil (#1146), et sa correction en mots y vient avec #1331. Le principe 2 (« l'outillage d'abord ») perd son sens d'étape, mais le reste ne bouge pas : l'outillage se propose, se reporte, et un projet non outillé le dit.
    >
    > Les deux ponts du point 5 ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé qui ne le lit pas nativement ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md), #1295).
-7. **Le répertoire proposé par défaut** est un dossier `Maestro` sous le dossier personnel, créé à la première utilisation (#1022). La racine nue du dossier personnel reste refusée par `valider_racine`, alors qu'un sous-dossier est admis.
+7. **Le répertoire proposé par défaut** est un dossier `Maestro` sous le dossier personnel, créé à la première utilisation (#1022). La racine nue du dossier personnel reste refusée par `validate_root`, alors qu'un sous-dossier est admis.
 
 ## 5. Le découpage
 

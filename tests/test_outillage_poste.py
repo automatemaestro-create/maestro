@@ -98,9 +98,9 @@ from maestro.outillage.verification import (
     programmes,
     sonde,
 )
-from maestro.projets import ProjetStore
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 
@@ -131,7 +131,7 @@ DEMANDE = (
 
 @pytest.fixture(autouse=True)
 def _maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """`Path.home()` sous `tmp_path` : `valider_racine` refuse `AppData` sous Windows (#221)."""
+    """`Path.home()` sous `tmp_path` : `validate_root` refuse `AppData` sous Windows (#221)."""
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
@@ -164,7 +164,7 @@ def _neuf(*commandes: tuple[str, str]) -> Constats:
 
 def _generer(racine: Path, constats: Constats, verificateur: Verificateur) -> Any:
     return generer_outillage(
-        Projet(id="prj-chorale", nom="Chorale", racine=racine.as_posix()),
+        Project(id="prj-chorale", name="Chorale", root=racine.as_posix()),
         constats,
         recommander(constats),
         source=SOURCE_CHOIX,
@@ -332,7 +332,7 @@ def test_une_commande_deja_verifiee_ne_se_sonde_pas(tmp_path: Path) -> None:
         racine,
         constats,
         recommander(constats),
-        perimetre=Perimetre(),
+        perimetre=Perimeter(),
         connues={connue.commande: connue},
     )
 
@@ -633,7 +633,7 @@ COMPRIS_CARNET: dict[str, Any] = {
 def projets(tmp_path: Path) -> ServiceProjets:
     """Le service des projets sur un dépôt et des réglages jetables — jamais ceux du poste."""
     return ServiceProjets(
-        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+        ProjectStore(tmp_path / "depot"), reglages=ProjectSettingsStore(tmp_path / "reglages")
     )
 
 

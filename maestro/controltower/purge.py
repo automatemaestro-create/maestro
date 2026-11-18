@@ -96,7 +96,7 @@ from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.controltower.state import EXECUTION_EN_COURS
 from maestro.espace import Espace, espace_courant
 from maestro.messaging.mailbox import BROADCAST_CHANNEL, MAILBOX_CHANNEL_PREFIX
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.queue.celery_app import TASKS_QUEUE
 from maestro.sources.resolution import ingestion_root
 
@@ -201,7 +201,7 @@ def perimetre(settings: Settings | None = None) -> Perimetre:
         diffusion=espace.nommer(BROADCAST_CHANNEL),
         conversations=ChatStore.default(settings).racine,
         ingestion=ingestion_root(settings),
-        projets=ProjetStore.default(settings).racine,
+        projets=ProjectStore.default(settings).root,
     )
 
 

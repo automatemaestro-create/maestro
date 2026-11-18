@@ -10,7 +10,7 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
 
 - **projet versionné** → un **worktree Git** monté hors de la racine, sur une
   branche dédiée `maestro/<tâche>` créée depuis la branche de base déclarée
-  (`Projet.vcs.branche_base`) — ou, pour une tâche qui en reprend une autre (un
+  (`Project.vcs.base_branch`) — ou, pour une tâche qui en reprend une autre (un
   redécoupage, #1396), depuis la branche de celle-ci. En fin de tâche le
   **worktree est retiré, jamais la branche** : c'est elle qui porte le travail
   jusqu'à la fusion, que `maestro.engine.executor` demande dès que la tâche est soldée en succès
@@ -48,9 +48,9 @@ Trois invariants tiennent le worktree, et ce sont eux qu'il ne faut pas défaire
    (`_verifie_hors_racine`), parce qu'un `TMPDIR` posé *dans* le projet suffirait
    à faire du worktree une écriture en place, dans un arbre que la branche ne
    porterait plus ;
-2. **la racine est revalidée ici** (`valider_racine`, EF-38) et pas seulement à la
+2. **la racine est revalidée ici** (`validate_root`, EF-38) et pas seulement à la
    déclaration : le dépôt des projets est un dossier de fichiers JSON qu'on peut
-   éditer à la main (`maestro.projets.store`), donc la dernière porte avant
+   éditer à la main (`maestro.projects.store`), donc la dernière porte avant
    qu'un agent n'écrive est celle-ci — elle vaut pour les **deux** régimes ;
 3. **aucun lien symbolique n'est suivi** — c'est le vecteur d'évasion nommé par
    docs/24 §2.5 ; le régime en place le tient à l'écriture et au recensement
@@ -79,13 +79,13 @@ from pathlib import Path
 
 from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
-from maestro.projets.application import (
-    ApplicationRefusee,
-    commiter_en_attente,
-    message_de_sauvegarde,
+from maestro.projects.apply import (
+    ApplyRejected,
+    commit_pending,
+    save_commit_message,
 )
-from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
-from maestro.projets.racine import valider_racine
+from maestro.projects.model import AUTHOR_EMAIL, AUTHOR_NAME, Project
+from maestro.projects.root import validate_root
 from maestro.sandbox.en_place import (
     DOSSIER_ATELIER,
     EspaceEnPlace,
@@ -243,9 +243,9 @@ class CopieDuProjet:
     branche: str
 
     @classmethod
-    def de(cls, projet: Projet, branche: str) -> CopieDuProjet:
+    def de(cls, projet: Project, branche: str) -> CopieDuProjet:
         """La copie du projet `projet` montée sur `branche`."""
-        return cls(nom=projet.nom.strip(), dossier=projet.racine, branche=branche)
+        return cls(nom=projet.name.strip(), dossier=projet.root, branche=branche)
 
     def consigne(self) -> str:
         """Le paragraphe qui dit à l'agent où il est.
@@ -274,7 +274,7 @@ class CopieDuProjet:
 class EspaceProjetIndisponible(RuntimeError):
     """L'espace de travail dérivé n'a pas pu être monté — **avec son motif**.
 
-    Même parti pris que `RacineRefusee` (EF-38) : un refus porte un code court et
+    Même parti pris que `RootRejected` (EF-38) : un refus porte un code court et
     stable (`git-indisponible`, `worktree-refuse`, `espace-dans-la-racine`,
     `enumeration-refusee`), pas seulement une phrase. L'exécuteur en fait un échec
     de tâche consigné (`maestro.engine.executor`), donc **visible** — là où un
@@ -303,8 +303,8 @@ class EspaceCopieDeTravail(Workspace):
     L'énumération est donc celle de Git : les fichiers **suivis**, et les **non
     suivis que le projet n'ignore pas** (`git ls-files --cached --others
     --exclude-standard`) — l'ensemble que `git add -A` porte sur la branche au
-    démontage (`_solder_la_branche`) et que le diff présente (`maestro.projets.
-    application._diff_worktree`). Le juge, le résultat de la tâche, le rapport du
+    démontage (`_solder_la_branche`) et que le diff présente (`maestro.projects.
+    apply._diff_worktree`). Le juge, le résultat de la tâche, le rapport du
     run et le rassemblement d'un redécoupage lisent ainsi ce que la branche
     livrera, et rien d'autre. Le point unique d'énumération de `Workspace` tient :
     `derive` et `produced_files` passent tous deux par ici.
@@ -583,7 +583,7 @@ def _retirer(racine: Path, relatif: str) -> bool:
 
 @contextmanager
 def espace_de_travail(
-    projet: Projet | None = None,
+    projet: Project | None = None,
     *,
     tache_id: str = "",
     reprend: str = "",
@@ -633,7 +633,7 @@ def espace_de_travail(
     retire pas — c'est la fin du run qui le fera. None, ou un miroir d'une autre
     racine : l'espace a le sien, qui part avec lui. Sans objet hors de la racine.
 
-    Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) —
+    Lève `RootRejected` si la racine du projet n'est plus admissible (EF-38) —
     dans les deux régimes, c'est la dernière porte avant qu'un agent n'écrive —
     et `EspaceProjetIndisponible` si le montage du worktree échoue (Git absent,
     worktree refusé, répertoire temporaire situé dans la racine).
@@ -643,8 +643,8 @@ def espace_de_travail(
             yield ws
         return
 
-    racine = valider_racine(projet.racine)
-    if not projet.versionne:
+    racine = validate_root(projet.root)
+    if not projet.versioned:
         # L'atelier de la tâche (#944) est ouvert **avant** la dérivation : c'est
         # de lui que dépend ce que `fichiers` énumère, donc l'empreinte de départ.
         atelier = chemin_atelier(_slug(tache_id))
@@ -658,12 +658,12 @@ def espace_de_travail(
         # racine, elle, n'est toujours ni démontée ni nettoyée.
         if miroir is not None and miroir.racine.resolve() == racine.resolve():
             yield EspaceEnPlace.derive(
-                racine, perimetre=projet.perimetre, atelier=atelier, miroir=miroir
+                racine, perimetre=projet.perimeter, atelier=atelier, miroir=miroir
             )
             return
         with miroir_de_verification(racine) as propre:
             yield EspaceEnPlace.derive(
-                racine, perimetre=projet.perimetre, atelier=atelier, miroir=propre
+                racine, perimetre=projet.perimeter, atelier=atelier, miroir=propre
             )
         return
 
@@ -712,7 +712,7 @@ def espace_de_travail(
                 retirer_arbre(parent)
 
 
-def sauver_le_travail_en_vol(projet: Projet, tache_id: str, *, message: str = "") -> bool:
+def sauver_le_travail_en_vol(projet: Project, tache_id: str, *, message: str = "") -> bool:
     """Porte sur sa branche ce qu'une tâche **tuée en vol** a laissé dans son worktree (#1392).
 
     Le démontage d'`espace_de_travail` commite le travail en attente avant de
@@ -725,7 +725,7 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str, *, message: str = ""
 
     C'est donc **celui qui a éteint le process** qui joue le geste, une fois
     qu'il l'a fait (`maestro.controltower.executions`) : le même commit, par la même
-    orthographe (`commiter_en_attente`), sur les seuls worktrees qui ont la forme
+    orthographe (`commit_pending`), sur les seuls worktrees qui ont la forme
     exacte de ceux qu'`espace_de_travail` monte pour **cette** tâche — jamais celui
     qu'une personne aurait ouvert elle-même (`_worktrees_abandonnes`). Le worktree
     reste monté : le retirer n'ajoute rien à la sauvegarde, et c'est le montage
@@ -735,24 +735,24 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str, *, message: str = ""
 
     `message` (#1507) est celui de la sauvegarde, rédigé dans la convention de commit
     du projet par celui qui solde le run ; vide, celui de Maestro. Ce commit ne se
-    réécrit plus après coup (`commiter_en_attente`) : c'est ici qu'il doit naître
+    réécrit plus après coup (`commit_pending`) : c'est ici qu'il doit naître
     dans la convention.
 
     Rend `True` si un worktree de la tâche a été trouvé — son travail est alors sur
     la branche —, `False` s'il n'y en avait pas : projet non versionné (la tâche
     écrit en place, rien n'est hors du projet), ou démontage qui a eu le temps de
-    se faire. Lève `RacineRefusee` si la racine n'est plus admissible,
-    `EspaceProjetIndisponible` si Git manque, `ApplicationRefusee` si Git refuse
+    se faire. Lève `RootRejected` si la racine n'est plus admissible,
+    `EspaceProjetIndisponible` si Git manque, `ApplyRejected` si Git refuse
     le commit (un `pre-commit` du projet, un index verrouillé) : l'appelant le dit,
     ce n'est pas ici qu'on le tait.
     """
-    if not projet.versionne:
+    if not projet.versioned:
         return False
-    racine = valider_racine(projet.racine)
+    racine = validate_root(projet.root)
     branche = _branche(tache_id)
     trouve = False
     for abandonne in _worktrees_abandonnes(racine, branche):
-        commiter_en_attente(abandonne, branche, message=message)
+        commit_pending(abandonne, branche, message=message)
         trouve = True
     return trouve
 
@@ -840,7 +840,7 @@ class ConflitAvecLaBase:
 
 
 def conflit_avec_la_base(
-    espace: Path | str, projet: Projet, tache_id: str
+    espace: Path | str, projet: Project, tache_id: str
 ) -> ConflitAvecLaBase | None:
     """Ce qui ferait refuser la fusion de la tâche dans son projet, à cet instant — ou None (#1548).
 
@@ -949,8 +949,8 @@ def _commit_de_la_livraison(espace: Path) -> str | None:
             return _git(espace, "rev-parse", "HEAD").stdout.strip() or None
         commit = _git(
             espace,
-            "-c", f"user.name={AUTEUR_NOM}",
-            "-c", f"user.email={AUTEUR_COURRIEL}",
+            "-c", f"user.name={AUTHOR_NAME}",
+            "-c", f"user.email={AUTHOR_EMAIL}",
             "commit-tree", arbre.stdout.strip(), *parents,
             "-m", "Maestro : livraison confrontée à la base",
         )
@@ -1008,7 +1008,7 @@ def etat_de_la_branche(espace: Path, base: str) -> str:
     nb_commits = int(compte.stdout.strip()) if compte.stdout.strip().isdigit() else 0
     # Un commit que Maestro a fait du travail de la tâche — la sauvegarde d'une
     # extinction — se reconnaît à son message, le nôtre, comparé à l'identique.
-    sauvegarde = message_de_sauvegarde(nom.stdout.strip()) if nom.returncode == 0 else ""
+    sauvegarde = save_commit_message(nom.stdout.strip()) if nom.returncode == 0 else ""
     if nb_commits:
         lignes = [
             f"La branche porte {nb_commits} commit(s) depuis `{base}`, du plus récent "
@@ -1073,7 +1073,7 @@ def _comptabilite_touchee(espace: Path, base: str) -> list[str]:
     return lignes
 
 
-def empreinte_du_livrable(racine: Path, projet: Projet | None) -> str:
+def empreinte_du_livrable(racine: Path, projet: Project | None) -> str:
     """L'empreinte de l'arbre que `racine` livre, ou `""` quand elle ne se relève pas (#1680).
 
     C'est elle qui dit à la recette du run si l'arbre qu'elle juge est celui qu'une
@@ -1096,10 +1096,10 @@ def empreinte_du_livrable(racine: Path, projet: Projet | None) -> str:
         return ""
     lignes: list[str] | None
     try:
-        if projet.versionne:
+        if projet.versioned:
             lignes = _empreintes_git(racine)
         else:
-            espace = EspaceEnPlace(path=racine, perimetre=projet.perimetre)
+            espace = EspaceEnPlace(path=racine, perimetre=projet.perimeter)
             lignes = []
             for fichier in espace.fichiers():
                 etat = fichier.stat()
@@ -1109,7 +1109,7 @@ def empreinte_du_livrable(racine: Path, projet: Projet | None) -> str:
         return ""
     if lignes is None:
         return ""
-    sorte = "git" if projet.versionne else "disque"
+    sorte = "git" if projet.versioned else "disque"
     return hashlib.sha256("\n".join([sorte, *lignes]).encode("utf-8")).hexdigest()
 
 
@@ -1164,12 +1164,12 @@ def _slug(tache_id: str) -> str:
     return reduit or _SLUG_DEFAUT
 
 
-def _base(projet: Projet) -> str:
+def _base(projet: Project) -> str:
     """La branche de base déclarée du projet, "" si le dépôt était en HEAD détaché."""
-    return projet.vcs.branche_base if projet.vcs is not None else ""
+    return projet.vcs.base_branch if projet.vcs is not None else ""
 
 
-def _reference(racine: Path, projet: Projet, depart: str) -> str:
+def _reference(racine: Path, projet: Project, depart: str) -> str:
     """Ce à quoi comparer la branche d'une tâche pour dire ce qu'elle a fait (#1392).
 
     La branche qu'elle reprend (#1396) si elle existe — le travail de celle-là
@@ -1413,7 +1413,7 @@ def _solder_la_branche(chemin: Path, branche: str, au_montage: str = "") -> None
 
     Dans le dernier commit de l'agent quand cette exécution l'a fait — au-delà de
     `au_montage`, la tête de la branche au montage — et que lui seul le porte (#1507,
-    `commiter_en_attente`) : c'est un reste de son travail, et il entre sous son
+    `commit_pending`) : c'est un reste de son travail, et il entre sous son
     message, dans la convention du projet. Un commit d'avant le montage, la
     sauvegarde d'une extinction comprise, n'est jamais réécrit.
 
@@ -1424,8 +1424,8 @@ def _solder_la_branche(chemin: Path, branche: str, au_montage: str = "") -> None
     emportait tout ce qui n'était pas commité. La branche survivait donc en ne
     portant rien, et la fusion de #705 aurait fusionné le vide.
 
-    Le geste **n'est pas réécrit ici** : c'est `commiter_en_attente`
-    (`maestro.projets.application`), la seule orthographe de « commiter ce que le
+    Le geste **n'est pas réécrit ici** : c'est `commit_pending`
+    (`maestro.projects.apply`), la seule orthographe de « commiter ce que le
     worktree porte encore » — hooks de l'utilisateur non contournés, identité
     posée par `-c`.
 
@@ -1442,8 +1442,8 @@ def _solder_la_branche(chemin: Path, branche: str, au_montage: str = "") -> None
     et détruire ce qui l'explique serait le pire des deux.
     """
     try:
-        commiter_en_attente(chemin, branche, depuis=au_montage)
-    except ApplicationRefusee:
+        commit_pending(chemin, branche, since=au_montage)
+    except ApplyRejected:
         pass
 
 
@@ -1535,7 +1535,7 @@ def _ref_existe(racine: Path, branche: str) -> bool:
 def _tete(chemin: Path) -> str:
     """Le commit de tête de la copie `chemin` — `""` si Git ne sait pas le dire (#1507).
 
-    `""` ne fait rien amender au démontage (`commiter_en_attente`) : dans le doute, un
+    `""` ne fait rien amender au démontage (`commit_pending`) : dans le doute, un
     commit de plus vaut mieux qu'un commit réécrit.
     """
     try:

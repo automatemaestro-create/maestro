@@ -14,7 +14,7 @@ rencontrée sur un dépôt qu'un `pre-commit` venait de faire échouer.
 Le remède est le même des deux côtés, d'où ce module : rendre le droit d'écriture
 à **chaque fichier qui refuse de partir**, puis réessayer. Il vit ici
 et non dans l'un des deux appelants parce qu'ils ne peuvent pas s'importer l'un
-l'autre — `maestro.sandbox` dépend déjà de `maestro.projets` — et parce qu'un
+l'autre — `maestro.sandbox` dépend déjà de `maestro.projects` — et parce qu'un
 geste recopié des deux côtés d'une frontière est ce que #830 a vu diverger.
 
 ⚠ **Les fichiers, jamais les dossiers.** `stat.S_IWRITE` vaut `0o200` : posé sur

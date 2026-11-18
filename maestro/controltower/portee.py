@@ -73,7 +73,7 @@ PORTEES_RESERVEES = frozenset({PORTEE_TOUS, PORTEE_AUCUN})
 
 
 class PorteeRefusee(ValueError):
-    """Une portée projet inexploitable — motif compris, comme `RacineRefusee` (#221).
+    """Une portée projet inexploitable — motif compris, comme `RootRejected` (#221).
 
     Deux motifs, et deux seulement : `projet-requis` (le paramètre manque) et
     `projet-inconnu` (l'identifiant ne désigne aucun projet déclaré). Le `motif`

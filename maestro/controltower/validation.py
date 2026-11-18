@@ -70,16 +70,16 @@ from maestro.controltower.persistence import bus_durable
 from maestro.controltower.state import VALIDATION_APPROUVEE, VALIDATION_EN_ATTENTE
 from maestro.decision_humaine import ETENDUE_APPEL, DecisionHumaine
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
-from maestro.projets.application import (
-    APPLICATION_APPROUVEE,
-    APPLICATION_REFUSEE,
-    APPLICATION_SANS_OBJET,
-    ResultatApplication,
-    appliquer,
-    diff_du_travail,
-    verifier_perimetre,
+from maestro.projects.apply import (
+    APPLY_APPROVED,
+    APPLY_DECLINED,
+    APPLY_NOT_NEEDED,
+    ApplyResult,
+    apply_diff,
+    check_perimeter,
+    work_diff,
 )
-from maestro.projets.modele import Projet
+from maestro.projects.model import Project
 from maestro.telemetry import redact_secrets
 
 
@@ -205,7 +205,7 @@ async def _premiere_decision(
 
 
 async def appliquer_sous_validation(
-    projet: Projet,
+    projet: Project,
     *,
     tache_id: str,
     validateur: Validateur | None,
@@ -216,7 +216,7 @@ async def appliquer_sous_validation(
     titre: str = "",
     run_id: str = "",
     message: str = "",
-) -> ResultatApplication:
+) -> ApplyResult:
     """Applique le travail de la tâche dans `projet` — **après accord humain** (EF-37).
 
     C'est le nouveau type d'action sensible de la Phase 7, et c'est tout ce qu'il
@@ -228,11 +228,11 @@ async def appliquer_sous_validation(
 
     Le déroulé, dans cet ordre — il compte :
 
-    1. le **diff** est calculé (`maestro.projets.application.diff_du_travail`) ;
+    1. le **diff** est calculé (`maestro.projects.apply.work_diff`) ;
        vide, on s'arrête là (`sans_objet`) : déranger quelqu'un pour approuver
        zéro fichier userait la seule chose qui rend la validation utile ;
     2. le **périmètre** est vérifié sur le diff entier (EF-38). Un chemin qui en
-       sort lève `ApplicationRefusee` **avant** la demande : on ne fait pas
+       sort lève `ApplyRejected` **avant** la demande : on ne fait pas
        approuver ce qu'on refusera d'écrire ;
     3. la demande part au validateur, diff en pièce jointe, et l'attente est
        celle du mécanisme existant — indéfinie, sans time-out silencieux ;
@@ -254,7 +254,7 @@ async def appliquer_sous_validation(
     déduit de `projet`, qui est le sujet même de la question.
 
     `message` (#1507) est le sujet du commit de fusion, rédigé dans la convention de
-    commit du projet par l'appelant (`maestro.projets.commits`) ; vide, c'est celui de
+    commit du projet par l'appelant (`maestro.projects.commits`) ; vide, c'est celui de
     Maestro.
 
     `branche` est la branche de tâche posée par l'espace de travail dérivé
@@ -264,27 +264,27 @@ async def appliquer_sous_validation(
     projet versionné tant qu'il est monté (le travail non commité entre alors
     dans le diff, et est commité sur la branche avant la fusion).
 
-    Lève `ApplicationRefusee` (motivée) si le diff n'est pas calculable, si un
+    Lève `ApplyRejected` (motivée) si le diff n'est pas calculable, si un
     chemin sort du périmètre, ou si l'écriture est impossible — jamais à moitié
     appliquée.
     """
-    diff = diff_du_travail(projet, branche=branche, espace=espace)
-    if diff.vide:
-        return ResultatApplication(
-            statut=APPLICATION_SANS_OBJET,
+    diff = work_diff(projet, branch=branche, workspace=espace)
+    if diff.empty:
+        return ApplyResult(
+            status=APPLY_NOT_NEEDED,
             diff=diff,
-            detail=f"aucune modification à appliquer dans le projet {projet.nom!r}",
+            detail=f"aucune modification à appliquer dans le projet {projet.name!r}",
         )
-    verifier_perimetre(projet, diff)
+    check_perimeter(projet, diff)
     demande = DemandeValidation(
         task_id=tache_id,
-        titre=titre or f"Appliquer le travail dans {projet.nom}",
-        description=diff.resume(),
+        titre=titre or f"Appliquer le travail dans {projet.name}",
+        description=diff.summary(),
         agent=agent,
         role=role,
         raison=(
-            f"application des modifications dans le projet « {projet.nom} » "
-            f"({diff.fichiers} fichier(s), +{diff.ajouts} / −{diff.suppressions})"
+            f"application des modifications dans le projet « {projet.name} » "
+            f"({diff.files} fichier(s), +{diff.additions} / −{diff.deletions})"
         ),
         diff=diff,
         # Le projet n'est pas à déduire ici : la demande *porte* sur lui (#570).
@@ -294,10 +294,10 @@ async def appliquer_sous_validation(
     )
     approuve, detail = await Guardrails(validateur=validateur).demande_validation(demande)
     if not approuve:
-        return ResultatApplication(statut=APPLICATION_REFUSEE, diff=diff, detail=detail)
-    appliques = appliquer(projet, diff, espace=espace, message=message)
-    return ResultatApplication(
-        statut=APPLICATION_APPROUVEE, diff=diff, detail=detail, appliques=appliques
+        return ApplyResult(status=APPLY_DECLINED, diff=diff, detail=detail)
+    appliques = apply_diff(projet, diff, workspace=espace, message=message)
+    return ApplyResult(
+        status=APPLY_APPROVED, diff=diff, detail=detail, applied=appliques
     )
 
 

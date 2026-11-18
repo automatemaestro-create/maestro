@@ -51,7 +51,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_PROCESSUS,
 )
 from maestro.orchestrator import Orchestrator
-from maestro.projets.modele import ENV_IDENTITE_GIT
+from maestro.projects.model import GIT_IDENTITY_ENV
 from maestro.providers import ClaudeProvider, Credentials, GardeFouInoperant
 from maestro.providers import claude as claude_mod
 from maestro.providers.base import ModelProvider
@@ -420,8 +420,8 @@ def test_la_session_de_l_agent_commite_sous_l_identite_de_maestro(monkeypatch, t
 
     env = vu["env"]
     assert isinstance(env, dict)
-    assert {cle: env.get(cle) for cle in ENV_IDENTITE_GIT} == ENV_IDENTITE_GIT
-    assert ENV_IDENTITE_GIT["GIT_AUTHOR_NAME"] == "Maestro"
+    assert {cle: env.get(cle) for cle in GIT_IDENTITY_ENV} == GIT_IDENTITY_ENV
+    assert GIT_IDENTITY_ENV["GIT_AUTHOR_NAME"] == "Maestro"
 
 
 async def _livre(*, prompt, options):

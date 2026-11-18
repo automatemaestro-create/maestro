@@ -176,7 +176,7 @@ def test_a_sensitive_directory_is_rejected_with_the_root_validation_reason(
     secrets = _isolated_home / ".ssh"
     secrets.mkdir()
     rejection = _rejection([{"type": TYPE_DIRECTORY, "chemin": str(secrets)}])
-    # The reason of `RacineRefusee` is kept as is: it is a code the UI already
+    # The reason of `RootRejected` is kept as is: it is a code the UI already
     # knows how to translate, renaming it would make two vocabularies diverge.
     assert rejection.reason == "chemin-sensible"
 

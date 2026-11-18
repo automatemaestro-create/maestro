@@ -1041,7 +1041,7 @@ avant le livrable. Cinq gestes y répondent, chacun à sa place.
   interrompu — ne se réécrit donc jamais : ni par le démontage, ni par l'agent, à qui l'annonce du
   travail antérieur le dit, ni sur demande du vérificateur, à qui l'état de la branche le marque.
 - **Les commits de Maestro suivent la convention**, rédigés par le modèle : la fusion d'une tâche, le
-  commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`), le commit de la **recette
+  commit et la fusion d'une pièce d'outillage (`maestro.projects.commits`), le commit de la **recette
   du run** qu'il dépose dans le projet (#1530, `_message_de_recette`), et la **sauvegarde** du
   travail en vol d'un run qu'on solde (extinction, hôte mort) — elle ne se réécrit plus après coup,
   elle doit donc naître dans la convention. Celle-là se rédige sous un délai borné

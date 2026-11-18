@@ -71,9 +71,9 @@ from maestro.outillage.generation import (
 from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.redaction import rediger
 from maestro.outillage.verification import Verificateur
-from maestro.projets.application import ignore_par_le_projet
-from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.racine import valider_racine
+from maestro.projects.apply import ignored_by_project
+from maestro.projects.model import Perimeter, Project
+from maestro.projects.root import validate_root
 from maestro.sandbox.en_place import FrontiereEcriture
 from maestro.sandbox.projet import branche_de_tache, espace_de_travail
 
@@ -115,13 +115,13 @@ class ManifesteHorsBranche:
     """
 
     racine: Path
-    perimetre: Perimetre
+    perimetre: Perimeter
     ignore: bool = False
     texte: str = ""
 
     def entrer(self, espace: Path) -> None:
         """Pose dans `espace` le manifeste de la racine si le projet l'ignore — bloquant (Git)."""
-        self.ignore = ignore_par_le_projet(espace, CHEMIN_MANIFESTE)
+        self.ignore = ignored_by_project(espace, CHEMIN_MANIFESTE)
         if self.ignore:
             poser_le_manifeste(
                 espace,
@@ -181,7 +181,7 @@ def nouvel_id_de_generation() -> str:
 
 
 def generer_outillage(
-    projet: Projet,
+    projet: Project,
     constats: Constats,
     recommandation: Recommandation,
     *,
@@ -209,21 +209,21 @@ def generer_outillage(
     vérification, et c'est la suite de tests qui neutralise l'exécution d'un seul
     endroit (`tests/conftest.py`), jamais un appelant qui l'oublierait.
 
-    La racine est **revalidée** (`valider_racine`, EF-38) et pas seulement à la
+    La racine est **revalidée** (`validate_root`, EF-38) et pas seulement à la
     déclaration : le dépôt des projets est un dossier de fichiers JSON qu'on peut
     éditer à la main, et c'est ici la dernière porte avant d'écrire dans le
     dossier de quelqu'un.
 
-    Lève `RacineRefusee` si la racine n'est plus admissible et
+    Lève `RootRejected` si la racine n'est plus admissible et
     `EspaceProjetIndisponible` si le worktree d'un projet versionné ne se monte
     pas — deux refus **motivés**, que l'appelant traduit. Tout le reste (chemin
     refusé, fichier modifié à la main, disque en écriture seule) est une ligne du
     rapport, jamais une exception : il ne doit pas y avoir d'état où une partie de
     l'outillage est posée et où personne ne sait laquelle.
     """
-    racine = valider_racine(projet.racine)
+    racine = validate_root(projet.root)
     verifie = verificateur if verificateur is not None else Verificateur()
-    if not projet.versionne:
+    if not projet.versioned:
         return Preparation(
             regime=REGIME_EN_PLACE,
             rapport=_ecrire(
@@ -238,7 +238,7 @@ def generer_outillage(
     # fusion — exactement le déroulé d'une tâche soldée (#705), et c'est pourquoi
     # rien de Git n'est réécrit ici. Le manifeste qu'un projet ignore ne voyage pas
     # avec elle : il est relevé avant le démontage (`ManifesteHorsBranche`).
-    manifeste = ManifesteHorsBranche(racine, projet.perimetre)
+    manifeste = ManifesteHorsBranche(racine, projet.perimeter)
     with espace_de_travail(projet, tache_id=tache) as espace:
         manifeste.entrer(espace.path)
         rapport = _ecrire(
@@ -256,7 +256,7 @@ def generer_outillage(
 
 def _ecrire(
     cible: Path,
-    projet: Projet,
+    projet: Project,
     constats: Constats,
     recommandation: Recommandation,
     source: Mapping[str, Any],
@@ -279,7 +279,7 @@ def _ecrire(
     """
     portees = portees_declarees(cible)
     verifications = verificateur.verifier(
-        cible, constats, recommandation, perimetre=projet.perimetre, portees=portees
+        cible, constats, recommandation, perimetre=projet.perimeter, portees=portees
     )
     fichiers = rediger(
         constats,
@@ -292,7 +292,7 @@ def _ecrire(
         cible,
         fichiers,
         source=source,
-        frontiere=FrontiereEcriture.pour(cible, projet.perimetre),
+        frontiere=FrontiereEcriture.pour(cible, projet.perimeter),
         horodatage=horodatage,
         verifications=verifications,
     )

@@ -73,7 +73,7 @@ from maestro.familles_claude import familles_claude
 from maestro.installation import cli_claude_resolu
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
-from maestro.projets.modele import ENV_IDENTITE_GIT
+from maestro.projects.model import GIT_IDENTITY_ENV
 from maestro.providers import (
     blocage,
     checklist,
@@ -142,7 +142,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.navigateur import RedirectionDesSorties
     from maestro.agents.permissions import PolitiqueOutils
-    from maestro.projets.modele import Projet
+    from maestro.projects.model import Project
 from maestro.providers.registry import register
 from maestro.telemetry import (
     STEP_PROBE,
@@ -803,7 +803,7 @@ class ClaudeProvider(ModelProvider):
         on_question: question.Questionneur | None = None,
         on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
-        projet: Projet | None = None,
+        projet: Project | None = None,
         effort: str | None = None,
         session: SessionAgent | None = None,
     ) -> str:
@@ -1063,7 +1063,7 @@ class ClaudeProvider(ModelProvider):
         # L'identité de Maestro pour les commits que l'agent fait lui-même (#1507) : il
         # commite son travail dans la convention du projet, et un poste sans identité
         # Git le lui refusait. L'environnement de la session, jamais le dépôt.
-        env = self._auth_env() | ENV_IDENTITE_GIT
+        env = self._auth_env() | GIT_IDENTITY_ENV
         cli_path: Path | None = None
         confinement: SessionConfinee | None = None
         if self._isolation is not None:

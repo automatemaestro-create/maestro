@@ -39,7 +39,7 @@ from maestro.outillage.modele import Commande, Piece
 #:
 #: `.git` en fait partie, et c'est une **exception nommée** plutôt qu'un oubli :
 #: le VCS et la forge s'y lisent, mais par deux fichiers appelés par leur nom
-#: (`detecter_vcs`, qui lit `HEAD` et `config`), jamais en énumérant les objets.
+#: (`detect_vcs`, qui lit `HEAD` et `config`), jamais en énumérant les objets.
 #:
 #: `.maestro` aussi : c'est l'atelier de Maestro dans la racine (docs/24 §2.4),
 #: pas le projet. L'analyser reviendrait à recommander un outillage d'après les

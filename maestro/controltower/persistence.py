@@ -119,7 +119,7 @@ SUPPORTS = (SUPPORT_REDIS, SUPPORT_SQLITE)
 #: Où vit le journal local quand rien n'est réglé : un dossier du **poste**, sous
 #: le dossier personnel — jamais dans le dépôt, qu'un `git clean` emporterait et
 #: qu'une installation n'a pas. `~/Maestro` est déjà le répertoire *des projets*
-#: (`maestro.projets.reglages`) : ce dossier-ci porte les données du produit, pas
+#: (`maestro.projects.settings`) : ce dossier-ci porte les données du produit, pas
 #: le travail de l'utilisateur, d'où un nom masqué et distinct.
 DOSSIER_LOCAL = NOM_ETAT
 

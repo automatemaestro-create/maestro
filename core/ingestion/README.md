@@ -37,7 +37,7 @@ Le contrôle est **actif**, pas seulement un défaut bien choisi : un
   (#315) ne fait que *calculer* la destination. La création revient au
   téléversement (#317), qui écrit les octets.
 - Le `run_id` sert de **segment de chemin** : il est validé (`RUN_ID_PATTERN`) et la
-  destination passe par `chemin_dans_racine()` — un nom de fichier venu du
+  destination passe par `path_in_root()` — un nom de fichier venu du
   navigateur ne remonte pas d'un cran (`../`, `C:\`, flux NTFS `note.md:cache`).
 - **Plafonds d'ingestion** (`GardeFousIngestion`, ENF-07) : taille par source
   (10 Mio), taille totale (50 Mio), nombre de sources (20). Ils sont **actifs

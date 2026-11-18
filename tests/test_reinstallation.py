@@ -54,8 +54,8 @@ from maestro.lanceur import emplacement as lieu
 from maestro.lanceur import lanceur
 from maestro.lanceur.emplacement import Emplacement
 from maestro.lanceur.reprise import ENTETE_ENV, TEMOIN, Bilan, reprendre
-from maestro.projets.reglages import ReglagesProjetsStore
-from maestro.projets.store import ProjetStore
+from maestro.projects.settings import ProjectSettingsStore
+from maestro.projects.store import ProjectStore
 from maestro.sources.resolution import ingestion_root
 
 RACINE_DEPOT = Path(__file__).resolve().parents[1]
@@ -154,8 +154,8 @@ def test_la_forme_que_l_api_sert_suit_le_reglage_qui_range_la_configuration(
 def _racines_des_depots() -> dict[str, Path]:
     """La racine par défaut de chaque dépôt qu'écrit le produit."""
     depots = {
-        "projets": ProjetStore.default(),
-        "reglages": ReglagesProjetsStore.default(),
+        "projets": ProjectStore.default(),
+        "reglages": ProjectSettingsStore.default(),
         "secrets": SecretStore.default(),
         "agents": AgentStore.default(),
         "surcharges": SurchargeStore.default(),
@@ -166,7 +166,11 @@ def _racines_des_depots() -> dict[str, Path]:
         "capacite": CapacityStore.default(),
         "chat": ChatStore.default(),
     }
-    racines = {nom: Path(getattr(d, "racine", None) or d._racine) for nom, d in depots.items()}
+    # Un dépôt nomme sa racine `root` ou `racine`, selon la langue de son paquet (docs/55).
+    racines = {
+        nom: Path(getattr(d, "root", None) or getattr(d, "racine", None) or d._racine)
+        for nom, d in depots.items()
+    }
     racines["accueil"] = DepotAccueil.default().chemin.parent
     racines["fournisseur"] = DepotFournisseurParDefaut.default().chemin.parent
     racines["ingestion"] = ingestion_root()
@@ -199,7 +203,7 @@ def test_une_variable_de_depot_passe_devant_dans_les_deux_cas(
     installe: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("MAESTRO_PROJETS_DIR", str(tmp_path / "ailleurs"))
-    assert ProjetStore.default().racine == tmp_path / "ailleurs"
+    assert ProjectStore.default().root == tmp_path / "ailleurs"
 
 
 def test_installe_un_reglage_pose_vit_sous_l_etat_du_poste(installe: Path) -> None:
@@ -349,7 +353,7 @@ def test_une_valeur_illisible_ne_fait_pas_tomber_la_configuration(
     configuration.charger_les_env()
     assert os.environ["ESSAI_1620_PAQUET"] == "paquet"
     with pytest.raises(InstallationIllisible):
-        ProjetStore.default()
+        ProjectStore.default()
 
 
 # =================================================================================================

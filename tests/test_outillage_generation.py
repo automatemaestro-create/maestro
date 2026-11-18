@@ -73,8 +73,8 @@ from maestro.outillage.redaction import (
     texte_script,
     texte_skill,
 )
-from maestro.projets.modele import Perimetre, Projet, Vcs
-from maestro.projets.racine import RacineRefusee, detecter_vcs
+from maestro.projects.model import Perimeter, Project, Vcs
+from maestro.projects.root import RootRejected, detect_vcs
 from maestro.sandbox import FrontiereEcriture, branche_de_tache
 from maestro.sandbox.en_place import chemin_atelier
 
@@ -101,7 +101,7 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path`, comme dans les tests du socle (#221).
 
     Indispensable sous Windows : le `tmp_path` de pytest vit sous `AppData`, que
-    `valider_racine` interdit à juste titre — sans cette isolation, toutes les
+    `validate_root` interdit à juste titre — sans cette isolation, toutes les
     racines de projet de ce fichier seraient refusées.
     """
     maison = tmp_path / "maison"
@@ -151,7 +151,7 @@ def _constats() -> Constats:
         ),
         ci=(Piece(nom="ci.yml", chemin=".github/workflows/ci.yml", role="GitHub Actions"),),
         forge=Forge(nom="GitHub", distant="git@github.com:moi/depensio.git", chemin=".git/config"),
-        vcs=Vcs(type="git", branche_base="main"),
+        vcs=Vcs(type="git", base_branch="main"),
         conventions=(
             Piece(nom="CONTRIBUTING.md", chemin="CONTRIBUTING.md", role="contribution"),
             Piece(nom="AGENTS.md", chemin="AGENTS.md", role="instructions d'agent"),
@@ -1142,7 +1142,7 @@ def test_un_chemin_exclu_du_perimetre_est_refuse(tmp_path: Path) -> None:
         cible,
         [_fichier(".env", "CLE=1\n")],
         source=SOURCE,
-        frontiere=FrontiereEcriture.pour(cible, Perimetre()),
+        frontiere=FrontiereEcriture.pour(cible, Perimeter()),
         horodatage=QUAND,
     )
 
@@ -1158,7 +1158,7 @@ def test_un_manifeste_qu_on_ne_peut_pas_ecrire_est_une_ligne_du_rapport(tmp_path
         cible,
         [_fichier()],
         source=SOURCE,
-        frontiere=FrontiereEcriture.pour(cible, Perimetre(exclus=(".maestro",))),
+        frontiere=FrontiereEcriture.pour(cible, Perimeter(excluded=(".maestro",))),
         horodatage=QUAND,
     )
 
@@ -1204,9 +1204,9 @@ def test_le_rapport_se_montre_tel_quel(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _projet(racine: Path, *, vcs: Vcs | None = None) -> Projet:
+def _projet(racine: Path, *, vcs: Vcs | None = None) -> Project:
     """Un projet déclaré pointant sur `racine`."""
-    return Projet(id="prj-0000dead", nom="Dépensio", racine=racine.as_posix(), vcs=vcs)
+    return Project(id="prj-0000dead", name="Dépensio", root=racine.as_posix(), vcs=vcs)
 
 
 def test_un_projet_non_versionne_recoit_son_outillage_en_place(tmp_path: Path) -> None:
@@ -1245,7 +1245,7 @@ def test_une_racine_qui_n_est_plus_admissible_est_refusee_avant_toute_ecriture(
     tmp_path: Path,
 ) -> None:
     """Dernière porte avant d'écrire chez quelqu'un : le dépôt des projets s'édite à la main."""
-    with pytest.raises(RacineRefusee):
+    with pytest.raises(RootRejected):
         generer_outillage(
             _projet(tmp_path / "projets" / "disparu"),
             _constats(),
@@ -1291,7 +1291,7 @@ def test_un_projet_versionne_prepare_une_branche_et_laisse_la_racine_intacte(
         "-m",
         "socle",
     )
-    projet = _projet(racine, vcs=detecter_vcs(racine))
+    projet = _projet(racine, vcs=detect_vcs(racine))
 
     preparation = generer_outillage(
         projet, _constats(), _recommandation(), source=SOURCE, horodatage=QUAND
@@ -1345,7 +1345,7 @@ def test_de_l_analyse_d_un_projet_reel_a_son_outillage_ecrit(tmp_path: Path) -> 
     (racine / "README.md").write_text("# Dépensio\n", encoding="utf-8")
     (racine / ".env").write_text("CLE=secrète\n", encoding="utf-8")
 
-    analyse = analyser(racine, projet_id="prj-0000dead", perimetre=Perimetre())
+    analyse = analyser(racine, projet_id="prj-0000dead", perimetre=Perimeter())
     fichiers = rediger(analyse.constats, analyse.recommandation)
     rapport = generer(
         racine, fichiers, source=analyse.source_manifeste(), horodatage=QUAND

@@ -159,18 +159,18 @@ from maestro.messaging.mailbox import (
 from maestro.orchestrator.schema import Brief, Task
 from maestro.outillage.contexte import outillage_du_projet
 from maestro.prerequis import PrerequisManquant, prerequis_du_mcp, prerequis_du_role
-from maestro.projets.application import (
-    ApplicationRefusee,
-    DiffProjet,
-    appliquer,
-    diff_du_travail,
-    sujets_de_la_branche,
-    verifier_perimetre,
+from maestro.projects.apply import (
+    ApplyRejected,
+    ProjectDiff,
+    apply_diff,
+    branch_subjects,
+    check_perimeter,
+    work_diff,
 )
-from maestro.projets.commits import RedacteurDeCommits
-from maestro.projets.modele import Projet
-from maestro.projets.racine import RacineRefusee, valider_racine
-from maestro.projets.store import ProjetStore
+from maestro.projects.commits import CommitDrafter
+from maestro.projects.model import Project
+from maestro.projects.root import RootRejected, validate_root
+from maestro.projects.store import ProjectStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
 from maestro.providers.base import (
@@ -963,7 +963,7 @@ class TaskExecutor(ABC):
         """
         return None
 
-    async def versionner_le_projet(self, projet_id: str) -> Projet:
+    async def versionner_le_projet(self, projet_id: str) -> Project:
         """Met le projet sous Git pendant le run, sans heurter une tâche en place (#1298).
 
         Appelé par la boucle sur l'accord donné dans le fil, et seulement quand
@@ -1028,7 +1028,7 @@ class LocalExecutor(TaskExecutor):
         secrets: SecretStore | None = None,
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
-        projets: ProjetStore | None = None,
+        projets: ProjectStore | None = None,
         agents_store: AgentStore | None = None,
         modele: str | None = None,
         mailbox: Mailbox | None = None,
@@ -1039,7 +1039,7 @@ class LocalExecutor(TaskExecutor):
         suspendre_sur_prerequis: bool = False,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         plafonds: Plafonds | None = None,
-        redacteur: RedacteurDeCommits | None = None,
+        redacteur: CommitDrafter | None = None,
         attente_limite: AttenteLimite | None = None,
     ) -> None:
         self._provider = provider
@@ -1047,7 +1047,7 @@ class LocalExecutor(TaskExecutor):
         # (#1507) — le modèle du run, appelé seulement quand le projet en a une. Un
         # double de test le remplace ; sans convention, il n'est jamais appelé.
         self._redacteur = (
-            redacteur if redacteur is not None else RedacteurDeCommits(provider, modele=modele)
+            redacteur if redacteur is not None else CommitDrafter(provider, model=modele)
         )
         # L'attente du run à la limite d'usage du fournisseur (#1543) — en pratique
         # `maestro.controltower.limite.AttenteLimiteControlTower`, derrière le
@@ -1692,7 +1692,7 @@ class LocalExecutor(TaskExecutor):
         debut = perf_counter()
         criteres = brief.acceptance_criteria
         projet = (
-            self._projets.lire(projet_id)
+            self._projets.read(projet_id)
             if projet_id is not None and self._projets is not None
             else None
         )
@@ -1750,7 +1750,7 @@ class LocalExecutor(TaskExecutor):
         return recette
 
     async def _constats_des_taches(
-        self, projet: Projet | None, resultats: Sequence[TaskResult], journal: RunJournal
+        self, projet: Project | None, resultats: Sequence[TaskResult], journal: RunJournal
     ) -> tuple[ConstatAnterieur, ...]:
         """Ce que les vérifications des tâches abouties ont constaté, et sur quel arbre (#1680).
 
@@ -1761,8 +1761,8 @@ class LocalExecutor(TaskExecutor):
         empreinte = ""
         if projet is not None:
             try:
-                racine = valider_racine(projet.racine)
-            except RacineRefusee:
+                racine = validate_root(projet.root)
+            except RootRejected:
                 racine = None
             if racine is not None:
                 empreinte = await asyncio.to_thread(empreinte_du_livrable, racine, projet)
@@ -1774,7 +1774,7 @@ class LocalExecutor(TaskExecutor):
 
     @asynccontextmanager
     async def _lieu_de_la_recette(
-        self, run_id: str, projet: Projet | None
+        self, run_id: str, projet: Project | None
     ) -> AsyncIterator[tuple[Path | None, Path | None, str]]:
         """Où la recette joue : `(espace, origine, empechement)` — le miroir et la racine (#1530).
 
@@ -1787,8 +1787,8 @@ class LocalExecutor(TaskExecutor):
             yield None, None, ""
             return
         try:
-            racine = valider_racine(projet.racine)
-        except RacineRefusee as refus:
+            racine = validate_root(projet.root)
+        except RootRejected as refus:
             yield None, None, f"la racine du projet n'est plus admissible : {refus}"
             return
         with self._miroirs.prete(run_id, racine) as du_run:
@@ -1805,7 +1805,7 @@ class LocalExecutor(TaskExecutor):
                     yield chemin, racine, ""
 
     async def _ecrit_la_recette(
-        self, recette: RecetteDuRun, projet: Projet | None, run_id: str, brief: Brief
+        self, recette: RecetteDuRun, projet: Project | None, run_id: str, brief: Brief
     ) -> tuple[RecetteDuRun, StepUsage]:
         """La recette, écrite dans le projet du run — et ce qu'il en est advenu (#1530).
 
@@ -1826,7 +1826,7 @@ class LocalExecutor(TaskExecutor):
         )
         message, cout = (
             await self._message_de_recette(projet, run_id, brief)
-            if accorde and projet.versionne
+            if accorde and projet.versioned
             else ("", StepUsage())
         )
         async with self._verrou_projet(projet.id):
@@ -1836,7 +1836,7 @@ class LocalExecutor(TaskExecutor):
         return replace(recette, fichier=fichier, ecriture=raison), cout
 
     async def _message_de_recette(
-        self, projet: Projet, run_id: str, brief: Brief
+        self, projet: Project, run_id: str, brief: Brief
     ) -> tuple[str, StepUsage]:
         """Le message du commit de la recette, dans la convention de commit du projet (#1507).
 
@@ -1855,7 +1855,7 @@ class LocalExecutor(TaskExecutor):
         )
         with collect_usage() as recolte:
             message = await self._redacteur.message(
-                convention=convention, changement=changement, demande=brief.frame()
+                convention=convention, change=changement, request=brief.frame()
             )
         return message, recolte.total
 
@@ -1883,8 +1883,8 @@ class LocalExecutor(TaskExecutor):
             reglees=tuple(c for c in depot.lister() if c.actif and c.fixe_ses_instances),
         )
         self._instances_derivees[run_id] = derivees
-        projet = self._projets.lire(projet_id) if self._projets is not None else None
-        if projet is None or not projet.versionne:
+        projet = self._projets.read(projet_id) if self._projets is not None else None
+        if projet is None or not projet.versioned:
             return None
         return derivees
 
@@ -1917,7 +1917,7 @@ class LocalExecutor(TaskExecutor):
         """
         accepte = replace(result, statut=STATUT_TERMINEE, erreur=None)
         projet = self._projet(task)
-        if projet is not None and projet.versionne:
+        if projet is not None and projet.versioned:
             fusion = await self._fusionne_dans_le_projet(task, accepte, journal, en_place=False)
             # Prise telle quelle, mais pas entrée dans le projet (#1548) : pas terminée.
             accepte = _livree_hors_du_projet(accepte, fusion)
@@ -1976,7 +1976,7 @@ class LocalExecutor(TaskExecutor):
             return None
         projet = self._projet(task)
         outillage = outillage_du_projet(projet)
-        base = projet.vcs.branche_base if projet is not None and projet.vcs is not None else ""
+        base = projet.vcs.base_branch if projet is not None and projet.vcs is not None else ""
         branche_a_juger = bool(base) and bool(outillage.manifeste)
         return Recette(
             verificateur=self._verificateur,
@@ -2012,7 +2012,7 @@ class LocalExecutor(TaskExecutor):
         self,
         task: Task,
         agent: Agent,
-        projet: Projet | None,
+        projet: Project | None,
         recette: Recette | None,
         journal: RunJournal | None,
     ) -> Recette | _ConfrontationALaBase | None:
@@ -2025,7 +2025,7 @@ class LocalExecutor(TaskExecutor):
         projet non versionné reçoit l'agent en place, un espace jetable n'entre
         nulle part —, et la recette reste seule, comme avant.
         """
-        if projet is None or not projet.versionne:
+        if projet is None or not projet.versioned:
             return recette
         return _ConfrontationALaBase(
             projet=projet,
@@ -2188,7 +2188,7 @@ class LocalExecutor(TaskExecutor):
         if derivees is None:
             return capacite.instances
         projet = self._projet(task)
-        if projet is None or not projet.versionne:
+        if projet is None or not projet.versioned:
             return capacite.instances
         return derivees.instances
 
@@ -2264,15 +2264,15 @@ class LocalExecutor(TaskExecutor):
         """
         if self._projets is None:
             return None
-        projet = self._projets.lire(projet_id)
-        if projet is None or projet.versionne:
+        projet = self._projets.read(projet_id)
+        if projet is None or projet.versioned:
             return None
-        return projet.nom
+        return projet.name
 
-    async def versionner_le_projet(self, projet_id: str) -> Projet:
+    async def versionner_le_projet(self, projet_id: str) -> Project:
         """Met le projet sous Git **entre deux tâches**, avant celles qui attendent (#1298).
 
-        Le verbe est celui de #704 (`ProjetStore.versionner`) : `git init`, puis un
+        Le verbe est celui de #704 (`ProjectStore.enable_versioning`) : `git init`, puis un
         premier commit de toute la racine — donc de ce que les tâches déjà soldées
         y ont écrit. Ce qui est propre à ce geste est **quand** il a lieu :
 
@@ -2286,7 +2286,7 @@ class LocalExecutor(TaskExecutor):
           priorité, un niveau de quatre tâches déjà en file passerait encore une à
           une, et l'accord ne libérerait que les niveaux suivants.
 
-        Lève ce que le verbe lève — `VersionnementRefuse` et `RacineRefusee`
+        Lève ce que le verbe lève — `VersioningRejected` et `RootRejected`
         motivées, la racine restant dans l'état d'avant ; `ValueError` pour un
         projet inconnu ou sans dépôt câblé. Les tâches en attente relisent le projet
         dans tous les cas, et reprennent en place s'il n'a pas changé.
@@ -2299,7 +2299,7 @@ class LocalExecutor(TaskExecutor):
         self._versionnements[projet_id] = signal
         try:
             async with verrou:
-                return await asyncio.to_thread(depot.versionner, projet_id)
+                return await asyncio.to_thread(depot.enable_versioning, projet_id)
         finally:
             self._versionnements.pop(projet_id, None)
             signal.set()
@@ -2361,7 +2361,7 @@ class LocalExecutor(TaskExecutor):
         """
         while True:
             projet = self._projet(task)
-            if projet is None or projet.versionne:
+            if projet is None or projet.versioned:
                 return None
             verrou = self._verrou_projet(projet.id)
             annonce = self._versionnements.get(projet.id)
@@ -2375,7 +2375,7 @@ class LocalExecutor(TaskExecutor):
                 verrou.release()
                 continue
             relu = self._projet(task)
-            if relu is None or relu.versionne:
+            if relu is None or relu.versioned:
                 verrou.release()
                 return None
             return verrou
@@ -2482,7 +2482,7 @@ class LocalExecutor(TaskExecutor):
             return None
         return self._playbooks.pour_projet(projet_id).lire(agent)
 
-    def _projet(self, task: Task) -> Projet | None:
+    def _projet(self, task: Task) -> Project | None:
         """Le projet dans lequel `task` travaille, relu à chaque tâche (#224, EF-36).
 
         Même relecture **à chaud** que les playbooks : le périmètre ou la branche
@@ -2497,7 +2497,7 @@ class LocalExecutor(TaskExecutor):
         """
         if task.project_id is None or self._projets is None:
             return None
-        return self._projets.lire(task.project_id)
+        return self._projets.read(task.project_id)
 
     async def _fusionne_dans_le_projet(
         self, task: Task, result: TaskResult, journal: RunJournal, *, en_place: bool = False
@@ -2508,7 +2508,7 @@ class LocalExecutor(TaskExecutor):
         tâche sans projet, qui n'en consigne aucune. C'est sur eux que l'appelant
         juge si le travail est entré (#1548, `_livree_hors_du_projet`).
 
-        Le geste manquant du parent #703 : `maestro.projets.application` savait
+        Le geste manquant du parent #703 : `maestro.projects.apply` savait
         déjà fusionner, `maestro.sandbox.projet` gardait déjà la branche — il n'y
         avait **aucun appelant en production** (défaut B1 de #568). Le voici, et
         c'est tout ce que ce lot ajoute : le calcul, le contrôle de périmètre et
@@ -2568,7 +2568,7 @@ class LocalExecutor(TaskExecutor):
                 result,
                 _statut_sans_agent(projet),
                 entree=(
-                    f"projet {task.project_id}" if projet is None else f"projet {projet.racine}"
+                    f"projet {task.project_id}" if projet is None else f"projet {projet.root}"
                 ),
                 detail=_phrase_sans_agent(projet, task.project_id),
                 journal=journal,
@@ -2585,13 +2585,13 @@ class LocalExecutor(TaskExecutor):
                 ),
                 journal=journal,
             )
-        if not projet.versionne or en_place:
+        if not projet.versioned or en_place:
             statut, detail = _ecriture_en_place(projet, result)
             return self._consigne_fusion(
                 task,
                 result,
                 statut,
-                entree=f"écriture en place dans {projet.racine}",
+                entree=f"écriture en place dans {projet.root}",
                 detail=detail,
                 journal=journal,
             )
@@ -2663,13 +2663,13 @@ class LocalExecutor(TaskExecutor):
         )
 
     async def _message_de_fusion(
-        self, task: Task, projet: Projet, diff: DiffProjet, brief: Brief | None = None
+        self, task: Task, projet: Project, diff: ProjectDiff, brief: Brief | None = None
     ) -> tuple[str, StepUsage]:
         """Le message du commit de fusion, dans la convention de commit du projet (#1507).
 
         `""` — le message de Maestro — quand le projet n'a aucune convention : le modèle
         n'est alors pas appelé, et la fusion est celle d'avant au caractère près. Sinon
-        le rédacteur l'écrit (`maestro.projets.commits`), avec ce que la branche porte
+        le rédacteur l'écrit (`maestro.projects.commits`), avec ce que la branche porte
         des commits de l'agent sous les yeux, et le brief du run (`brief`), où se lit la
         référence que la convention exige (#1679). Rend aussi ce que l'appel a
         coûté, que l'étape `:fusion` porte : hors du collecteur de la tâche, il serait
@@ -2680,18 +2680,18 @@ class LocalExecutor(TaskExecutor):
         )
         if not convention:
             return "", StepUsage()
-        commits = await asyncio.to_thread(sujets_de_la_branche, projet, diff.branche)
+        commits = await asyncio.to_thread(branch_subjects, projet, diff.branch)
         changement = (
-            f"fusionne dans `{diff.base}` la branche `{diff.branche}`, le travail de la "
-            f"tâche « {task.title} » ({diff.fichiers} fichier(s), +{diff.ajouts} / "
-            f"−{diff.suppressions})"
+            f"fusionne dans `{diff.base}` la branche `{diff.branch}`, le travail de la "
+            f"tâche « {task.title} » ({diff.files} fichier(s), +{diff.additions} / "
+            f"−{diff.deletions})"
         )
         with collect_usage() as recolte:
             message = await self._redacteur.message(
                 convention=convention,
-                changement=changement,
+                change=changement,
                 commits=commits,
-                demande=brief.frame() if brief is not None else "",
+                request=brief.frame() if brief is not None else "",
             )
         return message, recolte.total
 
@@ -2699,8 +2699,8 @@ class LocalExecutor(TaskExecutor):
         self,
         task: Task,
         result: TaskResult,
-        projet: Projet,
-        diff: DiffProjet,
+        projet: Project,
+        diff: ProjectDiff,
         journal: RunJournal,
     ) -> AccordFusion:
         """L'accord humain d'écrire dans `projet` au nom de ce run (#706) — demandé une fois.
@@ -2760,14 +2760,14 @@ class LocalExecutor(TaskExecutor):
             return retenu
         demande = DemandeValidation(
             task_id=task.id,
-            titre=f"Écrire dans le projet {projet.nom} au fil de ce run",
-            description=diff.resume(),
+            titre=f"Écrire dans le projet {projet.name} au fil de ce run",
+            description=diff.summary(),
             agent=result.agent,
             role=result.role,
             raison=(
-                f"écriture continue dans le projet « {projet.nom} » : première fusion "
-                f"de ce run ({diff.branche} → {diff.base}, {diff.fichiers} fichier(s), "
-                f"+{diff.ajouts} / −{diff.suppressions}) — l'accord vaut pour toutes "
+                f"écriture continue dans le projet « {projet.name} » : première fusion "
+                f"de ce run ({diff.branch} → {diff.base}, {diff.files} fichier(s), "
+                f"+{diff.additions} / −{diff.deletions}) — l'accord vaut pour toutes "
                 f"les fusions suivantes de ce run dans ce projet"
             ),
             diff=diff,
@@ -2815,7 +2815,7 @@ class LocalExecutor(TaskExecutor):
         return self._verrous_projet.setdefault(projet_id, asyncio.Lock())
 
     async def _machine_du_run(
-        self, task: Task, journal: RunJournal | None, projet: Projet | None
+        self, task: Task, journal: RunJournal | None, projet: Project | None
     ) -> Machine | None:
         """Ce que Maestro constate de la machine pour le run de `task` — une fois (#1403).
 
@@ -2850,7 +2850,7 @@ class LocalExecutor(TaskExecutor):
         return connue
 
     def _miroir_du_run(
-        self, journal: RunJournal | None, projet: Projet | None
+        self, journal: RunJournal | None, projet: Project | None
     ) -> AbstractContextManager[MiroirDeVerification | None]:
         """Le miroir du run pour la racine de `projet`, prêté le temps de la tâche (#1497).
 
@@ -2859,9 +2859,9 @@ class LocalExecutor(TaskExecutor):
         journal il n'y a pas de run à qui le garder, et un run que personne ne tient
         n'en a pas non plus (`RegistreDesMiroirs.prete`) : l'espace aura le sien.
         """
-        if journal is None or projet is None or projet.versionne:
+        if journal is None or projet is None or projet.versioned:
             return nullcontext()
-        return self._miroirs.prete(journal.run_id, Path(projet.racine))
+        return self._miroirs.prete(journal.run_id, Path(projet.root))
 
     def _consigne_fusion(
         self,
@@ -4752,7 +4752,7 @@ class LocalExecutor(TaskExecutor):
         return sortie, ()
 
 
-def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, str, str]:
+def _diff_a_fusionner(projet: Project, branche: str) -> tuple[ProjectDiff | None, str, str]:
     """Ce que `branche` apporterait à la branche de travail de `projet`, ou pourquoi rien.
 
     Première moitié de la fusion (#705, coupée en deux par #706 pour loger
@@ -4765,7 +4765,7 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
     qui refuse (`fusion_refusee` : on ne fait pas approuver ce qu'on refusera
     d'écrire — la règle de `appliquer_sous_validation`, reprise telle quelle).
 
-    Elle **n'invente rien** — `diff_du_travail` calcule, `verifier_perimetre`
+    Elle **n'invente rien** — `work_diff` calcule, `check_perimeter`
     contrôle (EF-38). Le diff se lit **sur la branche** (`espace=None`) : le
     worktree est démonté depuis longtemps quand le verdict de la tâche est
     connu, et ce que l'agent avait laissé non commité y a été porté par
@@ -4777,21 +4777,21 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
     cardinal du module) — un refus se **rend**, en statut et en phrase, et c'est
     `execute` qui en tire le verdict de la tâche (#1548,
     `_livree_hors_du_projet`). Les deux refus motivés du socle
-    (`ApplicationRefusee`, `RacineRefusee`) portent leur cause ; le filet large
+    (`ApplyRejected`, `RootRejected`) portent leur cause ; le filet large
     derrière eux n'est pas de la méfiance envers ces deux-là mais la tenue du
     contrat — un `OSError` remonté d'un sous-processus ferait de ce geste annexe
     la seule chose capable de casser `execute`.
     """
     try:
-        diff = diff_du_travail(projet, branche=branche)
-        if diff.vide:
+        diff = work_diff(projet, branch=branche)
+        if diff.empty:
             return (
                 None,
                 STATUT_FUSION_SANS_OBJET,
                 f"rien à fusionner : {branche} n'apporte aucun changement à {diff.base}.",
             )
-        verifier_perimetre(projet, diff)
-    except (ApplicationRefusee, RacineRefusee) as refus:
+        check_perimeter(projet, diff)
+    except (ApplyRejected, RootRejected) as refus:
         return None, STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
     except Exception as exc:  # cf. le docstring : `execute` ne lève jamais
         return None, STATUT_FUSION_REFUSEE, _phrase_abandon(branche, exc)
@@ -4799,29 +4799,29 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
 
 
 def _applique_la_fusion(
-    projet: Projet, diff: DiffProjet, branche: str, message: str = ""
+    projet: Project, diff: ProjectDiff, branche: str, message: str = ""
 ) -> tuple[str, str]:
     """Fusionne `diff` — la branche de tâche — dans la branche de travail ; rend statut et phrase.
 
-    Seconde moitié, jouée **sur accord seulement** (#706) : `appliquer` contrôle
+    Seconde moitié, jouée **sur accord seulement** (#706) : `apply_diff` contrôle
     le périmètre une seconde fois (EF-38 — il ne sait pas qu'on l'a déjà fait,
     et c'est très bien : c'est lui qui écrit) puis fusionne. Même contrat de
     non-levée que la première moitié, pour la même raison. `message` (#1507) est le
     sujet rédigé dans la convention du projet, vide sans convention.
     """
     try:
-        appliquer(projet, diff, message=message)
-    except (ApplicationRefusee, RacineRefusee) as refus:
+        apply_diff(projet, diff, message=message)
+    except (ApplyRejected, RootRejected) as refus:
         return STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
     except Exception as exc:  # cf. le docstring : `execute` ne lève jamais
         return STATUT_FUSION_REFUSEE, _phrase_abandon(branche, exc)
-    return STATUT_FUSION_FAITE, diff.resume()
+    return STATUT_FUSION_FAITE, diff.summary()
 
 
-def _phrase_refus(branche: str, refus: ApplicationRefusee | RacineRefusee) -> str:
+def _phrase_refus(branche: str, refus: ApplyRejected | RootRejected) -> str:
     """La phrase d'un refus motivé du socle — inchangée depuis #705, au caractère près."""
     return (
-        f"fusion refusée ({refus.motif}) — le projet est intact et {branche} "
+        f"fusion refusée ({refus.reason}) — le projet est intact et {branche} "
         f"conserve le travail : {refus}"
     )
 
@@ -4900,7 +4900,7 @@ class _ConfrontationALaBase:
     échec rattrapable. `on_conflit` dit au fil chaque conflit rendu.
     """
 
-    projet: Projet
+    projet: Project
     tache_id: str
     recette: Recette | None = None
     on_conflit: Callable[[ConflitAvecLaBase], None] | None = None
@@ -4941,7 +4941,7 @@ class _ConfrontationALaBase:
         return conflit.consigne()
 
 
-def _statut_sans_agent(projet: Projet | None) -> str:
+def _statut_sans_agent(projet: Project | None) -> str:
     """Le statut `:fusion` d'une tâche que personne n'a prise (#1146).
 
     Un des statuts existants, et celui du régime du projet : l'écran les connaît
@@ -4952,30 +4952,30 @@ def _statut_sans_agent(projet: Projet | None) -> str:
     """
     if projet is None:
         return STATUT_PROJET_INTROUVABLE
-    if projet.versionne:
+    if projet.versioned:
         return STATUT_FUSION_NON_TENTEE
     return STATUT_ECRITURE_SANS_OBJET
 
 
-def _phrase_sans_agent(projet: Projet | None, projet_id: str | None) -> str:
+def _phrase_sans_agent(projet: Project | None, projet_id: str | None) -> str:
     """La phrase `:fusion` d'une tâche que personne n'a prise — rien n'a été écrit (#1146)."""
     if projet is None:
         return (
             f"aucun agent n'a pris cette tâche (à assigner), et le projet {projet_id} "
             "est introuvable dans le dépôt : rien n'a été écrit nulle part."
         )
-    if projet.versionne:
+    if projet.versioned:
         return (
             "aucun agent n'a pris cette tâche (à assigner) : aucune branche n'a été "
-            f"ouverte, rien n'est fusionné — {projet.racine} est intact."
+            f"ouverte, rien n'est fusionné — {projet.root} est intact."
         )
     return (
         f"aucun agent n'a pris cette tâche (à assigner) : rien n'a été écrit dans "
-        f"{projet.racine}."
+        f"{projet.root}."
     )
 
 
-def _ecriture_en_place(projet: Projet, result: TaskResult) -> tuple[str, str]:
+def _ecriture_en_place(projet: Project, result: TaskResult) -> tuple[str, str]:
     """Ce qui est arrivé à la racine d'un projet **non versionné** ; rend statut et phrase (#839).
 
     Rien n'est calculé sur le disque : le livrable de la tâche (`result.fichiers`,
@@ -4987,7 +4987,7 @@ def _ecriture_en_place(projet: Projet, result: TaskResult) -> tuple[str, str]:
     le vérificateur n'a pas pu juger (#1388) : elle est faite et recensée, et se
     dit comme celle d'une tâche réussie.
     """
-    racine = projet.racine
+    racine = projet.root
     if not result.ok and not result.verification_en_panne:
         return (
             STATUT_ECRITURE_EN_PLACE,

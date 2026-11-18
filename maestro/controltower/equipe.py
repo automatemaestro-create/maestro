@@ -12,7 +12,7 @@ ni fournisseur de modèle. Ce module n'ajoute que ce qui demande l'un des trois 
 1. il **résout le projet** avant de regarder le disque, comme
    `ServiceOutillage` — la route n'analyse jamais un chemin qu'on lui apporte,
    seulement la racine d'un projet déjà déclaré, donc déjà passée par
-   `valider_racine` (EF-38) ;
+   `validate_root` (EF-38) ;
 2. il **écrit les playbooks** par la mécanique de #257
    (`GenerateurDefinitionAgent`), seule couche à savoir appeler un modèle ;
 3. il **écrit l'équipe validée dans le projet** (#1040) — et c'est le seul verbe
@@ -85,8 +85,8 @@ from maestro.outillage.questionnaire import (
     recommandation_depuis_choix,
     source_manifeste_des_choix,
 )
-from maestro.projets import Projet
-from maestro.projets.racine import valider_racine
+from maestro.projects import Project
+from maestro.projects.root import validate_root
 from maestro.providers.base import ModelProvider
 from maestro.team import (
     PLAYBOOK_ORIGIN_GENERATED,
@@ -298,7 +298,7 @@ class ServiceEquipe:
         pourquoi il ne peut pas sortir de la dérivation ordinaire.
 
         Lève les refus **motivés** de ses couches (`ProjetInconnu`,
-        `ProjetIllisible`, `RacineRefusee`) — jamais un 500 : un projet qu'on ne
+        `ProjetIllisible`, `RootRejected`) — jamais un 500 : un projet qu'on ne
         sait pas lire n'est pas une panne. Et `ValueError` sur un renfort dont le
         gabarit n'est pas au catalogue : c'est un 422, pas un rôle inventé.
         """
@@ -368,7 +368,7 @@ class ServiceEquipe:
         try:
             texte = await self._compositeur_actif().ecrire(
                 correction_prompt(
-                    constats, recommandation, acquis, phrase, equipe, project_name=projet.nom
+                    constats, recommandation, acquis, phrase, equipe, project_name=projet.name
                 )
             )
             correction = correct_team(
@@ -437,7 +437,7 @@ class ServiceEquipe:
 
     async def _composer(
         self,
-        projet: Projet,
+        projet: Project,
         constats: Constats,
         recommandation: Recommandation,
         acquis: Sequence[Choix],
@@ -455,7 +455,7 @@ class ServiceEquipe:
         noms_pris = self._noms_pris(projet.id)
         try:
             texte = await self._compositeur_actif().ecrire(
-                composition_prompt(constats, recommandation, acquis, project_name=projet.nom)
+                composition_prompt(constats, recommandation, acquis, project_name=projet.name)
             )
             return propose_composed_team(
                 constats,
@@ -520,7 +520,7 @@ class ServiceEquipe:
         `proposer`.
         """
         projet = self._projets.entite(id_projet)
-        porte = _porte_dans(projet.racine_chemin)
+        porte = _porte_dans(projet.root_path)
         roles = [observed_skills(role, porte) for role in roles]
         cfg = self._gabarits.pour_projet(projet.id)
         blocages = rejected_roles(roles, taken_names=cfg.agents.noms())
@@ -602,7 +602,7 @@ class ServiceEquipe:
         )
 
     def _matiere(
-        self, projet: Projet, acquis: Sequence[Choix]
+        self, projet: Project, acquis: Sequence[Choix]
     ) -> tuple[Constats, Recommandation, dict[str, Any]]:
         """La matière de l'équipe : l'analyse sans réponses, les réponses sinon — bloquant.
 
@@ -615,26 +615,26 @@ class ServiceEquipe:
         return self._matiere_choisie(projet, acquis)
 
     def _matiere_analysee(
-        self, projet: Projet
+        self, projet: Project
     ) -> tuple[Constats, Recommandation, dict[str, Any]]:
         """Ce qu'un projet **existant** apprend de lui-même — bloquant, lecteur du disque.
 
-        Le périmètre déclaré du projet s'applique (`Projet.perimetre` retire
+        Le périmètre déclaré du projet s'applique (`Project.perimeter` retire
         d'office `.env` et `**/secrets/**`, docs/24 §2.5) : proposer une équipe
         ne peut pas lire les deux gisements de secrets d'un dépôt d'utilisateur,
         et ce n'est pas une précaution prise ici mais une propriété de ce qui est
         déclaré.
         """
         analyse: Analyse = analyser(
-            projet.racine_chemin,
+            projet.root_path,
             projet_id=projet.id,
-            perimetre=projet.perimetre,
+            perimetre=projet.perimeter,
             bornes=self._bornes,
         )
         return analyse.constats, analyse.recommandation, analyse.source_manifeste()
 
     def _matiere_choisie(
-        self, projet: Projet, acquis: Sequence[Choix]
+        self, projet: Project, acquis: Sequence[Choix]
     ) -> tuple[Constats, Recommandation, dict[str, Any]]:
         """Ce qu'un projet **neuf** doit à ses réponses — et les skills qu'il porte déjà.
 
@@ -652,7 +652,7 @@ class ServiceEquipe:
         return (
             constats_depuis_choix(acquis),
             _skills_au_disque(
-                recommandation_depuis_choix(acquis), _porte_dans(projet.racine_chemin)
+                recommandation_depuis_choix(acquis), _porte_dans(projet.root_path)
             ),
             source_manifeste_des_choix(projet.id, acquis),
         )
@@ -785,7 +785,7 @@ def _faits_pour_les_playbooks(
     )
 
 
-def choix_d_un_projet_decrit(projet: Projet) -> tuple[Choix, ...]:
+def choix_d_un_projet_decrit(projet: Project) -> tuple[Choix, ...]:
     """Les réponses d'où l'outillage d'un projet **encore vide** a été écrit — `()` sinon (#1350).
 
     Le fil propose l'équipe sans lui passer de réponses (la carte d'équipe n'en a pas) :
@@ -801,7 +801,7 @@ def choix_d_un_projet_decrit(projet: Projet) -> tuple[Choix, ...]:
     """
     if projet_a_ses_fichiers(projet):
         return ()
-    return choix_declares(valider_racine(projet.racine))
+    return choix_declares(validate_root(projet.root))
 
 
 def _porte_dans(racine: Path) -> Callable[[str], bool]:

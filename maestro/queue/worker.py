@@ -47,7 +47,7 @@ from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.runner import run_borne
 from maestro.engine.verification import VerificateurTaches
 from maestro.orchestrator.schema import Brief, Task, validate_brief, validate_task
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.queue.celery_app import EXECUTE_TASK_NAME
 from maestro.telemetry import RunJournal
@@ -202,7 +202,7 @@ def _get_executor() -> LocalExecutor:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
-            projets=ProjetStore.default(settings),
+            projets=ProjectStore.default(settings),
             # The agents of the task's project (#1038): a distributed worker routes
             # like the in-process engine, so it needs the same stores.
             agents_store=agents_store,

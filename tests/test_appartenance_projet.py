@@ -85,7 +85,7 @@ from maestro.controltower.state import ORDRE_PAUSE, ORDRE_REPRISE
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, StepUsage
 
@@ -369,7 +369,7 @@ def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture()
 def projets(maison: Path, tmp_path: Path) -> ServiceProjets:
     """Deux projets réellement **déclarés** : la portée n'accepte qu'eux (#277)."""
-    service = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    service = ServiceProjets(ProjectStore(tmp_path / "depot"))
     for nom in ("depensio", "autre"):
         (maison / nom).mkdir()
         service.creer(nom, str(maison / nom))

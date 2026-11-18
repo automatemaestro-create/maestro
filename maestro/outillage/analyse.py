@@ -11,7 +11,7 @@ sources d'un run sont des références attachées, pas une analyse.
 1. **Lecture seule.** Aucun `open` en écriture, aucune création de dossier :
    le module ne fait que `scandir`, `stat` et lire des fichiers nommés.
 2. **Aucune exécution.** Ni ici ni dans `maestro.outillage.detection` il n'y a
-   d'import de `subprocess`. Le VCS lui-même est **lu** — `detecter_vcs`
+   d'import de `subprocess`. Le VCS lui-même est **lu** — `detect_vcs`
    (#221) ouvre `HEAD` et `config` plutôt que d'appeler `git`, et c'est ce qui
    permet de s'appuyer dessus sans rouvrir la promesse.
 3. **Des bornes explicites.** `Bornes` voyage **dans la réponse** (nombre de
@@ -21,9 +21,9 @@ sources d'un run sont des références attachées, pas une analyse.
 
 ## Ce que le périmètre du projet y fait
 
-Les motifs `exclus` du projet déclaré (`Perimetre`, #221) s'appliquent **en
+Les motifs `exclus` du projet déclaré (`Perimeter`, #221) s'appliquent **en
 plus** des dossiers ignorés, avec le moteur de motifs existant
-(`maestro.projets.perimetre.motifs_compiles`) — jamais un second. Ils retirent
+(`maestro.projects.perimeter.compiled_patterns`) — jamais un second. Ils retirent
 d'office `.env` et `**/secrets/**` (docs/24 §2.5) : l'analyse ne peut donc pas
 lire les deux gisements de secrets d'un dépôt, et ce n'est pas une précaution
 prise ici mais une propriété du périmètre qu'on hérite.
@@ -108,9 +108,9 @@ from maestro.outillage.modele import (
     nouvel_id,
 )
 from maestro.outillage.recommandation import recommander
-from maestro.projets.modele import Perimetre, Vcs
-from maestro.projets.perimetre import motifs_compiles
-from maestro.projets.racine import RacineRefusee, detecter_vcs
+from maestro.projects.model import Perimeter, Vcs
+from maestro.projects.perimeter import compiled_patterns
+from maestro.projects.root import RootRejected, detect_vcs
 
 #: Jusqu'où un manifeste de gestionnaire est cherché sous la racine. Deux
 #: niveaux : de quoi attraper `apps/web/package.json` et `services/api/pyproject.toml`
@@ -144,31 +144,31 @@ def analyser(
     racine: Path | str,
     *,
     projet_id: str = "",
-    perimetre: Perimetre | None = None,
+    perimetre: Perimeter | None = None,
     bornes: Bornes | None = None,
 ) -> Analyse:
     """Analyse le projet posé sur `racine` et rend ce qu'il porte et ce qu'on lui recommande.
 
-    `perimetre` est celui du projet déclaré (`Projet.perimetre`) ; son défaut
+    `perimetre` est celui du projet déclaré (`Project.perimeter`) ; son défaut
     retire déjà `.git`, `node_modules`, `.env` et `**/secrets/**`. `bornes`
     permet de resserrer l'analyse (les tests s'en servent) ; son défaut est
     celui de `Bornes`, complété par `IGNORES_DEFAUT` quand aucun dossier ignoré
     n'est fourni — un appelant qui passe une liste vide la veut vide.
 
-    Lève `RacineRefusee` **motivée** si la racine n'est pas un dossier lisible
+    Lève `RootRejected` **motivée** si la racine n'est pas un dossier lisible
     (`dossier-absent`, `pas-un-dossier`) : c'est le même type de refus que le
     reste du paquet `projets`, donc le même chemin de traduction en code HTTP.
     """
     base = Path(racine).expanduser()
     if not base.exists():
-        raise RacineRefusee("dossier-absent", f"Dossier introuvable : {base}.", base)
+        raise RootRejected("dossier-absent", f"Dossier introuvable : {base}.", base)
     if not base.is_dir():
-        raise RacineRefusee(
+        raise RootRejected(
             "pas-un-dossier", f"Chemin invalide : {base} n'est pas un dossier.", base
         )
 
     bornes = _bornes(bornes)
-    perimetre = perimetre if perimetre is not None else Perimetre()
+    perimetre = perimetre if perimetre is not None else Perimeter()
     releve = _parcourir(base, perimetre, bornes)
     constats = _constater(base, bornes, releve)
     return Analyse(
@@ -402,17 +402,17 @@ def _bornes(bornes: Bornes | None) -> Bornes:
     return Bornes(ignores=IGNORES_DEFAUT)
 
 
-def _parcourir(base: Path, perimetre: Perimetre, bornes: Bornes) -> _Releve:
+def _parcourir(base: Path, perimetre: Perimeter, bornes: Bornes) -> _Releve:
     """Le parcours borné de la racine — itératif, déterministe, sans lire un contenu.
 
     Itératif parce que la pile de Python n'est pas le bon endroit où compter sur
     la profondeur d'un projet réel (le même parti pris que
-    `maestro.projets.perimetre.exclusions`), déterministe parce que deux
+    `maestro.projects.perimeter.exclusions`), déterministe parce que deux
     analyses du même projet doivent rendre le même relevé : entrées triées,
     borne atteinte notée, aucun lien symbolique suivi.
     """
     releve = _Releve()
-    motifs = motifs_compiles(perimetre.exclus)
+    motifs = compiled_patterns(perimetre.excluded)
     ignores = frozenset(bornes.ignores)
     pile: list[tuple[str, int]] = [("", 0)]
     while pile:
@@ -477,7 +477,7 @@ def _est_dossier(entree: os.DirEntry[str]) -> bool:
 
 def _constater(base: Path, bornes: Bornes, releve: _Releve) -> Constats:
     """Met le relevé en constats : langages, gestionnaires, commandes, CI, forge, conventions."""
-    vcs = detecter_vcs(base)
+    vcs = detect_vcs(base)
     gestionnaires, commandes = _gestionnaires_et_commandes(base, bornes, releve)
     commandes += _commandes_de_marqueurs(base)
     commandes += _commandes_par_defaut(base, releve, commandes)
@@ -768,10 +768,10 @@ def _forge(vcs: Vcs | None, ci: tuple[Piece, ...]) -> Forge | None:
     sur un dépôt sans remote dit « GitHub » avec raison, mais on ne peut pas en
     rendre l'URL. Les deux sortent avec le chemin qui les a fait dire.
     """
-    if vcs is not None and vcs.distant:
-        nom = forge_depuis_distant(vcs.distant)
+    if vcs is not None and vcs.remote:
+        nom = forge_depuis_distant(vcs.remote)
         if nom is not None:
-            return Forge(nom=nom, distant=vcs.distant, chemin=".git/config")
+            return Forge(nom=nom, distant=vcs.remote, chemin=".git/config")
     for piece in ci:
         nom = _FORGE_PAR_CI.get(piece.nom)
         if nom is not None:

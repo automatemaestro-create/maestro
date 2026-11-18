@@ -45,8 +45,8 @@ from maestro.engine.executor import (
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
-from maestro.projets.modele import Projet
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Project
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
 from maestro.telemetry import RunJournal
@@ -91,9 +91,9 @@ def _git(racine: Path, *arguments: str) -> str:
     return resultat.stdout
 
 
-def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
+def _projet_git(tmp_path: Path) -> tuple[ProjectStore, Project]:
     """Un dépôt de projets et un projet **versionné** : dépôt jetable, un commit, VCS détecté."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     racine = tmp_path / "projets" / "agenda"
     racine.mkdir(parents=True)
     (racine / "README.md").write_text("# Agenda\n", encoding="utf-8")
@@ -111,8 +111,8 @@ def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
         "-m",
         "socle",
     )
-    projet = depot.creer("Agenda", racine)
-    assert projet.versionne, projet
+    projet = depot.create("Agenda", racine)
+    assert projet.versioned, projet
     return depot, projet
 
 
@@ -178,7 +178,7 @@ def _tache(id_: str, projet_id: str, livrable: str) -> Task:
 
 
 def _executeur(
-    fournisseur: ModelProvider, depot: ProjetStore, validateur: Validateur | None
+    fournisseur: ModelProvider, depot: ProjectStore, validateur: Validateur | None
 ) -> LocalExecutor:
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
     return LocalExecutor(
@@ -227,7 +227,7 @@ def test_un_run_demande_une_fois_avec_le_diff_et_son_origine(tmp_path: Path) -> 
     )
 
     assert all(r.ok for r in resultats)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     # Les deux fusions ont eu lieu : le projet a avancé tâche par tâche.
     assert (racine / "t1.md").read_text(encoding="utf-8") == "fait"
     assert (racine / "t2.md").read_text(encoding="utf-8") == "fait"
@@ -240,8 +240,8 @@ def test_un_run_demande_une_fois_avec_le_diff_et_son_origine(tmp_path: Path) -> 
     assert demande.run_id == "run-706"
     assert demande.projet_id == projet.id
     assert demande.diff is not None
-    assert demande.diff.branche == branche_de_tache("t1")
-    assert demande.diff.fichiers == 1
+    assert demande.diff.branch == branche_de_tache("t1")
+    assert demande.diff.files == 1
     assert "fusions suivantes" in demande.raison
     # La décision est au journal, sur la tâche qui l'a obtenue — et nulle part ailleurs.
     assert _etape(journal, "t1", ":validation").statut == STATUT_VALIDATION_APPROUVE
@@ -293,7 +293,7 @@ def test_un_refus_vaut_pour_le_run_et_ne_perd_rien(tmp_path: Path) -> None:
 
     # Le sort du projet n'est pas le verdict de la tâche (critère de #705).
     assert all(r.ok for r in resultats)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert not (racine / "t1.md").exists()
     assert not (racine / "t2.md").exists()
     assert _git(racine, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
@@ -320,7 +320,7 @@ def test_sans_validateur_le_fail_safe_refuse_et_la_branche_reste(tmp_path: Path)
     (resultat,) = asyncio.run(_joue(executeur, journal, _tache("t1", projet.id, "t1.md")))
 
     assert resultat.ok
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert not (racine / "t1.md").exists()
     assert _sur_la_branche(racine, "t1", "t1.md") == "fait"
     etape = _etape(journal, "t1", ":fusion")
@@ -345,7 +345,7 @@ def test_un_run_interrompu_pendant_l_attente_laisse_la_branche_et_le_dit(tmp_pat
 
     asyncio.run(scenario())
 
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert not (racine / "t1.md").exists()
     assert _sur_la_branche(racine, "t1", "t1.md") == "fait"
     etape = _etape(journal, "t1", ":fusion")
@@ -414,7 +414,7 @@ def _moteur(
 
 
 def _eteint_pendant_t2(
-    depot: ProjetStore, projet: Projet, validateur: Validateur | None
+    depot: ProjectStore, projet: Project, validateur: Validateur | None
 ) -> MagasinAcquisMemoire:
     """Lance le run, laisse t1 fusionner (ou non), et l'éteint pendant t2."""
     magasin = MagasinAcquisMemoire()
@@ -435,7 +435,7 @@ def _eteint_pendant_t2(
 
 
 def _reprend(
-    depot: ProjetStore, projet: Projet, magasin: MagasinAcquisMemoire, validateur: Validateur
+    depot: ProjectStore, projet: Project, magasin: MagasinAcquisMemoire, validateur: Validateur
 ) -> RunJournal:
     """Rallume et reprend le run sur son plan : un exécuteur **neuf**, le même `run_id`."""
     journal = RunJournal(run_id=RUN_REPRIS)
@@ -458,7 +458,7 @@ def test_l_accord_donne_avant_l_extinction_vaut_pour_le_run_repris(tmp_path: Pat
     depot, projet = _projet_git(tmp_path)
     avant = _Validateur(True)
     magasin = _eteint_pendant_t2(depot, projet, avant)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert len(avant.demandes) == 1
     assert (racine / "t1.md").read_text(encoding="utf-8") == "fait"
 
@@ -481,7 +481,7 @@ def test_un_refus_de_la_personne_vaut_aussi_pour_le_run_repris(tmp_path: Path) -
     journal = _reprend(depot, projet, magasin, apres)
 
     assert apres.demandes == []
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert not (racine / "t2.md").exists()
     assert _sur_la_branche(racine, "t2", "t2.md") == "fait"
     seconde = _etape(journal, "t2", ":fusion")
@@ -506,7 +506,7 @@ def test_un_refus_par_defaut_ne_survit_pas_a_la_reprise(tmp_path: Path) -> None:
     (demande,) = apres.demandes
     assert (demande.task_id, demande.run_id) == ("t2", RUN_REPRIS)
     assert _etape(journal, "t2", ":fusion").statut == STATUT_FUSION_FAITE
-    assert (Path(projet.racine) / "t2.md").read_text(encoding="utf-8") == "fait"
+    assert (Path(projet.root) / "t2.md").read_text(encoding="utf-8") == "fait"
 
 
 def test_un_accord_qui_ne_se_range_pas_ne_fait_pas_echouer_le_run(tmp_path: Path) -> None:
@@ -533,6 +533,6 @@ def test_un_accord_qui_ne_se_range_pas_ne_fait_pas_echouer_le_run(tmp_path: Path
 
     assert all(r.ok for r in rapport.resultats)
     assert len(validateur.demandes) == 1
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert (racine / "t1.md").read_text(encoding="utf-8") == "fait"
     assert (racine / "t2.md").read_text(encoding="utf-8") == "fait"

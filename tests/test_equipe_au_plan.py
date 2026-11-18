@@ -1297,7 +1297,7 @@ def workshop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The folder where projects are born, under a fake user folder.
 
     Same reason as in #221: under Windows pytest's `tmp_path` lives in
-    `AppData/Local/Temp`, which `valider_racine` rightly refuses.
+    `AppData/Local/Temp`, which `validate_root` rightly refuses.
     """
     home_dir = tmp_path / "maison"
     home_dir.mkdir()
@@ -1339,13 +1339,13 @@ def _project_client(tmp_path: Path, workshop: Path) -> Any:
     from maestro.controltower.app import create_app
     from maestro.controltower.events import InMemoryEventBus
     from maestro.controltower.projets import ServiceProjets
-    from maestro.projets import ProjetStore
+    from maestro.projects import ProjectStore
 
     return TestClient(
         create_app(
             bus=InMemoryEventBus(),
             projets=ServiceProjets(
-                ProjetStore(tmp_path / "depot"), racines_exploration=(workshop,)
+                ProjectStore(tmp_path / "depot"), racines_exploration=(workshop,)
             ),
             agents_store=AgentStore(tmp_path / "agents"),
             generateur_agent=_OfflineGenerator(),

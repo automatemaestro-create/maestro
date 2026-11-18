@@ -72,7 +72,7 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.outillage.recommandation import recommander
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 
 # --- Le faux fournisseur, et ce qu'un modèle rendrait ---------------------------------
@@ -1014,7 +1014,7 @@ def atelier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Le dossier explorable des tests, sous un dossier utilisateur factice.
 
     Même raison qu'en #221 : sous Windows le `tmp_path` de pytest vit dans
-    `AppData/Local/Temp`, que `valider_racine` refuse à raison.
+    `AppData/Local/Temp`, que `validate_root` refuse à raison.
     """
     maison = tmp_path / "maison"
     maison.mkdir()
@@ -1036,7 +1036,7 @@ def client_projets(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(atelier,)),
         comprehension=ComprehensionModele(faux_terraform),
     )
     with TestClient(app) as client:
@@ -1142,7 +1142,7 @@ def test_un_fournisseur_en_panne_est_une_502_nommee(tmp_path: Path, atelier: Pat
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(atelier,)),
         comprehension=ComprehensionModele(_EnPanne()),
     )
     with TestClient(app) as client:

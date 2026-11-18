@@ -39,7 +39,7 @@ FROM python:3.11
 # AUCUNE IDENTITÉ GIT GLOBALE — la seconde moitié de #333, et elle est indissociable de la première.
 #
 # Poser un `user.name`/`user.email` global ici remasquerait EXACTEMENT le bug que #332 a trouvé : la
-# fusion de `maestro/projets/application.py` n'échouait que sur les machines sans `~/.gitconfig`,
+# fusion de `maestro/projects/apply.py` n'échouait que sur les machines sans `~/.gitconfig`,
 # c'est-à-dire nulle part où quelqu'un regardait. On ne pose donc rien, et les tests qui ont besoin
 # d'une identité la posent sur leur dépôt jetable, localement, comme ils le font déjà.
 #
@@ -82,7 +82,7 @@ RUN mkdir -p /src/maestro \
 # ─────────────────────────────────────────────────────────────────────────────
 # LE DÉPÔT NE SE MONTE PAS À LA RACINE — trouvé par les tests, à ne pas défaire.
 #
-# Monté à `/w`, le PARENT du dépôt est `/`, et `test_projets.py::test_depot_maestro_refuse` reçoit
+# Monté à `/w`, le PARENT du dépôt est `/`, et `test_projets.py::test_maestro_repository_rejected` reçoit
 # `racine-de-disque` là où il attend `au-dessus-du-depot-maestro` : un rouge qui ne dit rien du code
 # et tout du point de montage. Deux niveaux suffisent, et `local.sh` monte à `/maestro/depot`.
 WORKDIR /maestro/depot

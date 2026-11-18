@@ -44,7 +44,7 @@ from maestro.engine.verification import (
 )
 from maestro.fichiers import retirer_arbre
 from maestro.orchestrator.schema import Task
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import LieuSansTrace, espace_de_travail
 from maestro.sandbox import verification as execution
@@ -74,13 +74,13 @@ def _contenus(racine: Path) -> dict[str, bytes]:
     return {relatif: (racine / relatif).read_bytes() for relatif in _arborescence(racine)}
 
 
-def _projet(racine: Path) -> Projet:
-    return Projet(
+def _projet(racine: Path) -> Project:
+    return Project(
         id="prj-0000beef",
-        nom="Calculs",
-        racine=racine.as_posix(),
+        name="Calculs",
+        root=racine.as_posix(),
         vcs=None,
-        perimetre=Perimetre(),
+        perimeter=Perimeter(),
     )
 
 

@@ -31,7 +31,7 @@ copié du modèle) ne compte pas comme renseignée.
 Le fichier vit dans le dépôt des réglages du poste (`MAESTRO_REGLAGES_DIR`, à
 défaut `reglages/` de la configuration — le `core/` d'un clone, l'état du poste
 d'une installation, #1620), à côté du répertoire des projets
-(`maestro.projets.reglages`).
+(`maestro.projects.settings`).
 """
 
 from __future__ import annotations

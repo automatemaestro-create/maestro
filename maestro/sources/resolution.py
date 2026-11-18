@@ -3,9 +3,9 @@
 The active counterpart of `maestro.sources.model`: what a **declared** source
 becomes once confronted with the disk, the network and the run's caps. Three
 resolutions, one per type, and a shared principle: **a refusal carries its
-reason**, never a silence nor a `False` (same contract as `RacineRefusee`, #221):
+reason**, never a silence nor a `False` (same contract as `RootRejected`, #221):
 
-- **dossier**: goes through `valider_racine` (#221), the existing root
+- **dossier**: goes through `validate_root` (#221), the existing root
   validation: canonicalisation (`..` flattened, links followed) then
   confrontation with the list of **forbidden roots** (disk root, bare user
   directory, `.ssh`/`AppData`, system directories, Maestro's repository). A
@@ -43,7 +43,7 @@ from typing import Any
 from maestro.config import Settings, load_settings
 from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.projets.racine import RacineRefusee, chemin_dans_racine, valider_racine
+from maestro.projects.root import RootRejected, path_in_root, validate_root
 from maestro.references import SCHEMAS_URL
 from maestro.sources.model import (
     MAX_NAME_LENGTH,
@@ -79,7 +79,7 @@ _FORBIDDEN_NAME_CHARACTERS = frozenset('/\\<>:"|?*')
 def ingestion_root(settings: Settings | None = None) -> Path:
     """The ingestion root: `MAESTRO_INGESTION_DIR`, otherwise the configuration's `ingestion/`.
 
-    Same pattern as the other stores (`maestro.projets.store`,
+    Same pattern as the other stores (`maestro.projects.store`,
     `maestro.agents.store`): the `core/` of a clone, the workstation state of an
     installation (`maestro.emplacements.racine_configuration`, #1620), movable by
     the environment for whoever keeps their data elsewhere. Nothing is created
@@ -123,11 +123,11 @@ def ingestion_location(
             f"Identifiant de run inutilisable comme dossier d'ingestion : {run_id!r}.",
         )
     root = ingestion_root(settings)
-    # `chemin_dans_racine` (#221) rather than a `root / identifier`: the pattern
+    # `path_in_root` (#221) rather than a `root / identifier`: the pattern
     # above already bounds the identifier, but the second half of EF-38 is
     # written once and for all and can be re-read: the day the pattern changes,
     # it is the one still holding.
-    location = chemin_dans_racine(root, identifier)
+    location = path_in_root(root, identifier)
     if project_root is not None:
         _refuse_inside_project(location, project_root)
     if create:
@@ -276,13 +276,13 @@ def _resolve_directory(data: Mapping[str, Any], *, index: int, name: str) -> Sou
             "chemin-absent", f"Source {index + 1} : chemin de dossier manquant.", index=index
         )
     try:
-        resolved = valider_racine(raw)
-    except RacineRefusee as exc:
+        resolved = validate_root(raw)
+    except RootRejected as exc:
         # The root validation's reason is **kept** as is (`chemin-sensible`,
         # `racine-de-disque`, `dossier-absent`…): it is a stable code the UI
         # already translates (docs/05 §2.7), and renaming it would make two
         # vocabularies diverge for one refusal.
-        raise SourceRejected(exc.motif, f"Source {index + 1} : {exc}", index=index) from exc
+        raise SourceRejected(exc.reason, f"Source {index + 1} : {exc}", index=index) from exc
     return Source(
         type=TYPE_DIRECTORY,
         name=name or resolved.name,
@@ -308,9 +308,9 @@ def _resolve_file(
     clean_name = file_name(name or str(data.get("chemin") or ""), index=index)
     size = _size(data.get("taille"), index=index, guardrails=guardrails)
     location = ingestion_location(run_id, settings=settings, project_root=project_root)
-    # Second net: the name has just been sanitised, but it is `chemin_dans_racine`
+    # Second net: the name has just been sanitised, but it is `path_in_root`
     # (#221) that **proves** the destination stays under the run's location.
-    destination = chemin_dans_racine(location, clean_name)
+    destination = path_in_root(location, clean_name)
     return Source(
         type=TYPE_FILE,
         name=clean_name,
@@ -386,15 +386,15 @@ def _size(raw: Any, *, index: int, guardrails: GardeFousIngestion) -> int:
 def _refuse_inside_project(location: Path, project_root: Path | str) -> None:
     """Refuses an ingestion location situated **inside** the project root.
 
-    The check is written upside down: `chemin_dans_racine` (#221) usually
+    The check is written upside down: `path_in_root` (#221) usually
     verifies that a path **stays** under a root, and here its success means
     refusal: an ingestion location valid in the project's sense is an ingestion
     location **inside** the project. Writing it so avoids copying the
     canonicalised path comparison, and so seeing it diverge.
     """
     try:
-        chemin_dans_racine(project_root, location)
-    except RacineRefusee:
+        path_in_root(project_root, location)
+    except RootRejected:
         return  # outside the project: exactly what we want.
     raise SourceRejected(
         "ingestion-dans-le-projet",

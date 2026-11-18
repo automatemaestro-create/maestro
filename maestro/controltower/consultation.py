@@ -49,8 +49,8 @@ caractères, et un contrat écrit dans cette chaîne est le seul qui vaille part
   résolue. Un `../` , un chemin absolu, un lien vers `~/.ssh` : refusés, et le
   refus se **dit** au lieu de rendre un vide qui se lirait comme « rien trouvé » ;
 - **il ne lit pas les secrets** — les motifs `exclus` du projet s'appliquent
-  (`maestro.projets.perimetre.exclu_par`), et ils retirent d'office `.env` et
-  `**/secrets/**` (`EXCLUS_DEFAUT`, docs/24 §2.5). Ce n'est pas une précaution
+  (`maestro.projects.perimeter.excluded_by`), et ils retirent d'office `.env` et
+  `**/secrets/**` (`DEFAULT_EXCLUDED`, docs/24 §2.5). Ce n'est pas une précaution
   prise ici : c'est la propriété du périmètre, héritée, comme pour l'analyse d'un
   projet (#1158) ;
 - **il ne rend jamais tout** — chaque lecture est bornée (entrées, octets,
@@ -72,8 +72,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from maestro.projets.modele import Projet
-from maestro.projets.perimetre import exclu_par
+from maestro.projects.model import Project
+from maestro.projects.perimeter import excluded_by
 
 #: Le marqueur d'une demande de lecture. Même famille que le `%%MAESTRO%%` de
 #: #1222 — une suite ASCII qu'aucune phrase française ne produit — et **différent
@@ -247,7 +247,7 @@ def demandes_de(texte: str) -> tuple[Demande, ...]:
 #: Résout le projet de la fenêtre — `None` quand il n'y en a pas, qu'il est
 #: inconnu ou illisible. Le câblage la branche sur `ServiceProjets.entite`, seul
 #: lecteur de projets de la Control Tower : ce module ne relit aucun dépôt.
-ProjetDeLaFenetre = Callable[[str], Projet | None]
+ProjetDeLaFenetre = Callable[[str], Project | None]
 
 #: Rend le détail complet d'un run — ses tâches, leurs détails **non tronqués**.
 #: `""` quand le run est inconnu. Branché sur la projection, comme
@@ -304,7 +304,7 @@ class Consultations:
 
     # --- les quatre verbes -------------------------------------------------
 
-    def _executer_lister(self, projet: Projet, base: Path, demande: Demande) -> Lecture:
+    def _executer_lister(self, projet: Project, base: Path, demande: Demande) -> Lecture:
         """Les entrées d'un dossier, dossiers d'abord, bornées."""
         brut = demande.arguments.get("chemin", "")
         relatif = _relatif(brut)
@@ -338,7 +338,7 @@ class Consultations:
             corps += f"\n… et {reste} autre(s) entrée(s), non montrées ici."
         return Lecture(libelle=libelle, contenu=corps)
 
-    def _executer_lire(self, projet: Projet, base: Path, demande: Demande) -> Lecture:
+    def _executer_lire(self, projet: Project, base: Path, demande: Demande) -> Lecture:
         """Le contenu d'un fichier, borné à `_OCTETS_MAX` et coupé **en le disant**."""
         brut = demande.arguments.get("chemin", "")
         relatif = _relatif(brut)
@@ -359,7 +359,7 @@ class Consultations:
             texte += f"\n… (fichier coupé à {_OCTETS_MAX} octets sur {len(octets)})"
         return Lecture(libelle=libelle, contenu=texte)
 
-    def _executer_chercher(self, projet: Projet, base: Path, demande: Demande) -> Lecture:
+    def _executer_chercher(self, projet: Project, base: Path, demande: Demande) -> Lecture:
         """Les lignes du projet qui contiennent `motif` — chemin, numéro, ligne.
 
         La recherche est **littérale et insensible à la casse**, jamais une
@@ -429,7 +429,7 @@ class Consultations:
 
     # --- la frontière ------------------------------------------------------
 
-    def _racine(self, projet_id: str | None) -> tuple[Projet, Path] | None:
+    def _racine(self, projet_id: str | None) -> tuple[Project, Path] | None:
         """Le projet de la fenêtre et sa racine **résolue** — `None` s'il n'y en a pas."""
         if not projet_id or self._projet is None:
             return None
@@ -440,7 +440,7 @@ class Consultations:
         if projet is None:
             return None
         try:
-            base = projet.racine_chemin.resolve(strict=True)
+            base = projet.root_path.resolve(strict=True)
         except OSError:
             return None
         return (projet, base) if base.is_dir() else None
@@ -485,7 +485,7 @@ def _relatif(brut: str) -> str:
     return "" if nettoye == "." else nettoye
 
 
-def _sous(base: Path, brut: str, projet: Projet) -> Path | None:
+def _sous(base: Path, brut: str, projet: Project) -> Path | None:
     """La cible de `brut` sous `base`, ou `None` si la frontière la refuse.
 
     Trois refus, une seule réponse — c'est l'unique porte par laquelle un chemin
@@ -496,7 +496,7 @@ def _sous(base: Path, brut: str, projet: Projet) -> Path | None:
       suit les liens symboliques — un lien vers `~/.ssh` résout dehors et tombe
       ici. C'est le vecteur d'évasion de docs/24 §2.5, fermé par une comparaison
       plutôt que par une liste de cas ;
-    - **exclu du périmètre** : `.env`, `secrets/`, `.git`… (`EXCLUS_DEFAUT`).
+    - **exclu du périmètre** : `.env`, `secrets/`, `.git`… (`DEFAULT_EXCLUDED`).
     """
     if _ABSOLU.match(brut.strip().replace("\\", "/")):
         return None
@@ -510,16 +510,16 @@ def _sous(base: Path, brut: str, projet: Projet) -> Path | None:
     return cible if cible == base or cible.is_relative_to(base) else None
 
 
-def _refuse(relatif: str, projet: Projet) -> bool:
+def _refuse(relatif: str, projet: Project) -> bool:
     """Le périmètre du projet retire-t-il ce chemin ? (`.env`, `secrets/`, `.git`…)"""
-    return bool(relatif) and exclu_par(relatif, projet.perimetre)
+    return bool(relatif) and excluded_by(relatif, projet.perimeter)
 
 
-def _fichiers_texte(depart: Path, base: Path, projet: Projet) -> Sequence[Path]:
+def _fichiers_texte(depart: Path, base: Path, projet: Project) -> Sequence[Path]:
     """Les fichiers texte sous `depart`, périmètre appliqué, ordre déterministe.
 
     Parcours itératif et trié, qui **ne descend jamais** dans un chemin exclu —
-    la règle de `maestro.projets.perimetre`, tenue ici parce que descendre dans un
+    la règle de `maestro.projects.perimeter`, tenue ici parce que descendre dans un
     `node_modules` pour n'en rien rendre coûterait la recherche entière.
     """
     fichiers: list[Path] = []

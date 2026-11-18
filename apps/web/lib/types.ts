@@ -495,7 +495,7 @@ export type Question = {
 };
 
 /**
- * Un fichier du diff d'application (#227, `Modification.to_dict`) : le chemin
+ * Un fichier du diff d'application (#227, `FileChange.to_dict`) : le chemin
  * **relatif à la racine du projet**, ce qui lui arrive, et de combien de lignes.
  * `ajouts`/`suppressions` valent 0 quand `binaire` est vrai — on sait alors que
  * le fichier change, pas de combien.
@@ -510,7 +510,7 @@ export type ModificationProjet = {
 
 /**
  * Ce qu'une application écrirait dans le projet de l'utilisateur (#227, EF-37,
- * `DiffProjet.to_dict`) — la pièce jointe d'une demande de validation dont la
+ * `ProjectDiff.to_dict`) — la pièce jointe d'une demande de validation dont la
  * question est « applique-t-on ceci ? ». `branche` et `base` ne sont renseignées
  * que pour un projet **versionné** : l'accord y vaut fusion de `branche` vers
  * `base`, là où un projet non versionné voit ses fichiers recopiés dans la racine.
@@ -3728,7 +3728,7 @@ export type RefusProjet = {
   message: string;
   /**
    * Porté par `hors-racines-explorables` seulement (#1610) : le dossier refusé
-   * peut-il s'autoriser d'ici ? `refus` à `null` dit que `valider_racine`
+   * peut-il s'autoriser d'ici ? `refus` à `null` dit que `validate_root`
    * l'accepterait — l'écran propose alors le geste ; sinon il dit pourquoi.
    */
   autorisation?: AutorisationDossier;

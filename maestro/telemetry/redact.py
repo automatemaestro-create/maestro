@@ -72,7 +72,7 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     # A private key (SSH, TLS, PGP), whole block, first: it is not recognized by
     # a prefix but by its framing, and the pattern masks it in one piece before
     # the others bite into it. Since sources are read by content (#1163), an
-    # extensionless `id_rsa` — which no `porte_des_secrets` name flags — comes in
+    # extensionless `id_rsa` — which no `holds_secrets` name flags — comes in
     # as text: this is where it stops (#1264). A block cut before its `END`
     # (truncated read) is masked to the end. Certificates and public keys stay
     # readable: they are not secret, and a deliverable publishes them on purpose.

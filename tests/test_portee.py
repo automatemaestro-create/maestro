@@ -69,7 +69,7 @@ from maestro.portee import (
     PorteeProjet,
     hors_de_portee,
 )
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers import claude as claude_mod
 from maestro.sandbox.en_place import portee_de, presents_de
 from maestro.shell import lis
@@ -112,7 +112,7 @@ def test_un_projet_neuf_n_a_rien_a_proteger(tmp_path: Path) -> None:
     """Le relevé d'un dossier vide est vide, y compris sa racine : `rm -rf .` sur
     un projet neuf ne détruit rien, et faire attendre une personne pour cela
     serait exactement le défaut qu'on corrige."""
-    assert presents_de(tmp_path, Perimetre()) == frozenset()
+    assert presents_de(tmp_path, Perimeter()) == frozenset()
 
 
 def test_la_portee_ne_referme_pas_ce_que_la_dispense_de_lecture_a_ouvert(
@@ -583,7 +583,7 @@ def test_la_portee_releve_ce_qui_etait_la_en_ecriture_en_place(tmp_path: Path) -
     racine = tmp_path / "projet"
     (racine / "src").mkdir(parents=True)
     (racine / "src" / "app.py").write_text("print()", encoding="utf-8")
-    projet = Projet(id="prj-1", nom="p", racine=racine.as_posix())
+    projet = Project(id="prj-1", name="p", root=racine.as_posix())
 
     portee = portee_de(racine, projet)
 
@@ -600,7 +600,7 @@ def test_hors_de_la_racine_du_projet_rien_n_est_releve(tmp_path: Path) -> None:
     (racine / "notes.md").write_text("x", encoding="utf-8")
     espace = tmp_path / "worktree"
     espace.mkdir()
-    projet = Projet(id="prj-1", nom="p", racine=racine.as_posix())
+    projet = Project(id="prj-1", name="p", root=racine.as_posix())
 
     portee = portee_de(espace, projet)
 

@@ -646,7 +646,7 @@ def _corps_projet(
     if constats.vcs is not None:
         lignes.append(
             f"- **Versions** : {constats.vcs.type}, branche de base "
-            f"`{constats.vcs.branche_base or '(HEAD détaché)'}`."
+            f"`{constats.vcs.base_branch or '(HEAD détaché)'}`."
         )
     if not lignes:
         lignes.append(

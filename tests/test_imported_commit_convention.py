@@ -61,17 +61,17 @@ from maestro.outillage.modele import (
 )
 from maestro.outillage.questionnaire import convention_de_la_source
 from maestro.outillage.verification import Verificateur
-from maestro.projets import Projet, ProjetStore
-from maestro.projets.application import ignore_par_le_projet
-from maestro.projets.commits import (
-    PIED_MAX,
-    SUJET_MAX,
-    RedacteurDeCommits,
-    message_lisible,
-    prompt_du_message,
+from maestro.projects import Project, ProjectStore
+from maestro.projects.apply import ignored_by_project
+from maestro.projects.commits import (
+    FOOTER_MAX,
+    SUBJECT_MAX,
+    CommitDrafter,
+    message_prompt,
+    readable_message,
 )
-from maestro.projets.modele import Perimetre
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects.model import Perimeter
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
 from maestro.sandbox import verification as execution
@@ -255,7 +255,7 @@ def _read(root: Path, reader: _Reader):
     """The reading played to its end, as the Control Tower plays it."""
     return asyncio.run(
         lire_le_projet(
-            analyser(root), perimetre=Perimetre(), provider=reader, modele="modele-du-test"
+            analyser(root), perimetre=Perimeter(), provider=reader, modele="modele-du-test"
         )
     )
 
@@ -267,7 +267,7 @@ def _pieces(projets: ServiceProjets, reader: _Reader, writer: _Writer) -> Servic
         verificateur=Verificateur(joueur=_Player(), interprete=FAKE_BASH),
         correction=CorrectionModele(reader),
     )
-    service._redacteur = RedacteurDeCommits(writer, modele="modele-du-test")
+    service._redacteur = CommitDrafter(writer, model="modele-du-test")
     return service
 
 
@@ -391,7 +391,7 @@ def test_the_agent_is_told_the_imported_convention_and_the_reference_rule(tmp_pa
             }
         ),
     )
-    project = Projet(id="prj-0000dead", nom="Dépensio", racine=root.as_posix())
+    project = Project(id="prj-0000dead", name="Dépensio", root=root.as_posix())
 
     tooling = outillage_du_projet(project)
     consigne = tooling.consigne()
@@ -417,7 +417,7 @@ def test_without_a_convention_the_consigne_says_nothing_of_commits(tmp_path: Pat
             }
         ),
     )
-    project = Projet(id="prj-0000dead", nom="Dépensio", racine=root.as_posix())
+    project = Project(id="prj-0000dead", name="Dépensio", root=root.as_posix())
 
     assert TITRE_CONVENTION_DE_COMMIT not in outillage_du_projet(project).consigne()
 
@@ -428,38 +428,38 @@ def test_without_a_convention_the_consigne_says_nothing_of_commits(tmp_path: Pat
 
 
 def test_the_writer_keeps_a_footer_and_drops_what_is_not_one() -> None:
-    assert message_lisible("fix(fil): corrige le refus\n\nRefs #1592") == (
+    assert readable_message("fix(fil): corrige le refus\n\nRefs #1592") == (
         "fix(fil): corrige le refus\n\nRefs #1592"
     )
     # Fences, quotes and blank lines are what a model puts around an answer.
-    assert message_lisible("```\nfix: a\n\nRefs #1\n```") == "fix: a\n\nRefs #1"
-    assert message_lisible("fix: a") == "fix: a"
+    assert readable_message("```\nfix: a\n\nRefs #1\n```") == "fix: a\n\nRefs #1"
+    assert readable_message("fix: a") == "fix: a"
     # More lines than a footer, or a paragraph: the subject stays alone.
-    too_many = "\n".join(["fix: a", *(f"Refs #{n}" for n in range(PIED_MAX + 1))])
-    assert message_lisible(too_many) == "fix: a"
-    assert message_lisible("fix: a\n\n" + "z" * (SUJET_MAX + 1)) == "fix: a"
+    too_many = "\n".join(["fix: a", *(f"Refs #{n}" for n in range(FOOTER_MAX + 1))])
+    assert readable_message(too_many) == "fix: a"
+    assert readable_message("fix: a\n\n" + "z" * (SUBJECT_MAX + 1)) == "fix: a"
     # No subject, no message: Maestro keeps its own.
-    assert message_lisible("") == ""
-    assert message_lisible("z" * (SUJET_MAX + 1)) == ""
+    assert readable_message("") == ""
+    assert readable_message("z" * (SUBJECT_MAX + 1)) == ""
 
 
 def test_the_writer_sees_the_demand_and_is_told_never_to_invent_a_reference() -> None:
-    prompt = prompt_du_message(CONVENTION, "fusionne la branche", demande="Corriger #1592")
+    prompt = message_prompt(CONVENTION, "fusionne la branche", request="Corriger #1592")
 
     assert "<demande>Corriger #1592</demande>" in prompt
-    assert "<demande>" not in prompt_du_message(CONVENTION, "fusionne la branche")
+    assert "<demande>" not in message_prompt(CONVENTION, "fusionne la branche")
 
-    from maestro.projets.commits import SYSTEME
+    from maestro.projects.commits import SYSTEM
 
-    assert "N'invente jamais" in SYSTEME and "pied" in SYSTEME
+    assert "N'invente jamais" in SYSTEM and "pied" in SYSTEM
 
 
 def test_the_writer_returns_the_subject_and_the_footer_it_was_given() -> None:
     writer = _Writer("fix(fil): corrige le refus\n\nRefs #1592")
 
     message = asyncio.run(
-        RedacteurDeCommits(writer, modele="m").message(
-            convention=CONVENTION, changement="fusionne", demande="Objectif : #1592"
+        CommitDrafter(writer, model="m").message(
+            convention=CONVENTION, change="fusionne", request="Objectif : #1592"
         )
     )
 
@@ -501,8 +501,8 @@ def test_a_run_merge_follows_the_imported_convention_and_cites_the_ticket(
         ),
     )
     _commit_all(root, "chore(outillage): outillage\n\nRefs #1")
-    store = ProjetStore(tmp_path / "depot")
-    project = store.creer("Dépensio", root)
+    store = ProjectStore(tmp_path / "depot")
+    project = store.create("Dépensio", root)
     agent = _Agent()
     writer = _Writer("fix(fil): corrige le refus d'un dossier\n\nRefs #1592")
     executor = LocalExecutor(
@@ -511,7 +511,7 @@ def test_a_run_merge_follows_the_imported_convention_and_cites_the_ticket(
         projets=store,
         guardrails=Guardrails(validateur=_Approves()),
     )
-    executor._redacteur = RedacteurDeCommits(writer, modele="modele-du-test")
+    executor._redacteur = CommitDrafter(writer, model="modele-du-test")
     journal = RunJournal(run_id="run-1679")
     executor.retient_le_brief(
         journal.run_id,
@@ -558,12 +558,12 @@ def test_a_run_merge_follows_the_imported_convention_and_cites_the_ticket(
 def test_git_says_whether_the_project_ignores_its_manifest(_home: Path) -> None:
     ignoring = _imported_repository(_home, ignores_maestro=True)
 
-    assert ignore_par_le_projet(ignoring, CHEMIN_MANIFESTE)
+    assert ignored_by_project(ignoring, CHEMIN_MANIFESTE)
 
     tracking = _imported_repository(_home / "autre", ignores_maestro=False)
-    assert not ignore_par_le_projet(tracking, CHEMIN_MANIFESTE)
+    assert not ignored_by_project(tracking, CHEMIN_MANIFESTE)
     # Not a repository: Git cannot answer, and nothing more is done than before.
-    assert not ignore_par_le_projet(_home, CHEMIN_MANIFESTE)
+    assert not ignored_by_project(_home, CHEMIN_MANIFESTE)
 
 
 @with_git
@@ -579,7 +579,7 @@ def test_an_imported_project_that_ignores_maestro_keeps_its_manifest_and_convent
     """
     root = _imported_repository(_home, ignores_maestro=True)
     projets = ServiceProjets(
-        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+        ProjectStore(tmp_path / "depot"), reglages=ProjectSettingsStore(tmp_path / "reglages")
     )
     project_id = str(projets.creer("Dépensio", str(root))["id"])
     writer = _Writer()
@@ -636,7 +636,7 @@ def test_a_whole_generation_on_a_project_that_ignores_maestro_keeps_its_manifest
     """
     root = _imported_repository(_home, ignores_maestro=True)
     projets = ServiceProjets(
-        ProjetStore(tmp_path / "depot"), reglages=ReglagesProjetsStore(tmp_path / "reglages")
+        ProjectStore(tmp_path / "depot"), reglages=ProjectSettingsStore(tmp_path / "reglages")
     )
     project_id = str(projets.creer("Dépensio", str(root))["id"])
     service = ServiceOutillage(

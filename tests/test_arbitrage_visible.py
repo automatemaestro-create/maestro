@@ -84,7 +84,7 @@ from maestro.engine import MOTS_SENSIBLES, Guardrails, OrchestrationEngine
 from maestro.engine.guardrails import DemandeValidation
 from maestro.engine.plafond import GESTE_ARRETER, GESTE_RELEVER
 from maestro.orchestrator import Orchestrator
-from maestro.projets.modele import Perimetre, Projet
+from maestro.projects.model import Perimeter, Project
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
 from maestro.telemetry.journal import LOGGER_NAME
@@ -328,7 +328,7 @@ def maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Un `Path.home()` sous `tmp_path`, comme dans les tests du socle (#221, #224).
 
     Indispensable sous Windows : le `tmp_path` de pytest vit sous `AppData`, que
-    `valider_racine` interdit à juste titre — sans cette isolation, la racine de
+    `validate_root` interdit à juste titre — sans cette isolation, la racine de
     projet ci-dessous serait refusée avant même la demande.
     """
     maison = tmp_path / "maison"
@@ -349,8 +349,8 @@ def test_l_autre_producteur_porte_lui_aussi_son_run_et_son_projet(tmp_path: Path
     espace = tmp_path / "espace"
     shutil.copytree(racine, espace)
     (espace / "src" / "neuf.py").write_text("neuf\n", encoding="utf-8")
-    projet = Projet(
-        id=PROJET, nom="Dépensio", racine=racine.as_posix(), vcs=None, perimetre=Perimetre()
+    projet = Project(
+        id=PROJET, name="Dépensio", root=racine.as_posix(), vcs=None, perimeter=Perimeter()
     )
     demandes: list[DemandeValidation] = []
 

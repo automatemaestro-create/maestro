@@ -67,8 +67,8 @@ from maestro.menage import (
     inventorier,
     protections,
 )
-from maestro.projets.modele import Projet
-from maestro.projets.store import ProjetStore
+from maestro.projects.model import Project
+from maestro.projects.store import ProjectStore
 from maestro.sandbox.ramassage import FAMILLES_TIERCES, FAMILLES_TIERCES_JETABLES
 from maestro.scenarios.projets import ANCIEN_NOM_ATELIER
 
@@ -468,7 +468,7 @@ def test_les_declarations_de_chaque_copie_du_depot_protegent(
     """Un projet déclaré depuis un worktree en est un ; une déclaration illisible arrête tout."""
     principal, worktree = tmp_path / "Maestro", tmp_path / "worktrees" / "1458-menage"
     projet = _dossier(maison / "maestro-banc-259" / "p1")
-    _declarer(worktree, Projet(id="prj-00001458", nom="banc", racine=projet.as_posix()))
+    _declarer(worktree, Project(id="prj-00001458", name="banc", root=projet.as_posix()))
     reglages = principal / menage.REGLAGES_DANS_UNE_COPIE
     reglages.mkdir(parents=True)
     (reglages / "projets.json").write_text(
@@ -509,13 +509,13 @@ def test_une_declaration_dont_la_racine_a_disparu_ne_protege_plus_rien(
     passage = porteur / "20260922-134829" / "s1-vider"
     passage.mkdir(parents=True)
     depot = principal / menage.DECLARATIONS_DANS_UNE_COPIE
-    morte = ProjetStore(depot).creer("banc-s1-vider", passage)
+    morte = ProjectStore(depot).create("banc-s1-vider", passage)
     shutil.rmtree(passage.parent)
     _vieillir(porteur)
     vivant = _dossier(maison / "maestro-banc-vivant" / "p1")
     _vieillir(vivant.parent)
     banc = donnees_du_banc(racine=worktree).racines["projets"]
-    garde = ProjetStore(banc).creer("p1", vivant)
+    garde = ProjectStore(banc).create("p1", vivant)
 
     gardes = protections(copies=[principal, worktree])
     assert gardes.illisible == ()
@@ -530,15 +530,15 @@ def test_une_declaration_dont_la_racine_a_disparu_ne_protege_plus_rien(
     assert entrees[porteur].sort == A_RETIRER, "plus rien ne l'épingle"
     assert entrees[vivant.parent].sort == CONSERVE
     assert "porte le projet" in entrees[vivant.parent].raison
-    fiche = entrees[ProjetStore(depot).fichier(morte.id)]
+    fiche = entrees[ProjectStore(depot).file(morte.id)]
     assert fiche.sort == A_RETIRER and passage.as_posix() in fiche.raison
 
     code, sortie, _ = _jouer(["--purger", morte.id], temporaire, gardes=gardes, reponse="oui\n")
     assert code == CODE_FAIT, sortie
     assert "déclarations de projets" in sortie and "racine disparue" in sortie
-    assert ProjetStore(depot).ids() == (), "oubliée par son identifiant"
+    assert ProjectStore(depot).ids() == (), "oubliée par son identifiant"
     assert porteur.exists(), "non désigné : il reste"
-    assert ProjetStore(banc).ids() == (garde.id,) and vivant.exists()
+    assert ProjectStore(banc).ids() == (garde.id,) and vivant.exists()
 
 
 def test_une_declaration_se_rejuge_au_moment_de_l_oublier(
@@ -549,14 +549,14 @@ def test_une_declaration_se_rejuge_au_moment_de_l_oublier(
     principal = tmp_path / "Maestro"
     racine = _dossier(maison / "maestro-banc-revenu" / "p1")
     depot = principal / menage.DECLARATIONS_DANS_UNE_COPIE
-    projet = ProjetStore(depot).creer("p1", racine)
+    projet = ProjectStore(depot).create("p1", racine)
     shutil.rmtree(racine)
 
     code, sortie, _ = _jouer(
         ["--purger", projet.id], temporaire, reponse=_RacineRevenue(racine), copies=[principal]
     )
     assert code == CODE_FAIT, sortie
-    assert ProjetStore(depot).ids() == (projet.id,)
+    assert ProjectStore(depot).ids() == (projet.id,)
     assert "gardé" in sortie
 
 
@@ -588,7 +588,7 @@ def test_une_racine_indecidable_n_est_jamais_dite_disparue(
             assert not menage.racine_disparue(Path(libres[0]) / "projets" / "p1")
 
 
-def _declarer(copie: Path, projet: Projet) -> None:
+def _declarer(copie: Path, projet: Project) -> None:
     depot = copie / menage.DECLARATIONS_DANS_UNE_COPIE
     depot.mkdir(parents=True, exist_ok=True)
     (depot / f"{projet.id}.json").write_text(json.dumps(projet.to_dict()), encoding="utf-8")

@@ -89,7 +89,7 @@ from maestro.decideur import Decideur
 from maestro.engine import RunReport
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.portee import PORTEE_PROJET
-from maestro.projets import ProjetStore
+from maestro.projects import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.team.proposal import EXECUTION_TOOL
 from maestro.telemetry import SpendingCapExceeded
@@ -251,7 +251,7 @@ def _fil(
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
+        projets=ServiceProjets(ProjectStore(tmp_path / "depot"), racines_exploration=(atelier,)),
         agents_store=gabarits.agents,
         surcharges=gabarits.surcharges,
         playbooks=gabarits.playbooks,

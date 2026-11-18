@@ -15,7 +15,7 @@ recognised by its signature, is **looked at by the model**
 (`maestro.sources.images`), which returns its Markdown. What remains is really
 unreadable (an opaque binary, an image too large or that no model can look at) and
 is **named with its reason**. Reading more does not open the door to secrets: a
-file that carries some (`porte_des_secrets`, the project's masking rule) never
+file that carries some (`holds_secrets`, the project's masking rule) never
 enters a model's context.
 
 Three principles decide the rest.
@@ -84,9 +84,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from maestro.projets.modele import Perimetre
-from maestro.projets.perimetre import motifs_compiles
-from maestro.projets.secrets import porte_des_secrets
+from maestro.projects.model import Perimeter
+from maestro.projects.perimeter import compiled_patterns
+from maestro.projects.secrets import holds_secrets
 from maestro.sources.images import (
     REASON_VISION_UNAVAILABLE,
     ImageNotSeen,
@@ -423,7 +423,7 @@ def extract_sources(
     sources: Sequence[Source | Mapping[str, Any]] | None,
     *,
     guardrails: ExtractionGuardrails | None = None,
-    perimeter: Perimetre | None = None,
+    perimeter: Perimeter | None = None,
     fetch_url: Callable[[str], str] | None = None,
     read_image: ReadImage | None = None,
 ) -> ReadingReport:
@@ -451,7 +451,7 @@ def extract_sources(
     services' reading wires it in (`default_reader`).
     """
     guardrails = guardrails if guardrails is not None else ExtractionGuardrails()
-    perimeter = perimeter if perimeter is not None else Perimetre()
+    perimeter = perimeter if perimeter is not None else Perimeter()
     fetch = fetch_url if fetch_url is not None else fetch_url_http
     gaze = _Gaze(read=read_image, cap=guardrails.max_images)
 
@@ -576,7 +576,7 @@ def _extract_one(
     source: Source,
     *,
     guardrails: ExtractionGuardrails,
-    perimeter: Perimetre,
+    perimeter: Perimeter,
     fetch_url: Callable[[str], str],
     remaining: int | None,
     gaze: _Gaze,
@@ -645,9 +645,9 @@ def _read_file(
             reason="source-absente",
             message=f"Fichier introuvable ou illisible : {path.name}.",
         )
-    if porte_des_secrets(path, root):
+    if holds_secrets(path, root):
         # Before any opening: the rule is that of the project's masking
-        # (`maestro.projets.secrets`), and reading every format must not reopen
+        # (`maestro.projects.secrets`), and reading every format must not reopen
         # what an extension list used to close by accident.
         return Reading(
             name=name,
@@ -829,14 +829,14 @@ def _read_directory(
     source: Source,
     *,
     guardrails: ExtractionGuardrails,
-    perimeter: Perimetre,
+    perimeter: Perimeter,
     remaining: int | None,
     gaze: _Gaze,
 ) -> Reading:
     """The reading of a `dossier` source: its files, **according to its perimeter**.
 
-    The perimeter is that of projects (`maestro.projets.modele.Perimetre`) and its
-    application that of `maestro.projets.perimetre`: not a second pattern mechanism
+    The perimeter is that of projects (`maestro.projects.model.Perimeter`) and its
+    application that of `maestro.projects.perimeter`: not a second pattern mechanism
     written here. A references directory is a path on the user's disk: there is no
     reason for it to obey other rules than a project, and two pattern engines would
     diverge (it already happened, #226).
@@ -962,7 +962,7 @@ def _read_url(
 
 
 def _directory_files(
-    root: Path, perimeter: Perimetre, cap: int | None
+    root: Path, perimeter: Perimeter, cap: int | None
 ) -> Iterator[tuple[str, Path]]:
     """The files of `root` kept by `perimeter`, sorted, one notch beyond the cap.
 
@@ -972,10 +972,10 @@ def _directory_files(
     announced.
 
     No symbolic link followed, no descent into an excluded directory: same rules as
-    `maestro.projets.perimetre`, whose compiled patterns are reused as is.
+    `maestro.projects.perimeter`, whose compiled patterns are reused as is.
     """
-    included = motifs_compiles(perimeter.inclus)
-    excluded = motifs_compiles(perimeter.exclus)
+    included = compiled_patterns(perimeter.included)
+    excluded = compiled_patterns(perimeter.excluded)
     yielded = 0
     bound = None if cap is None else cap + 1
     for relative, path in _walk(root, excluded):

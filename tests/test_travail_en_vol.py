@@ -71,10 +71,10 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.state import EXECUTION_EN_COURS
 from maestro.engine import STATUT_EN_COURS
 from maestro.orchestrator.schema import Brief
-from maestro.projets.application import ApplicationRefusee
-from maestro.projets.modele import Projet
-from maestro.projets.reglages import ReglagesProjetsStore
-from maestro.projets.store import ProjetStore
+from maestro.projects.apply import ApplyRejected
+from maestro.projects.model import Project
+from maestro.projects.settings import ProjectSettingsStore
+from maestro.projects.store import ProjectStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import (
     branche_de_tache,
@@ -95,7 +95,7 @@ TACHE = "donnees-recettes"
 
 @pytest.fixture(autouse=True)
 def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un `Path.home()` sous `tmp_path` : sans lui, `valider_racine` refuse toute
+    """Un `Path.home()` sous `tmp_path` : sans lui, `validate_root` refuse toute
     racine prise sous `AppData`, où vit le `tmp_path` de pytest sous Windows."""
     maison = tmp_path / "maison"
     maison.mkdir(parents=True, exist_ok=True)
@@ -138,7 +138,7 @@ def _commite(espace: Path, message: str) -> None:
     )
 
 
-def _projet(tmp_path: Path, depot: ProjetStore | None = None) -> Projet:
+def _projet(tmp_path: Path, depot: ProjectStore | None = None) -> Project:
     """Un projet **versionné**, déclaré comme en vrai : un commit sur `main`."""
     racine = tmp_path / "projets" / "recettes"
     (racine / "src").mkdir(parents=True)
@@ -148,12 +148,12 @@ def _projet(tmp_path: Path, depot: ProjetStore | None = None) -> Projet:
     _git(racine, "init", "--quiet")
     _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
     _commite(racine, "socle")
-    depot = depot if depot is not None else ProjetStore(tmp_path / "depot")
-    return depot.creer("Recettes", racine)
+    depot = depot if depot is not None else ProjectStore(tmp_path / "depot")
+    return depot.create("Recettes", racine)
 
 
 @contextmanager
-def _tache_tuee(projet: Projet, tache_id: str = TACHE) -> Iterator[Path]:
+def _tache_tuee(projet: Project, tache_id: str = TACHE) -> Iterator[Path]:
     """Le worktree d'une tâche dont le process a été tué en vol — rendu, puis retiré.
 
     `keep=True` est exactement ce qu'un process tué laisse : le worktree monté, son
@@ -168,7 +168,7 @@ def _tache_tuee(projet: Projet, tache_id: str = TACHE) -> Iterator[Path]:
     finally:
         subprocess.run(
             [GIT or "git", "worktree", "remove", "--force", str(chemin)],
-            cwd=projet.racine,
+            cwd=projet.root,
             capture_output=True,
             check=False,
         )
@@ -194,7 +194,7 @@ def _fichiers_de_la_branche(racine: Path, tache_id: str = TACHE) -> set[str]:
 def test_le_travail_d_une_tache_tuee_en_vol_est_porte_sur_sa_branche(tmp_path: Path) -> None:
     """Le défaut de p5 : process tué, `finally` jamais déroulé, travail hors branche."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with _tache_tuee(projet) as tuee:
         (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
         assert _fichiers_de_la_branche(racine) == set()  # rien de sauvé — le défaut
@@ -218,7 +218,7 @@ def test_ce_que_le_projet_ignore_n_entre_pas_sur_la_branche(tmp_path: Path) -> N
 
         sauver_le_travail_en_vol(projet, TACHE)
 
-        assert _fichiers_de_la_branche(Path(projet.racine)) == {"package.json"}
+        assert _fichiers_de_la_branche(Path(projet.root)) == {"package.json"}
 
 
 def test_un_demontage_qui_a_eu_lieu_ne_laisse_rien_a_porter(tmp_path: Path) -> None:
@@ -228,13 +228,13 @@ def test_un_demontage_qui_a_eu_lieu_ne_laisse_rien_a_porter(tmp_path: Path) -> N
         (ws.path / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
 
     assert sauver_le_travail_en_vol(projet, TACHE) is False
-    assert _fichiers_de_la_branche(Path(projet.racine)) == {"src/recettes.ts"}
+    assert _fichiers_de_la_branche(Path(projet.root)) == {"src/recettes.ts"}
 
 
 def test_le_worktree_d_une_personne_n_est_jamais_commite(tmp_path: Path) -> None:
     """Seule la forme d'un espace de Maestro est sauvée : jamais le brouillon de quelqu'un."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     a_soi = tmp_path / "le-mien" / TACHE
     _git(racine, "worktree", "add", "--quiet", "-b", branche_de_tache(TACHE), str(a_soi))
     (a_soi / "brouillon.txt").write_text("à moi\n", encoding="utf-8")
@@ -249,8 +249,8 @@ def test_un_projet_non_versionne_n_a_rien_hors_de_sa_racine(tmp_path: Path) -> N
     """En place (#839), l'agent écrit dans le projet : il n'y a rien à porter nulle part."""
     racine = tmp_path / "projets" / "brouillon"
     racine.mkdir(parents=True)
-    projet = ProjetStore(tmp_path / "depot").creer("Brouillon", racine)
-    assert not projet.versionne
+    projet = ProjectStore(tmp_path / "depot").create("Brouillon", racine)
+    assert not projet.versioned
 
     assert sauver_le_travail_en_vol(projet, TACHE) is False
 
@@ -262,13 +262,13 @@ def test_un_commit_que_le_projet_refuse_se_dit(tmp_path: Path) -> None:
     l'appelant qui dit le refus et poursuit l'extinction.
     """
     projet = _projet(tmp_path)
-    hook = Path(projet.racine) / ".git" / "hooks" / "pre-commit"
+    hook = Path(projet.root) / ".git" / "hooks" / "pre-commit"
     hook.write_text("#!/bin/sh\necho 'pas de commit ici' >&2\nexit 1\n", encoding="utf-8")
     hook.chmod(0o755)
     with _tache_tuee(projet) as tuee:
         (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
 
-        with pytest.raises(ApplicationRefusee):
+        with pytest.raises(ApplyRejected):
             sauver_le_travail_en_vol(projet, TACHE)
         assert _en_attente(tuee) != ""  # rien n'est perdu : le worktree le garde
 
@@ -278,7 +278,7 @@ def test_un_commit_que_le_projet_refuse_se_dit(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _interrompue(projet: Projet) -> None:
+def _interrompue(projet: Project) -> None:
     """Une tâche coupée en vol, son travail porté sur sa branche à l'extinction."""
     with _tache_tuee(projet) as tuee:
         (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
@@ -330,7 +330,7 @@ def test_le_travail_sauve_reste_dans_l_historique_apres_la_reprise(tmp_path: Pat
     dit sauvé reste dans l'histoire de la branche, donc du projet qui la fusionne.
     """
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _interrompue(projet)
     sauve = _git(racine, "rev-parse", f"refs/heads/{branche_de_tache(TACHE)}").strip()
 
@@ -370,7 +370,7 @@ def test_une_branche_neuve_ne_dit_rien_de_travail_anterieur(tmp_path: Path) -> N
 def test_une_branche_deja_fusionnee_ne_dit_rien_de_travail_anterieur(tmp_path: Path) -> None:
     """Un travail que `main` a déjà n'est pas à reprendre : la branche ne porte rien de plus."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _interrompue(projet)
     _git(racine, "merge", "--quiet", "--ff-only", branche_de_tache(TACHE))
 
@@ -493,7 +493,7 @@ class HoteDouble(HoteRun):
         return None
 
 
-def _en_vol(state: ControlTowerState, run_id: str, projet: Projet) -> None:
+def _en_vol(state: ControlTowerState, run_id: str, projet: Project) -> None:
     """La tâche du run est en cours dans le projet — l'état qu'on éteint."""
     state.appliquer(
         Event(
@@ -509,7 +509,7 @@ def _en_vol(state: ControlTowerState, run_id: str, projet: Projet) -> None:
     )
 
 
-def _app(tmp_path: Path, state: ControlTowerState, depot: ProjetStore) -> TestClient:
+def _app(tmp_path: Path, state: ControlTowerState, depot: ProjectStore) -> TestClient:
     """L'app réelle sur bus et journal mémoire — l'hôte est double, le dépôt est jetable."""
     return TestClient(
         create_app(
@@ -518,7 +518,7 @@ def _app(tmp_path: Path, state: ControlTowerState, depot: ProjetStore) -> TestCl
             event_log=InMemoryEventLog(),
             battements=RegistreBattementsMemoire(),
             hote_run=HoteDouble(),
-            projets=ServiceProjets(depot, reglages=ReglagesProjetsStore(tmp_path / "reglages")),
+            projets=ServiceProjets(depot, reglages=ProjectSettingsStore(tmp_path / "reglages")),
         )
     )
 
@@ -527,7 +527,7 @@ def test_l_extinction_porte_le_travail_de_la_tache_en_vol_sur_sa_branche(
     tmp_path: Path,
 ) -> None:
     """Le premier critère : sauvé **à l'interruption**, pas seulement si le `finally` a tourné."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet = _projet(tmp_path, depot)
     state = ControlTowerState()
     with _tache_tuee(projet) as tuee, _app(tmp_path, state, depot) as client:
@@ -539,15 +539,15 @@ def test_l_extinction_porte_le_travail_de_la_tache_en_vol_sur_sa_branche(
 
         assert client.post("/api/extinction").status_code == 200
 
-        assert _fichiers_de_la_branche(Path(projet.racine)) == {"src/recettes.ts"}
+        assert _fichiers_de_la_branche(Path(projet.root)) == {"src/recettes.ts"}
         assert _en_attente(tuee) == ""
 
 
 def test_un_commit_refuse_n_empeche_pas_maestro_de_s_eteindre(tmp_path: Path) -> None:
     """Une sauvegarde refusée se dit ; le run est soldé quand même, sa tâche interrompue."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet = _projet(tmp_path, depot)
-    hook = Path(projet.racine) / ".git" / "hooks" / "pre-commit"
+    hook = Path(projet.root) / ".git" / "hooks" / "pre-commit"
     hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     hook.chmod(0o755)
     state = ControlTowerState()
@@ -570,7 +570,7 @@ def test_un_commit_refuse_n_empeche_pas_maestro_de_s_eteindre(tmp_path: Path) ->
 
 def test_un_hote_mort_seul_laisse_son_travail_sur_sa_branche(tmp_path: Path) -> None:
     """L'autre chemin sans `finally` : l'hôte est tombé, personne ne l'a éteint."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet = _projet(tmp_path, depot)
     state = ControlTowerState()
     run_id = "a1b2c3d4e5f6"
@@ -583,7 +583,7 @@ def test_un_hote_mort_seul_laisse_son_travail_sur_sa_branche(tmp_path: Path) -> 
 
         asyncio.run(pilote._ramasser())
 
-        assert _fichiers_de_la_branche(Path(projet.racine)) == {"src/recettes.ts"}
+        assert _fichiers_de_la_branche(Path(projet.root)) == {"src/recettes.ts"}
 
 
 class _Redacteur(ModelProvider):
@@ -605,9 +605,9 @@ class _Redacteur(ModelProvider):
         return self.sujet
 
 
-def _avec_convention(projet: Projet, convention: str) -> None:
+def _avec_convention(projet: Project, convention: str) -> None:
     """Le manifeste d'un outillage venu des réponses, commité, qui retient `convention`."""
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     manifeste = racine / ".maestro" / "outillage" / "manifeste.json"
     manifeste.parent.mkdir(parents=True, exist_ok=True)
     manifeste.write_text(
@@ -632,10 +632,10 @@ def _sauvegarde_par_un_hote_mort(
     `brief` est le cadrage retenu du run, celui que ses tâches ont lu (#1679).
     """
     from maestro.controltower import executions
-    from maestro.projets.commits import RedacteurDeCommits
+    from maestro.projects.commits import CommitDrafter
 
     monkeypatch.setattr(executions, "DELAI_MESSAGES_SAUVEGARDE_S", delai_s)
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet = _projet(tmp_path, depot)
     _avec_convention(projet, "Conventional Commits")
     state = ControlTowerState()
@@ -646,7 +646,7 @@ def _sauvegarde_par_un_hote_mort(
         state,
         hote=hote,
         projets=depot,
-        redacteur=RedacteurDeCommits(redacteur, modele="modele-du-test"),
+        redacteur=CommitDrafter(redacteur, model="modele-du-test"),
     )
     pilote._consigne(run_id, EXECUTION_EN_COURS, "Recettes", "lancée depuis la Control Tower")
     if brief is not None:
@@ -657,7 +657,7 @@ def _sauvegarde_par_un_hote_mort(
     with _tache_tuee(projet) as tuee:
         (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
         asyncio.run(pilote._ramasser())
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     assert _fichiers_de_la_branche(racine) == {"src/recettes.ts"}
     return _git(racine, "log", "-1", f"--format={format_git}", branche_de_tache(TACHE)).strip()
 
@@ -711,7 +711,7 @@ def test_un_modele_trop_lent_laisse_la_sauvegarde_sous_le_message_de_maestro(
 
 def test_sans_depot_de_projets_rien_n_est_porte(tmp_path: Path) -> None:
     """Le défaut des tests du service : rien n'est porté, et rien ne casse."""
-    depot = ProjetStore(tmp_path / "depot")
+    depot = ProjectStore(tmp_path / "depot")
     projet = _projet(tmp_path, depot)
     state = ControlTowerState()
     run_id = "f6e5d4c3b2a1"
@@ -724,7 +724,7 @@ def test_sans_depot_de_projets_rien_n_est_porte(tmp_path: Path) -> None:
 
         asyncio.run(pilote._ramasser())
 
-        assert _fichiers_de_la_branche(Path(projet.racine)) == set()
+        assert _fichiers_de_la_branche(Path(projet.root)) == set()
         assert _en_attente(tuee) == "?? src/recettes.ts"
 
 
@@ -829,7 +829,7 @@ def _coquilles(racine: Path, tache_id: str = TACHE) -> list[Path]:
     ]
 
 
-def _coquille_d_avant_le_correctif(projet: Projet) -> Path:
+def _coquille_d_avant_le_correctif(projet: Project) -> Path:
     """Ce que #1447 a trouvé dans `%TEMP%` : un worktree sauvé, puis effacé jusqu'à la butée."""
     with espace_de_travail(projet, tache_id=TACHE, keep=True) as ws:
         coquille = ws.path
@@ -837,7 +837,7 @@ def _coquille_d_avant_le_correctif(projet: Projet) -> Path:
     assert sauver_le_travail_en_vol(projet, TACHE) is True
     with pytest.raises(_Tue):
         _effacer_jusqu_a_la_butee(coquille)
-    assert _coquilles(Path(projet.racine)) == [coquille]
+    assert _coquilles(Path(projet.root)) == [coquille]
     return coquille
 
 
@@ -852,7 +852,7 @@ def test_un_demontage_tue_pendant_qu_il_efface_ne_laisse_pas_de_coquille(
     n'est plus à son adresse, ni enregistré chez Git.
     """
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     with pytest.raises(_Tue):
         with espace_de_travail(projet, tache_id=TACHE) as ws:
             chemin = ws.path
@@ -892,7 +892,7 @@ def test_une_mort_entre_l_ecart_et_l_oubli_ne_laisse_rien_de_lisible_a_moitie(
     encore oublié. Son enregistrement est `prunable`, et rien ne s'y arrête — ni
     la lecture du travail en vol, ni la sauvegarde de l'extinction, ni le montage suivant."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     arme: list[bool] = []
     git = espace_projet._git
 
@@ -925,7 +925,7 @@ def test_un_worktree_qu_un_process_tient_encore_reste_intact(
     reste **intact et monté**, comme celui d'une tâche tuée avant son démontage, et
     c'est le montage suivant de la tâche qui le libère — jamais une demi-mesure."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     renommer = Path.rename
 
     def _refuse(source: Path, cible: Path) -> Path:
@@ -959,7 +959,7 @@ def test_une_coquille_d_avant_le_correctif_n_arrete_ni_l_oracle_ni_la_sauvegarde
     en vol lisait `git status` dedans (« not a git repository »), et la sauvegarde de
     l'extinction y lançait `git add -A` — dans le premier dépôt trouvé en remontant."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     _coquille_d_avant_le_correctif(projet)
     avant = _git(racine, "rev-parse", branche_de_tache(TACHE)).strip()
 
@@ -975,7 +975,7 @@ def test_une_coquille_d_avant_le_correctif_n_arrete_pas_le_montage_et_part_au_ra
     """La tâche se remonte sur son travail, et la coquille — désormais oubliée de Git —
     quitte le disque au ramassage dès que l'hôte qui l'a laissée est mort."""
     projet = _projet(tmp_path)
-    racine = Path(projet.racine)
+    racine = Path(projet.root)
     coquille = _coquille_d_avant_le_correctif(projet)
 
     with espace_de_travail(projet, tache_id=TACHE) as ws:

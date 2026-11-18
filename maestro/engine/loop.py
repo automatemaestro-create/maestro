@@ -245,7 +245,7 @@ from maestro.orchestrator.schema import Brief, Clarification, Task, topological_
 from maestro.outillage.contexte import outillage_du_projet
 from maestro.plan_run import largeur_du_plan, noeuds_du_plan
 from maestro.prerequis import GENRE_ROLE, PrerequisManquant, prerequis_du_role
-from maestro.projets.store import ProjetStore
+from maestro.projects.store import ProjectStore
 from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
@@ -556,7 +556,7 @@ class OrchestrationEngine:
         secrets: SecretStore | None = None,
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
-        projets: ProjetStore | None = None,
+        projets: ProjectStore | None = None,
         agents_store: AgentStore | None = None,
         modele: str | None = None,
         arbitre_brief: ArbitreBrief | None = None,
@@ -895,7 +895,7 @@ class OrchestrationEngine:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
-            projets=ProjetStore.default(settings),
+            projets=ProjectStore.default(settings),
             agents_store=agents_store,
             modele=settings.model,
             relance=relance,
@@ -2091,7 +2091,7 @@ class OrchestrationEngine:
                 detail=str(refus),
             )
             return
-        base = projet.vcs.branche_base if projet.vcs is not None else ""
+        base = projet.vcs.base_branch if projet.vcs is not None else ""
         self._issue_du_versionnement(
             versionnement,
             PROPOSITION_ACCEPTEE,
@@ -2231,7 +2231,7 @@ class OrchestrationEngine:
         if projet_id is None or self._projets is None:
             return ""
         try:
-            projet = self._projets.lire(projet_id)
+            projet = self._projets.read(projet_id)
             return outillage_du_projet(projet).instructions if projet is not None else ""
         except Exception:  # noqa: BLE001 — cf. le docstring : jamais une levée
             return ""

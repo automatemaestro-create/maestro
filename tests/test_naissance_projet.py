@@ -63,9 +63,9 @@ from maestro.controltower.orchestration import (
     RepondeurOrchestration,
 )
 from maestro.controltower.projets import ServiceProjets
-from maestro.projets import ProjetStore
-from maestro.projets.racine import _depot_maestro
-from maestro.projets.reglages import ReglagesProjetsStore
+from maestro.projects import ProjectStore
+from maestro.projects.root import _maestro_repository
+from maestro.projects.settings import ProjectSettingsStore
 from maestro.providers.base import ModelProvider
 
 UTILISATEUR = "utilisateur"
@@ -99,8 +99,8 @@ def _git_isole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def projets(tmp_path: Path) -> ServiceProjets:
     """Le service des projets sur un dépôt et des réglages jetables — jamais ceux du poste."""
     return ServiceProjets(
-        ProjetStore(tmp_path / "depot"),
-        reglages=ReglagesProjetsStore(tmp_path / "reglages"),
+        ProjectStore(tmp_path / "depot"),
+        reglages=ProjectSettingsStore(tmp_path / "reglages"),
     )
 
 
@@ -236,7 +236,7 @@ def test_un_dossier_existant_s_importe_tel_quel_et_son_git_est_constate(
     projets: ServiceProjets, _maison: Path
 ) -> None:
     racines = _maison / "sites" / "racines"
-    # Un `.git` minimal — ce que `detecter_vcs` lit réellement, sans lancer `git`.
+    # Un `.git` minimal — ce que `detect_vcs` lit réellement, sans lancer `git`.
     (racines / ".git").mkdir(parents=True)
     (racines / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
 
@@ -504,10 +504,10 @@ def test_un_dossier_refuse_revient_sur_la_carte_annoncee_et_ponctue_sa_cause_une
     """Le parcours de #1592 : le dossier proposé tombe dans le dépôt de Maestro.
 
     Le juge a déjà parlé quand la vérification refuse : la phrase du code revient sur
-    ses mots et dit qu'aucune carte ne suivra. La cause (`RacineRefusee`) porte son
+    ses mots et dit qu'aucune carte ne suivra. La cause (`RootRejected`) porte son
     point final, et la phrase n'en ajoute pas un second.
     """
-    dossier = _depot_maestro() / "herbier-des-cimes"
+    dossier = _maestro_repository() / "herbier-des-cimes"
     modele = ModeleScripte(
         _dicte(
             ANNONCE,
