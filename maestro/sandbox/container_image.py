@@ -191,7 +191,7 @@ def context_ignore(agent: bytes, dockerfile: str, excluded: Sequence[str]) -> by
             )
     head = agent if not agent or agent.endswith(b"\n") else agent + b"\n"
     tail = [
-        "# Maestro (#1726) : le Dockerfile entre au contexte, ce que le périmètre exclut non.",
+        "# Maestro : le Dockerfile entre au contexte, ce que le périmètre exclut non.",
         f"!{dockerfile}",
         *excluded,
     ]
