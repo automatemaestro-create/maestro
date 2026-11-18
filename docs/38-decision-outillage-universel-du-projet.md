@@ -334,9 +334,17 @@ demande le filet du diff.
   vérificateur qu'elles n'exigent pas, revient `EXCLUDED`. L'outillage n'en écrit aucune commande. Un
   usage à la fois prescrit et écarté garde sa prescription.
 - **Ce que le projet garde** : un budget ou un test peut garder le fichier où Maestro ajouterait un
-  bloc, comme le pont `CLAUDE.md`. Le modèle le rend `GUARDED`, avec le fichier lu qui le dit, et la
-  pièce le dit **avant** d'être écrite (« ⚠ le projet garde `CLAUDE.md`… »). La personne la refuse si
-  le fichier n'a pas la place. Maestro ne retranche rien de ce fichier à sa place.
+  bloc, comme le pont `CLAUDE.md`. Le modèle le rend `GUARDED`, avec le fichier lu qui le dit et la
+  commande qui joue ce qui le garde : le test qui le vérifie, tel que les instructions le font jouer.
+  Avant d'être montrée, la pièce **joue** cette commande sur une copie du projet, comme toute
+  commande de l'outillage (§4.1). Elle la joue sans la pièce, puis avec, ce qui attribue un rouge à
+  la pièce plutôt qu'au projet (#1716). La carte rend le verdict : la pièce tient, ou elle fait
+  rougir la commande, dont la sortie suit. Si rien n'a pu trancher (aucune commande lue, la copie,
+  le délai, ou un rouge déjà là sans la pièce), l'avertissement « ⚠ le projet garde `CLAUDE.md`… »
+  reste, avec sa cause. Maestro n'a pas d'écriture plus courte d'un bloc qui tient déjà entre ses
+  deux balises, et il ne retranche rien de ce fichier à la place du projet. Une pièce qui fait
+  rougir sa garde se refuse donc, ou s'accepte une fois la place faite : elle se rejoue alors sur
+  le fichier changé, garde comprise.
 - **Un fichier d'instructions se lit en entier** : servi tronqué, il se relit pour en avoir la suite.
   C'est une lecture de plus, sous la même borne (`lectures_max`).
 

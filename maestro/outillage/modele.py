@@ -270,6 +270,28 @@ class Piece:
 
 
 @dataclass(frozen=True)
+class FichierGarde(Piece):
+    """Un fichier que le projet **garde** (#1678), et la commande qui joue ce qui le garde (#1716).
+
+    Les champs de `Piece` : `nom` est le fichier gardé, `chemin` le fichier lu qui le dit,
+    `role` ce qu'il exige. `commande` est ce qui le vérifie, telle que le projet la fait
+    jouer — le test qui le garde, pas la suite entière —, lue par le modèle comme toute
+    commande : c'est elle qu'une pièce qui y écrirait joue sur une copie qui la porte, avant
+    d'être montrée (`Verificateur.verifier_garde`). Vide quand rien de ce qui a été lu ne le
+    vérifie par une commande : la pièce le dit, sans rien jouer.
+    """
+
+    commande: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le fichier gardé en JSON — sa commande seulement quand elle a été lue."""
+        forme = super().to_dict()
+        if self.commande:
+            forme["command"] = self.commande
+        return forme
+
+
+@dataclass(frozen=True)
 class Langage:
     """Un langage constaté, sa part des fichiers vus et un exemple.
 
@@ -442,9 +464,9 @@ class Constats:
     #: `role` ce qu'il y dit. Aucune commande de ces usages n'est écrite.
     usages_exclus: tuple[Piece, ...] = ()
     #: Les fichiers du projet que le projet **garde** (#1678) — un budget, un contenu
-    #: qu'un test vérifie : `nom` est le fichier gardé, `chemin` le fichier lu qui le dit,
-    #: `role` ce qu'il exige. Une pièce qui y écrirait un bloc le dit avant d'être écrite.
-    fichiers_gardes: tuple[Piece, ...] = ()
+    #: qu'un test vérifie (`FichierGarde`). Une pièce qui y écrirait un bloc joue ce qui le
+    #: garde sur une copie qui la porte, et dit son verdict avant d'être écrite (#1716).
+    fichiers_gardes: tuple[FichierGarde, ...] = ()
 
     def commande_de(self, usage: str) -> Commande | None:
         """La première commande constatée pour `usage`, `None` s'il n'y en a aucune.

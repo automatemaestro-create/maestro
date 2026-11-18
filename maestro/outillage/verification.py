@@ -82,6 +82,15 @@ programme présent la laisse **à vérifier**, avec la raison du projet : c'est 
 manque encore. La portée passe avant : ce qu'une personne tranche n'est ni joué ni
 sondé. Le même verbe répond au questionnaire d'un projet neuf, qui n'a pas encore
 de dossier (`Verificateur.sonder`).
+
+## Ce qui garde un fichier se joue avec la pièce, et sans elle (#1716)
+
+Une pièce qui écrirait un bloc dans un fichier que le projet **garde** — le budget de
+`CLAUDE.md` qu'un test vérifie (`FichierGarde`, #1678) — ne se contente pas de prévenir
+qu'elle *peut* le faire rougir : `verifier_garde` joue la commande qui le garde sur une
+copie, sans la pièce puis avec, et le verdict dit laquelle des deux l'a fait rougir. Il
+est rendu avant que la carte ne s'affiche (`maestro.controltower.pieces`), et son usage
+(`USAGE_GARDE`) le tient à l'écart des verdicts des commandes que l'outillage écrit.
 """
 
 from __future__ import annotations
@@ -92,12 +101,12 @@ import shlex
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from maestro.outillage.contexte import est_au_projet
-from maestro.outillage.modele import USAGES, Constats, Entree, Recommandation
+from maestro.outillage.modele import USAGES, Constats, Entree, FichierGarde, Recommandation
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
 from maestro.portee import PorteeProjet
 from maestro.projets.modele import Perimetre
@@ -121,6 +130,16 @@ USAGE_DEMARRER = "demarrer"
 
 #: L'usage de l'installation : sur un arbre frais, tout le reste en dépend (`USAGES`).
 USAGE_INSTALLER = USAGES[0]
+
+#: L'usage du verdict de ce qui **garde** un fichier (#1716, `Verificateur.verifier_garde`).
+#: Joué sur une copie qui porte une pièce, il juge cette copie, pas une commande que
+#: l'outillage écrit : il n'entre ni au manifeste, ni parmi les verdicts connus d'une autre
+#: commande. Une valeur neuve qui voyage, donc en anglais (docs/55 §4, règle 3).
+USAGE_GARDE = "guard"
+
+_SANS_COMMANDE_DE_GARDE = (
+    "aucune commande qui joue ce qui le garde n'a été lue dans le projet : rien n'a été joué"
+)
 
 #: Nom de skill → usage, dérivé de la table de la recommandation (jamais recopié).
 _USAGE_DU_SKILL: dict[str, str] = {nom: usage for usage, (nom, _) in SKILL_PAR_USAGE.items()}
@@ -446,6 +465,76 @@ class Verificateur:
             verdicts.update(self._jouer(racine, a_jouer, perimetre, interprete, prealable))
         return tuple(verdicts[c.commande] for c in commandes)
 
+    def verifier_garde(
+        self,
+        racine: Path,
+        garde: FichierGarde,
+        *,
+        chemin: str,
+        texte: str,
+        perimetre: Perimetre,
+        installation: CommandeEcrite | None = None,
+    ) -> Verification:
+        """Le verdict de ce qui garde `chemin`, joué sur une copie qui porte `texte` (#1716).
+
+        Joué **deux fois dans la même copie** : sans la pièce, puis avec. C'est ce qui
+        attribue le rouge — sur le run de #1688, un échec qu'on ne savait pas dater a été
+        imputé à la base, qui était verte. Trois issues :
+
+        - `verifiee` — il passe avec la pièce : elle tient ;
+        - `echouee` — il passe sans elle et échoue avec : c'est elle qui le fait rougir. Le
+          code et la sortie sont ceux du jeu **avec** la pièce — ce que le projet en dit ;
+        - `a-verifier` — rien n'a tranché : aucune commande lue, pas de bash, la portée, la
+          copie, le délai, ou un rouge **déjà là sans la pièce**, qui ne dit rien d'elle (le
+          code et la sortie sont alors ceux du premier jeu).
+
+        La copie est celle de toute commande de l'outillage — le clone neuf d'un projet
+        versionné, `installation` jouée d'abord ; la copie de la racine sinon —, sous la
+        même borne, la même portée et les mêmes délais. `texte` est le fichier **entier**
+        tel que la pièce le laisserait (`Prevision.apres`) : Maestro le pose dans la copie
+        entre les deux jeux, jamais une commande. Aucun verdict connu n'est repris : il
+        dépend du texte de la pièce.
+        """
+        commande = CommandeEcrite(USAGE_GARDE, garde.commande.strip(), garde.chemin)
+        if not commande.commande:
+            return _a_verifier(commande, _SANS_COMMANDE_DE_GARDE)
+        interprete = self.interprete if self.interprete is not None else execution.interprete()
+        if interprete is None:
+            return _a_verifier(commande, _SANS_BASH)
+        joueur = self.joueur if self.joueur is not None else execution.jouer
+        versionne = execution.versionnee(racine)
+        prealable = (
+            installation
+            if versionne
+            and installation is not None
+            and not _pas_encore(racine, installation, vide=False)
+            else None
+        )
+        try:
+            borne = execution.borne_du_poste()
+            with (
+                _espace_de_jeu(racine, perimetre, versionne=versionne) as copie,
+                _sous_la_borne(racine, copie, borne, joueur, interprete) as (joueur, interprete),
+            ):
+                portee = PorteeProjet(racine=copie)
+                debut = time.monotonic()
+                if prealable is not None:
+                    self._une(prealable, copie, portee, joueur, interprete, debut)
+                sans = self._une(commande, copie, portee, joueur, interprete, debut)
+                if sans.etat != VERIFIEE:
+                    return _rouge_sans_la_piece(sans)
+                refus = _poser(copie, chemin, texte)
+                if refus:
+                    return _a_verifier(commande, refus)
+                avec = self._une(commande, copie, portee, joueur, interprete, debut)
+        except (
+            execution.CopieImpossible,
+            execution.CloneImpossible,
+            execution.BorneIndisponible,
+        ) as exc:
+            return _a_verifier(commande, _sans_espace_de_jeu(exc))
+        return _avec_la_piece(avec)
+
     def sonder(self, noms: Iterable[str]) -> dict[str, bool]:
         """Ce que le poste répond de chaque programme : présent (`True`), absent (`False`).
 
@@ -742,6 +831,58 @@ def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:
             "existera"
         )
     return ""
+
+
+def _poser(copie: Path, chemin: str, texte: str) -> str:
+    """Pose `texte` à `chemin` dans `copie` (#1716) — `""`, ou pourquoi la copie ne le porte pas.
+
+    Fins de ligne `\\n` explicites, comme l'écriture d'une pièce (`generation`) : le fichier
+    joué est celui qui s'écrirait, au caractère près. La raison ne nomme aucun chemin du
+    poste : elle est déterministe, comme toutes celles d'un verdict.
+    """
+    relatif = PurePosixPath(chemin)
+    if not relatif.parts or relatif.is_absolute() or ".." in relatif.parts:
+        return f"`{chemin}` n'est pas un chemin du projet : la copie ne peut pas porter la pièce"
+    cible = copie.joinpath(*relatif.parts)
+    try:
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        with cible.open("w", encoding="utf-8", newline="") as flux:
+            flux.write(texte)
+    except OSError as exc:
+        return (
+            "la copie de vérification n'a pas pu porter cette écriture "
+            f"({exc.strerror or type(exc).__name__})"
+        )
+    return ""
+
+
+def _rouge_sans_la_piece(sans: Verification) -> Verification:
+    """Ce qui garde un fichier n'a pas passé **sans** la pièce : son verdict ne dit rien d'elle.
+
+    Un échec est déjà là sur le projet tel qu'il est : le jouer avec la pièce ne départagerait
+    rien, et il n'est pas joué. Un jeu sans verdict (portée, délai) garde sa raison.
+    """
+    if sans.etat != ECHOUEE:
+        return sans
+    return replace(
+        sans,
+        etat=A_VERIFIER,
+        raison=(
+            f"elle échoue déjà sans cette écriture (code {sans.code}) : son verdict ne dit rien "
+            "de ce que Maestro y ajouterait"
+        ),
+    )
+
+
+def _avec_la_piece(avec: Verification) -> Verification:
+    """Le verdict de ce qui garde un fichier, joué avec la pièce après avoir passé sans elle."""
+    if avec.etat == VERIFIEE:
+        return replace(avec, raison="elle passe sur une copie du projet qui porte cette écriture")
+    if avec.etat == ECHOUEE:
+        return replace(
+            avec, raison=f"elle passe sans cette écriture et échoue avec (code {avec.code})"
+        )
+    return avec
 
 
 def _a_verifier(commande: CommandeEcrite, raison: str) -> Verification:

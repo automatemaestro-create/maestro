@@ -55,6 +55,7 @@ from maestro.outillage.modele import (
     Constats,
     Ecarte,
     Entree,
+    FichierGarde,
     Piece,
     Recommandation,
 )
@@ -136,7 +137,7 @@ def recommander(constats: Constats, clients: Sequence[Client] = ()) -> Recommand
     )
 
 
-def _prevenue(entree: Entree, gardes: Sequence[Piece]) -> Entree:
+def _prevenue(entree: Entree, gardes: Sequence[FichierGarde]) -> Entree:
     """L'entrée qui écrirait un bloc dans un fichier que le projet garde, et le dit (#1678).
 
     Un bloc ajouté à un fichier gardé — un budget qu'un test du projet vérifie, une règle
@@ -144,20 +145,48 @@ def _prevenue(entree: Entree, gardes: Sequence[Piece]) -> Entree:
     doit le savoir avant. Ce que le projet garde a été lu (`GUARDED`, confronté à un fichier
     lu) : la raison de la pièce le dit **en tête**, avec l'endroit qui le dit. Seul un bloc
     ajouté à un fichier existant est concerné ; une pièce qui crée son fichier ne l'est pas.
+
+    L'analyse n'exécute rien : elle dit que le bloc *peut* faire rougir. La pièce, elle, joue
+    ce qui garde le fichier avant de se montrer, et dit ce qu'il en est (#1716,
+    `maestro.controltower.pieces`).
     """
     if entree.etat != "a-completer":
         return entree
-    garde = next((g for g in gardes if g.nom.casefold() == entree.chemin.casefold()), None)
+    garde = garde_de(entree.chemin, gardes)
     if garde is None:
         return entree
-    return replace(
-        entree,
-        raison=(
-            f"⚠ le projet garde {entree.chemin} ({garde.role}, lu dans {garde.chemin}) : le "
-            "bloc que Maestro y ajouterait peut faire rougir ses tests — refuse cette pièce "
-            f"si {entree.chemin} n'a pas la place. {entree.raison}"
-        ),
+    return replace(entree, raison=a_la_suite(avertissement(entree.chemin, garde), entree.raison))
+
+
+def garde_de(chemin: str, gardes: Sequence[FichierGarde]) -> FichierGarde | None:
+    """Ce que le projet garde à `chemin` (#1678) — `None` s'il ne le garde pas."""
+    return next((g for g in gardes if g.nom.casefold() == chemin.casefold()), None)
+
+
+def qui_garde(chemin: str, garde: Piece) -> str:
+    """« le projet garde CLAUDE.md (ce qu'il exige, lu dans …) » — le constat, en une phrase."""
+    return f"le projet garde {chemin} ({garde.role}, lu dans {garde.chemin})"
+
+
+def avertissement(chemin: str, garde: Piece) -> str:
+    """Ce que dit une entrée qui écrirait un bloc dans un fichier gardé, avant tout jeu."""
+    return (
+        f"⚠ {qui_garde(chemin, garde)} : le bloc que Maestro y ajouterait peut faire rougir "
+        f"ses tests — refusez cette pièce si {chemin} n'a pas la place."
     )
+
+
+def a_la_suite(phrase: str, suite: str) -> str:
+    """`suite` après `phrase`, qui finit une phrase : `suite` en commence une, par sa capitale.
+
+    Une raison commence par sa minuscule, et l'écran ne met en phrase que sa première lettre
+    (`enPhrase`, `apps/web`) : deux raisons mises bout à bout se joignent donc ici.
+    """
+    if not suite:
+        return phrase
+    if phrase.rstrip().endswith((".", "!", "?", "…")):
+        suite = suite[:1].upper() + suite[1:]
+    return f"{phrase} {suite}"
 
 
 #: Pourquoi `AGENTS.md` — la raison du fichier lui-même, qui ne dépend pas de ce que le

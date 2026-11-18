@@ -100,6 +100,7 @@ from maestro.outillage.modele import (
     ConstatEcarte,
     Constats,
     ConventionDeCommit,
+    FichierGarde,
     Gestionnaire,
     Langage,
     Lecture,
@@ -154,7 +155,8 @@ COMMITS = "COMMITS"
 EXCLU = "EXCLUDED"
 
 #: La clé d'un fichier que le projet **garde** (#1678) — le budget de `CLAUDE.md` qu'un
-#: test vérifie. Une pièce qui y écrirait un bloc le dit avant d'être écrite.
+#: test vérifie. Une pièce qui y écrirait un bloc joue ce qui le garde, sur une copie qui
+#: la porte, avant d'être montrée (#1716).
 GARDE = "GUARDED"
 
 #: La clé qui dit ce qu'une commande rendue fait **pour ce projet** (#1350, #1381) — la
@@ -203,7 +205,7 @@ CI: <nom de la CI> | <fichier lu qui la définit>
 INSTRUCTIONS: <fichier lu> | <ce qu'il prescrit aux agents, en quelques mots>
 COMMITS: <fichier lu> | <la convention de message de commit qu'il impose, en une ligne>
 EXCLUDED: <usage> | <fichier d'instructions lu> | <ce qu'il y dit>
-GUARDED: <fichier du projet> | <fichier lu qui le dit gardé> | <ce qu'il exige>
+GUARDED: <fichier du projet> | <fichier lu qui le dit gardé> | <ce qu'il exige> | <commande>
 FIN
 Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
 quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
@@ -246,7 +248,12 @@ fichier d'instructions se lit en entier : s'il t'est servi tronqué, redemande-l
 
 GUARDED : un fichier existant où Maestro écrirait un bloc — AGENTS.md, CLAUDE.md,
 GEMINI.md — que le projet garde : un budget, un contenu qu'un test vérifie, une règle
-qui interdit d'y ajouter. Le fichier lu est celui qui le dit.
+qui interdit d'y ajouter. Le fichier lu est celui qui le dit ; ce qu'il exige tient en
+quelques mots, sans barre verticale. La commande vient en dernier : celle qui joue ce qui
+le garde — le test qui le vérifie, pas la suite entière —, telle que les instructions du
+projet la font jouer (l'interpréteur de son environnement, pas l'outil nu). Maestro la
+jouera sur une copie du projet qui porte ce qu'il y écrirait, avant de l'écrire. Laisse-la
+vide si rien de ce que tu as lu ne le vérifie par une commande.
 
 Règles :
 - Chaque GESTIONNAIRE, COMMANDE, CI, INSTRUCTIONS, COMMITS, EXCLUDED et GUARDED cite
@@ -847,10 +854,12 @@ def _decoder(texte: str) -> _Reponse:
             coupes = (
                 4
                 if cle == "COMMANDE"
+                else 3
+                if cle == GARDE
                 else 1
                 if cle in (POUR, INSTRUCTIONS, COMMITS)
                 else 2
-                if cle in (EXCLU, GARDE)
+                if cle == EXCLU
                 else -1
             )
             champs = tuple(_sans_gaine(champ.strip()) for champ in reste.split("|", coupes))
@@ -913,7 +922,7 @@ class _Confronteur:
         # d'instructions peut être reconnu par une ligne qui suit celle qui le cite.
         self._doublons_des_tables: list[tuple[Commande, str]] = []
         self._exclus: list[tuple[Piece, str]] = []
-        self.gardes: list[Piece] = []
+        self.gardes: list[FichierGarde] = []
 
     def confronter(self, brut: _ConstatBrut) -> None:
         """Retient `brut`, ou l'écarte avec sa raison."""
@@ -1044,7 +1053,12 @@ class _Confronteur:
         return ""
 
     def _garde_de(self, champs: tuple[str, ...]) -> str:
-        """Un fichier que le projet garde (#1678) : il existe, et un fichier lu le dit."""
+        """Un fichier que le projet garde (#1678) : il existe, et un fichier lu le dit.
+
+        Sa commande (#1716) est le dernier champ, comme celle d'une `COMMANDE` : elle peut
+        porter une barre verticale. Une commande plus longue qu'une commande n'en est pas
+        une — la garde reste, sans commande, et la pièce dira qu'elle n'a rien pu jouer.
+        """
         garde, raison = self._preuve(champs[0] if champs else "", lu=False)
         if garde is None:
             return raison
@@ -1054,7 +1068,15 @@ class _Confronteur:
         if any(p.nom.casefold() == garde.casefold() for p in self.gardes):
             return _deja(_LECTURE)
         exigence = _court(champs[2]) if len(champs) > 2 else ""
-        self.gardes.append(Piece(nom=garde, chemin=preuve, role=exigence or f"lu dans {preuve}"))
+        commande = champs[3].strip() if len(champs) > 3 else ""
+        self.gardes.append(
+            FichierGarde(
+                nom=garde,
+                chemin=preuve,
+                role=exigence or f"lu dans {preuve}",
+                commande=commande if len(commande) <= COMMANDE_MAX else "",
+            )
+        )
         return ""
 
     def _est_d_instructions(self, chemin: str) -> bool:
