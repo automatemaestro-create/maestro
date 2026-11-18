@@ -363,20 +363,28 @@ en vigueur depuis #1725). Le moteur de Docker Desktop refuse un processus abaiss
 son tube à l'agent serait une sortie générale du confinement. L'agent obtient donc le conteneur par
 un **courtier** : il lance `maestro-container IMAGE COMMANDE`, et Maestro compose lui-même ce
 conteneur, au niveau de la personne, sur l'espace de la session et sur le contrat de
-[docs/17 §3](./17-isolation-execution.md). La demande ne nomme que l'image et la commande. Un
-montage, un réseau, un privilège ou un dossier y sont refusés avec leur raison, comme un jeton qui
-n'est pas celui d'une session vivante.
+[docs/17 §3](./17-isolation-execution.md). La demande ne nomme que l'image, ou un Dockerfile de
+l'espace, et la commande. Un montage, un réseau, un privilège ou un dossier y sont refusés avec leur
+raison, comme un jeton qui n'est pas celui d'une session vivante. Le Dockerfile est une donnée que
+le courtier juge, jamais une permission (#1726) : Maestro construit l'image lui-même, sur le
+contexte que le `.dockerignore` de l'agent garde de l'espace moins ce que le périmètre exclut, sans
+droit étendu, secret ni agent ssh. Chaque projet a son étiquette, une image neuve retire la
+précédente, et un projet ne joue qu'un conteneur à la fois.
 
 Ce que le courtier **ouvre** :
 - un verbe, que le jeton de la session lie à son espace ;
-- le disque du moteur, où les images nommées restent ;
+- le disque du moteur, où les images nommées restent, et l'image construite de chaque projet ;
 - la frontière du conteneur, celle du mode isolé ;
-- le réseau sortant, comme celui de l'agent.
+- le réseau sortant, comme celui de l'agent ;
+- la construction : des étapes `RUN` jouées par BuildKit sans les plafonds du conteneur, des
+  images de base tirées avec les identifiants de registre de la personne, un frontend tiers qu'une
+  directive `# syntax=` fait exécuter, et le cache de construction du moteur, partagé avec la
+  personne (les caches montés sont rangés sous l'espace de noms du projet).
 
 Ce qu'il **ne couvre pas** :
 - un commit fait dans le conteneur, qui n'en revient pas ;
 - un filet qui commande docker lui-même ;
-- une image construite depuis un Dockerfile de l'espace (#1726) ;
+- un constructeur à part, qui fermerait le partage du cache de construction ;
 - le filet du dépôt de Maestro joué par un agent (#1727) et la vérification d'une tâche (#1728).
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien

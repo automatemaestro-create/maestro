@@ -88,6 +88,9 @@ réseau, ni privilège, ni dossier.
      agent ssh.
    - Le contexte est l'espace masqué, jamais la racine.
    - Une directive `# syntax=` tire un frontend tiers, qui joue dans BuildKit sans plus de droits.
+   - Le cache de construction du moteur est celui de la personne (mesuré par #1726). Les caches
+     montés sont rangés sous l'espace de noms du projet, qu'un frontend tiers ne tient pas
+     ([docs/17 §7](./17-isolation-execution.md)).
 3. **Le disque du moteur.** `docker_data.vhdx` ne rétrécit jamais
    ([docs/10 §8.4](./10-workflow-git.md)). Le courtier garde donc :
    - une étiquette par projet ;
