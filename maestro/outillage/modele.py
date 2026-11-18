@@ -618,6 +618,11 @@ class Lecture:
 
     `refus` garde chaque demande que l'explorateur n'a pas servie : c'est là que
     se lit qu'un `.env` demandé n'a pas été ouvert.
+
+    `empreintes` (#1717) dit, pour chaque fichier lu, le SHA-256 de son contenu entier quand
+    il a été ouvert. C'est ce qui dit, après un run, si un fichier d'instructions a changé :
+    une date bouge quand un clone réécrit le fichier à l'identique, son contenu non. Elle
+    reste en mémoire, avec la lecture, et n'est pas servie.
     """
 
     etat: str
@@ -630,11 +635,17 @@ class Lecture:
     tronques: tuple[str, ...] = ()
     retenus: Constats = field(default_factory=Constats)
     ecartes: tuple[ConstatEcarte, ...] = ()
+    empreintes: tuple[tuple[str, str], ...] = ()
 
     @property
     def tronque(self) -> bool:
         """La lecture s'est-elle arrêtée, ou a-t-elle coupé un fichier, avant d'avoir tout vu ?"""
         return bool(self.troncatures)
+
+    def empreinte_de(self, chemin: str) -> str:
+        """Le SHA-256 de `chemin` quand cette lecture l'a ouvert, `""` si elle ne l'a pas lu."""
+        cle = chemin.casefold()
+        return next((e for c, e in self.empreintes if c.casefold() == cle), "")
 
     def to_dict(self) -> dict[str, Any]:
         """La lecture en JSON — `retenus` réduit aux constats que le modèle peut rendre."""
