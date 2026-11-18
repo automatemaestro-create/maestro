@@ -171,12 +171,15 @@ Jobs : ${JOBS_CONNUS// /, }
   lint : ${ETAGE_LINT// /, }
   test : ${ETAGE_TEST// /, }
 
-Le lint tourne toujours en entier. Le périmètre de pytest se déduit du diff avec origin/main,
-travail non commité compris :
+Le lint tourne toujours en entier. Le périmètre de pytest se déduit du diff depuis le point d'où
+la branche part de main — origin/main, ou la main locale quand elle porte des commits non poussés
+que la branche a reçus d'elle (#1713) —, travail non commité compris :
   maestro/**          les suites qui NOMMENT le module (maestro.a.b, maestro/a/b.py,
                       from maestro.a import b) ; une donnée, celles qui nomment le module qui
                       la lit ; personne → les suites applicatives (#1242)
-  scripts/**, .claude/**, .github/**  les suites qui NOMMENT le fichier modifié
+  scripts/**, .claude/**, .github/**  les suites qui NOMMENT le fichier modifié ; un nom nu que
+                      d'autres fichiers portent, celles qui le LISENT, et aucune pour de la prose
+                      que personne ne lit (#1713)
   tests/test_*.py     elles-mêmes
   conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
   apps/web/**, docs/**, *.md de la racine   les suites qui les LISENT : elles écrivent leur
@@ -186,7 +189,7 @@ travail non commité compris :
   apps/desktop/**     les suites qui la NOMMENT, et aucune s'il n'y en a pas — jamais la suite
                       entière : le job desktop couvre ce qu'aucune suite ne regarde (#948)
 
-web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change par rapport à origin/main,
+web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change depuis ce point de départ,
 et desktop que si apps/desktop change — même règle que le pipeline. « --only <job> » les force.
 
 OÙ pytest joue (#372) : dans un conteneur Linux construit depuis $PYTEST_DOCKERFILE_REL,
@@ -330,7 +333,41 @@ node_bindir() {
 }
 
 # --- Ce que la branche apporte ---------------------------------------------------------------------
-# Les chemins (relatifs à la racine) que la branche modifie par rapport à origin/main, TRAVAIL NON
+#: Le point d'où la branche est partie, posé par `base_de_la_branche` : son commit (`BASE_DIFF`,
+#: vide si aucun), la branche qui le porte (`BASE_NOM`) et ce que la `main` locale a de plus
+#: qu'origin/main dans l'histoire de la branche (`BASE_NON_POUSSES`).
+BASE_DIFF=""
+BASE_NOM="origin/main"
+BASE_NON_POUSSES=0
+
+#: `base_de_la_branche` — d'où part la branche : de `main`, locale ou distante (#1713).
+#:
+#: C'est le plus récent des deux points de départ. La branche d'une tâche de Maestro part de la
+#: `main` locale du projet, où Maestro a commité ses pièces d'outillage sans les pousser : ces
+#: commits ne sont pas le travail de la branche, mais comparée à origin/main, chaque tâche les
+#: portait dans son diff. La `main` locale ne l'emporte que si elle est en AVANCE dans l'histoire
+#: de la branche : un clone de développement, dont la `main` a du retard, garde origin/main.
+#:
+#: Sur `main` elle-même, ses commits non poussés sont ce que le push emportera : la base reste
+#: origin/main. Sans origin/main (un projet sans dépôt distant), c'est la `main` locale.
+base_de_la_branche() {
+  local distante locale
+  BASE_NOM="origin/main"
+  BASE_NON_POUSSES=0
+  distante="$(git -C "$RACINE" merge-base origin/main HEAD 2>/dev/null)"
+  BASE_DIFF="$distante"
+  [ "$(git -C "$RACINE" symbolic-ref -q HEAD 2>/dev/null)" != refs/heads/main ] || return 0
+  locale="$(git -C "$RACINE" merge-base refs/heads/main HEAD 2>/dev/null)"
+  [ -n "$locale" ] && [ "$locale" != "$distante" ] || return 0
+  if [ -n "$distante" ]; then
+    git -C "$RACINE" merge-base --is-ancestor "$distante" "$locale" 2>/dev/null || return 0
+    BASE_NON_POUSSES="$(git -C "$RACINE" rev-list --count "$distante..$locale" 2>/dev/null)"
+  fi
+  BASE_DIFF="$locale"
+  BASE_NOM="main"
+}
+
+# Les chemins (relatifs à la racine) que la branche modifie depuis son point de départ, TRAVAIL NON
 # COMMITÉ COMPRIS : c'est ce qui partira au push, donc ce sur quoi le pipeline se prononcera. Sert
 # au périmètre de pytest (#214) comme à celui de web-build.
 #
@@ -339,10 +376,9 @@ node_bindir() {
 # le rendait en une seule ligne « ancien -> nouveau », que personne ne sait classer, et `diff` ne
 # rendait que le nouveau nom, si bien que ce qui s'adossait à l'ancien n'était plus jugé.
 fichiers_modifies() {
-  local base
-  base="$(git -C "$RACINE" merge-base origin/main HEAD 2>/dev/null)"
+  base_de_la_branche
   {
-    [ -n "$base" ] && git -C "$RACINE" diff --no-renames --name-only "$base" -- 2>/dev/null
+    [ -n "$BASE_DIFF" ] && git -C "$RACINE" diff --no-renames --name-only "$BASE_DIFF" -- 2>/dev/null
     git -C "$RACINE" status --porcelain --no-renames --untracked-files=all 2>/dev/null | cut -c4-
   } | tr -d '"' | grep -v '^[[:space:]]*$' | sort -u
 }
@@ -712,8 +748,9 @@ modules_declarant() {
 #
 # Personne ne lit le fichier : il reste sans effet sur pytest, et c'est la raison qui le dit. On
 # ne s'élargit pas ici : la règle d'or vaut pour un fichier qu'on ne sait pas classer, et celui-ci
-# l'est.
-classe_par_lecture() { # <chemin> <raison quand personne ne le lit>
+# l'est. Rend 1 quand personne ne le lit ; sans raison, il laisse à l'appelant la suite à donner
+# (`classe_par_nom`, pour un fichier dont le nom nu en désigne d'autres, #1713).
+classe_par_lecture() { # <chemin> [raison quand personne ne le lit]
   local chemin="$1" lus suite lu module motif nommant lu_par=0
   lus="$(suites_lisant "$chemin")"
   while IFS=$'\t' read -r suite lu; do
@@ -734,7 +771,30 @@ classe_par_lecture() { # <chemin> <raison quand personne ne le lit>
     ajoute_raison RAISONS_CHOIX "$motif lu par $(module_de "$module")"
     lu_par=1
   done < <(modules_declarant "$chemin")
-  [ "$lu_par" = 1 ] || ajoute_raison RAISONS_SANS "$2"
+  [ "$lu_par" = 0 ] || return 0
+  [ -z "${2:-}" ] || ajoute_raison RAISONS_SANS "$2"
+  return 1
+}
+
+#: Les fichiers du dépôt, suivis ou neufs, relevés une fois par périmètre : un diff de vingt
+#: fichiers n'a pas à relister vingt fois le dépôt.
+FICHIERS_DU_DEPOT=""
+FICHIERS_RELEVES=0
+
+#: `porte_un_homonyme <chemin>` — vrai quand un AUTRE fichier du dépôt porte le même nom nu (#1713).
+porte_un_homonyme() {
+  if [ "$FICHIERS_RELEVES" = 0 ]; then
+    FICHIERS_DU_DEPOT="$(git -C "$RACINE" -c core.quotePath=false ls-files --cached --others \
+      --exclude-standard 2>/dev/null)"
+    FICHIERS_RELEVES=1
+  fi
+  # Sans `exit` anticipé : awk refermerait le tube avant que `printf` ait tout écrit, et
+  # `pipefail` rendrait l'échec de l'écriture au lieu du verdict.
+  printf '%s\n' "$FICHIERS_DU_DEPOT" | awk -v f="$1" '
+    BEGIN { b = f; sub(/.*\//, "", b) }
+    { n = $0; sub(/.*\//, "", n) }
+    n == b && $0 != f { trouve = 1 }
+    END { exit !trouve }'
 }
 
 #: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
@@ -782,14 +842,33 @@ rend_raisons() { printf '%s' "${1#|}" | tr '|' '
 # Le second argument, optionnel, remplace l'ÉLARGISSEMENT final par une abstention motivée : voir
 # le commentaire à l'endroit où il agit, plus bas.
 classe_par_nom() { # <chemin> [raison de ne pas élargir]
-  local base dossier nommant
+  local base dossier nommant designe="$1"
   base="$(basename "$1")"
-  nommant="$(suites_nommant "$base" ancre)"
-  if [ -n "$nommant" ]; then
-    CHOISIES="$CHOISIES$nommant"$'
+  dossier="$(dirname "$1")"
+  # Un nom nu que d'AUTRES fichiers du dépôt portent ne désigne aucun d'eux (#1713) : `SKILL.md`
+  # est cité par les suites qui lisent les skills de `.claude/skills/`. Il rattachait à elles les
+  # `.agents/skills/<nom>/SKILL.md` que l'outillage pose dans un projet, que personne ne lit, et
+  # c'est ainsi que `test_orchestrate` entrait au périmètre d'une tâche d'un seul module. Un tel
+  # fichier se classe par ce qui le LIT, la règle de #1689 ; personne ne le lit, la prose reste
+  # sans effet, comme celle de la racine, et le reste passe au repli du dossier puis à
+  # l'élargissement. Le nom nu d'un fichier de la racine est son chemin : il le désigne toujours.
+  if [ "$dossier" != . ] && porte_un_homonyme "$1"; then
+    classe_par_lecture "$1" && return 0
+    case "$1" in
+      *.md)
+        ajoute_raison RAISONS_SANS "un $base qu'aucune suite ne lit"
+        return 0
+        ;;
+    esac
+  else
+    designe="$base"
+    nommant="$(suites_nommant "$base" ancre)"
+    if [ -n "$nommant" ]; then
+      CHOISIES="$CHOISIES$nommant"$'
 '
-    ajoute_raison RAISONS_CHOIX "$base"
-    return 0
+      ajoute_raison RAISONS_CHOIX "$base"
+      return 0
+    fi
   fi
   # Second essai, par le DOSSIER : une suite qui relit tout un répertoire le désigne par son
   # CHEMIN, jamais par celui de ses fichiers — `test_collaboration` parcourt
@@ -808,7 +887,6 @@ classe_par_nom() { # <chemin> [raison de ne pas élargir]
   # de tout `scripts/gitlab/lib.sh` cité quelque part (10 suites mesurées), il ne désigne aucun
   # répertoire en particulier. Rien de crédible ⇒ on s'abstient, donc on élargit — le sens de
   # dérive du filet, jamais l'inverse.
-  dossier="$(dirname "$1")"
   nommant=""
   case "$dossier" in
     */*) nommant="$(suites_nommant "$dossier/")" ;;
@@ -828,7 +906,7 @@ classe_par_nom() { # <chemin> [raison de ne pas élargir]
     return 0
   fi
   PERIMETRE_TOUT=1
-  ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
+  ajoute_raison RAISONS_TOUT "aucune suite ne nomme $designe"
 }
 
 # La règle du nom, appliquée à un fichier de `maestro/` (#1242). Pose ses résultats dans
@@ -923,11 +1001,13 @@ calcule_perimetre() {
   CHOISIES=""
   LECTURES=""
   LECTURES_LUES=0
+  FICHIERS_DU_DEPOT=""
+  FICHIERS_RELEVES=0
 
   local modifies outillage applicatives fichier
   modifies="$(fichiers_modifies)"
   if [ -z "$modifies" ]; then
-    PERIMETRE_MOTIF="rien de modifié par rapport à origin/main"
+    PERIMETRE_MOTIF="rien de modifié par rapport à $BASE_NOM"
     return 0
   fi
 
@@ -1181,8 +1261,8 @@ resume_vitest() { # <failed|passed>
 }
 
 # Le pipeline ne joue ce job que si apps/web (ou .github/workflows/ci.yml) change : même règle ici, évaluée
-# sur ce que la branche apporte à origin/main, travail non commité compris — c'est ce qui partira
-# au push. « --only web-build » passe outre (on l'a demandé explicitement).
+# sur ce que la branche apporte depuis son point de départ, travail non commité compris — c'est ce
+# qui partira au push. « --only web-build » passe outre (on l'a demandé explicitement).
 web_concerne() {
   case " $JOBS_ONLY " in *" web-build "*) return 0 ;; esac
   fichiers_modifies | grep -qE '^(apps/web/|\.github/workflows/)'
@@ -1191,7 +1271,7 @@ web_concerne() {
 job_web() {
   local bindir
   if ! web_concerne; then
-    DETAIL="apps/web inchangé par rapport à origin/main — le pipeline ne le joue pas non plus"
+    DETAIL="apps/web inchangé par rapport à $BASE_NOM — le pipeline ne le joue pas non plus"
     return 3
   fi
   bindir="$(node_bindir)" || {
@@ -1251,7 +1331,7 @@ sources_coque() {
 job_desktop() {
   local bindir fichier nb=0
   if ! desktop_concerne; then
-    DETAIL="apps/desktop inchangé par rapport à origin/main — le pipeline ne le joue pas non plus"
+    DETAIL="apps/desktop inchangé par rapport à $BASE_NOM — le pipeline ne le joue pas non plus"
     return 3
   fi
   [ -d "$RACINE/apps/desktop" ] || {
@@ -1496,6 +1576,14 @@ joue_etage() {
 branche="$(git -C "$RACINE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 printf '\n%sFilet CI local%s — %s\n' "$C_B" "$C_0" "$RACINE"
 printf 'branche : %s · les mêmes contrôles que .github/workflows/ci.yml, avec le venv et le Node du dépôt\n' "${branche:-?}"
+# Une base qui n'est pas origin/main se dit (#1713) : elle retire du diff des commits que le
+# pipeline d'une PR verrait.
+base_de_la_branche
+if [ "$BASE_NOM" = main ] && [ "$BASE_NON_POUSSES" -gt 0 ]; then
+  printf 'base    : main, en avance de %s commit(s) sur origin/main — ils ne sont pas ceux de la branche\n' "$BASE_NON_POUSSES"
+elif [ "$BASE_NOM" = main ]; then
+  printf 'base    : main, sans origin/main\n'
+fi
 if [ "$MODE_PYTEST" = complet ]; then
   printf 'pytest  : suite entière + couverture (--complet)\n\n'
 else
