@@ -102,14 +102,20 @@ LIGNE_INTEGRITE_BASSE = (
     "tu écris."
 )
 
-#: Comment une commande de l'agent abaissé joue dans un conteneur (#1725, docs/57 §4) : par
-#: le courtier de Maestro, qui compose lui-même le conteneur, jamais par le moteur, que
-#: l'intégrité basse ne joint pas. Ce que la demande peut nommer, ce que Maestro compose,
-#: et ce qui n'en revient pas.
+#: Comment une commande de l'agent abaissé joue dans un conteneur (#1725, #1726, docs/57 §4) :
+#: par le courtier de Maestro, qui compose lui-même le conteneur et construit lui-même
+#: l'image d'un Dockerfile, jamais par le moteur, que l'intégrité basse ne joint pas. Ce que
+#: la demande peut nommer, ce que Maestro compose et construit, et ce qui n'en revient pas.
 LIGNE_COURTIER = (
     "- **Un conteneur, par le courtier de Maestro** : `docker` ne répond pas à l'intégrité "
     f"basse. Pour jouer une commande dans un conteneur Linux, lance `{PROGRAMME_DU_COURTIER} "
-    "IMAGE COMMANDE [ARGUMENT...]` : tu nommes l'image et la commande, rien d'autre. Maestro "
+    "IMAGE COMMANDE [ARGUMENT...]` : tu nommes l'image et la commande, rien d'autre. Pour "
+    f"l'image du projet, nomme plutôt un Dockerfile de ton espace : `{PROGRAMME_DU_COURTIER} "
+    "--dockerfile CHEMIN COMMANDE [ARGUMENT...]`. Maestro la construit sur ce que ton "
+    "`.dockerignore` garde de l'espace, le Dockerfile compris et jamais ce que le périmètre "
+    "exclut, sans réseau de l'hôte, secret ni agent ssh ; il ne la reconstruit que si ce "
+    "contenu change, et l'image neuve remplace la précédente du projet. Un conteneur à la "
+    "fois par projet : une seconde demande attend son tour. Maestro "
     "compose le conteneur sur ton espace de travail, monté sur `/workspace` avec les masques "
     "du périmètre (et un dépôt Git à lui pour un projet versionné), le joue, puis te rend sa "
     "sortie et son code de retour. Sa racine est en lecture seule, il tourne sous "

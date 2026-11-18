@@ -6,6 +6,11 @@ writes what the container writes and exits with its exit code. The agent names t
 image and the command, nothing else: Maestro composes the container on the session's
 workspace, at the person's level, on the contract of docs/17 §3.
 
+`maestro-container --dockerfile PATH COMMAND [ARG...]` names, instead of an image, a
+Dockerfile of the workspace (#1726): Maestro builds the project's image from it, unless
+it is already built on the same content, then plays COMMAND in it. PATH is sent
+absolute, resolved against this program's working directory.
+
 This file runs at low integrity, under the agent, with `python -I`: it imports the
 standard library only, and nothing of Maestro. It decides nothing either. What it
 sends is checked by the broker, which is the only one to refuse, and says why; this
@@ -36,11 +41,15 @@ ENV_TOKEN = "CONTAINER_BROKER_TOKEN"
 #: The name the agent types.
 PROGRAM = "maestro-container"
 
-#: The fields a request carries, and the only ones.
+#: The fields a request carries, and the only ones: an image or a Dockerfile, not both.
 FIELD_TOKEN = "token"
 FIELD_IMAGE = "image"
+FIELD_DOCKERFILE = "dockerfile"
 FIELD_COMMAND = "command"
-REQUEST_FIELDS: tuple[str, ...] = (FIELD_TOKEN, FIELD_IMAGE, FIELD_COMMAND)
+REQUEST_FIELDS: tuple[str, ...] = (FIELD_TOKEN, FIELD_IMAGE, FIELD_DOCKERFILE, FIELD_COMMAND)
+
+#: The option that names a Dockerfile instead of an image.
+OPTION_DOCKERFILE = "--dockerfile"
 
 #: The fields of the broker's answer, one JSON object per line: output in base64,
 #: then the exit code, or a refusal that says why.
@@ -62,10 +71,30 @@ REQUEST_MAX_BYTES = 1 << 20
 _PREFIX = f"{PROGRAM} : "
 
 
-def request(token: str, image: str, command: Sequence[str]) -> bytes:
-    """The request line for `image` and `command`, as the broker reads it."""
-    body = {FIELD_TOKEN: token, FIELD_IMAGE: image, FIELD_COMMAND: list(command)}
+def request(
+    token: str, image: str | None, command: Sequence[str], *, dockerfile: str | None = None
+) -> bytes:
+    """The request line for `image` (or `dockerfile`) and `command`, as the broker reads it."""
+    body: dict[str, object] = {FIELD_TOKEN: token}
+    if dockerfile is not None:
+        body[FIELD_DOCKERFILE] = dockerfile
+    else:
+        body[FIELD_IMAGE] = image
+    body[FIELD_COMMAND] = list(command)
     return json.dumps(body, ensure_ascii=True).encode("ascii") + b"\n"
+
+
+def _what_to_play(arguments: list[str]) -> tuple[str | None, str | None, list[str]]:
+    """The image, or the Dockerfile made absolute, and the command, as typed after them."""
+    first = arguments[0]
+    if first == OPTION_DOCKERFILE:
+        if len(arguments) < 2:
+            return None, "", []
+        return None, os.path.abspath(arguments[1]), arguments[2:]
+    if first.startswith(OPTION_DOCKERFILE + "="):
+        path = first.split("=", 1)[1]
+        return None, os.path.abspath(path) if path else "", arguments[1:]
+    return first, None, arguments[1:]
 
 
 def frame(**fields: object) -> bytes:
@@ -86,10 +115,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if not arguments or arguments[0] in ("-h", "--help"):
         _say(
-            f"usage : {PROGRAM} IMAGE COMMANDE [ARGUMENT...]. Tu nommes l'image et la "
-            "commande ; Maestro compose le conteneur sur ton espace de travail."
+            f"usage : {PROGRAM} IMAGE COMMANDE [ARGUMENT...], ou {PROGRAM} "
+            f"{OPTION_DOCKERFILE} CHEMIN COMMANDE [ARGUMENT...]. Tu nommes l'image, ou un "
+            "Dockerfile de ton espace dont Maestro construit l'image, et la commande ; "
+            "Maestro compose le conteneur sur ton espace de travail."
         )
         return 0 if arguments else NOT_RUN
+    image, dockerfile, command = _what_to_play(arguments)
     raw_address = os.environ.get(ENV_ADDRESS, "")
     token = os.environ.get(ENV_TOKEN, "")
     if not raw_address or not token:
@@ -109,7 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _say(f"le courtier de conteneur ne répond pas ({exc}) : la commande n'a pas été jouée.")
         return NOT_RUN
     with connection:
-        connection.sendall(request(token, arguments[0], arguments[1:]))
+        connection.sendall(request(token, image, command, dockerfile=dockerfile))
         return _relay(connection.makefile("rb"), sys.stdout.buffer, sys.stderr.buffer)
 
 

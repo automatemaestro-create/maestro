@@ -448,9 +448,10 @@ commande le moteur monte dans un conteneur n'importe quel dossier que la personn
 commande dans un conteneur, et Maestro compose lui-même ce conteneur, au niveau de la personne
 (`maestro/sandbox/container_broker.py`). Le code de l'agent ne joue que dedans.
 - **Ce que l'agent nomme** : une image et une commande, par `maestro-container IMAGE COMMANDE
-  [ARGUMENT...]`, ou par un script qui le lance. Rien d'autre. Une demande qui nomme un montage, un
-  réseau, un privilège ou un dossier est refusée, et le refus dit pourquoi. Le code 125 dit que
-  rien n'a été joué, et la raison suit sur stderr.
+  [ARGUMENT...]`, ou un Dockerfile de son espace et une commande, par `maestro-container
+  --dockerfile CHEMIN COMMANDE [ARGUMENT...]` (#1726), ou par un script qui le lance. Rien d'autre.
+  Une demande qui nomme un montage, un réseau, un privilège ou un dossier est refusée, et le refus
+  dit pourquoi. Le code 125 dit que rien n'a été joué, et la raison suit sur stderr.
 - **Ce que Maestro compose**, par le code du mode isolé et sur le contrat du §3, jamais par un
   second contrat :
   - l'espace de la session sur `/workspace`, avec ses masques ;
@@ -461,14 +462,49 @@ commande dans un conteneur, et Maestro compose lui-même ce conteneur, au niveau
 
   Rien de l'environnement de la personne n'y entre, pas même les variables d'authentification : la
   commande n'a pas à joindre le modèle.
+- **Ce que Maestro construit** depuis un Dockerfile (#1726, `maestro/sandbox/container_image.py`).
+  Le Dockerfile est une donnée de l'agent, que le courtier juge, jamais une permission. Il doit être
+  dans l'espace, nommé par un chemin que docker lit tel quel (sans `*`, `?`, `[`, `]` ni `\`), et
+  hors de ce que le périmètre exclut. Maestro construit lui-même, au niveau de la personne, en deux
+  temps :
+  1. **le contexte**. Docker exporte en tar ce que le `.dockerignore` de l'agent garde de l'espace,
+     jamais la racine du projet. Le fichier d'exclusion que docker lit est celui de Maestro : les
+     motifs de l'agent, puis le Dockerfile, puis les masques du périmètre, en dernier pour qu'ils
+     l'emportent. Un `!.env` de l'agent ne fait donc pas revenir un `.env` exclu. Pour un projet
+     versionné, le `.git` de l'espace est écarté aussi. Le client de docker envoie un lien ou une
+     jonction comme un lien, jamais ce qu'il désigne. Maestro relit le tar : un chemin masqué qui
+     s'y trouverait refuse la construction ;
+  2. **l'image**, depuis ce tar sur l'entrée standard. Un contexte en tar est pris tel quel, sans
+     fichier d'exclusion : un frontend qu'une directive `# syntax=` fait tirer ne lit que ce tar.
+     Le Dockerfile y est, à son chemin, même si le `.dockerignore` de l'agent l'écarte : un
+     contexte en tar porte le Dockerfile qu'il construit.
+
+  BuildKit ne reçoit aucun droit étendu (`--allow network.host`, `security.insecure`), aucun
+  secret, aucun agent ssh, aucun argument de l'agent : un `RUN --network=host` est refusé par
+  BuildKit, et la construction échoue. Une construction qui échoue ne joue rien (code 125). Les
+  fichiers que le courtier lit lui-même dans l'espace (le `.dockerignore`) sont ouverts d'abord, et
+  le chemin final du fichier ouvert doit être dans l'espace : un lien ou une jonction posés par
+  l'agent ne lui font pas lire ce que l'agent ne lit pas.
+- **Chaque projet a son dépôt d'images, `maestro-broker/<projet>`, et l'étiquette est l'empreinte
+  du contexte** : chemin, type, mode et contenu de chaque entrée, jamais leur date. Une seconde
+  demande sur le même contenu trouve son image et ne construit rien. L'empreinte ne couvre pas les
+  images de base : une base qui bouge en amont ne reconstruit rien tant que le contenu de l'espace
+  ne change pas. Une image neuve retire les
+  autres étiquettes du dépôt du projet, comparées exactement à la courante, sur le parti pris de
+  #463 : le disque du moteur ne rétrécit jamais ([docs/10 §8.4](./10-workflow-git.md)), et ce qui
+  le protège est de ne pas laisser les images s'accumuler. L'image d'un projet reste entre deux
+  sessions. Une session sans projet a son dépôt à elle, retiré avec elle.
 - **Ce qui lie la demande à l'espace** : le jeton de la session. Le fournisseur ouvre le courtier
   quand le CLI naît abaissé, et le ferme avec la session. Un jeton qui n'est pas celui d'une session
   vivante est refusé. Jeton et adresse voyagent sous `CONTAINER_BROKER_TOKEN` et
   `CONTAINER_BROKER_ADDRESS`, hors de `MAESTRO_*`, que le lanceur retient (§8).
 - **Le canal** est une socket TCP sur le bouclage, que l'intégrité basse joint. Le processus qui
   fait tourner les sessions des agents la tient.
-- **Un conteneur à la fois par session** : une seconde demande attend la première, et le sait. Un
-  conteneur dont la demande s'en va est retiré.
+- **Un conteneur à la fois par projet**, construction comprise : les sessions d'un projet
+  partagent un verrou, parce que ses plafonds valent pour le projet et qu'une construction retire
+  l'image précédente. Une seconde demande attend la première, et le sait. Une session sans projet
+  est seule de son côté. Un conteneur dont la demande s'en va est retiré, et une construction
+  arrêtée.
 - **Le fait qui choisit le régime** : le programme `docker` est sur le poste. Si le moteur ne tourne
   pas, c'est docker qui le répond, avec son code.
 
@@ -476,10 +512,25 @@ commande dans un conteneur, et Maestro compose lui-même ce conteneur, au niveau
 - **un verbe** : l'agent fait naître des conteneurs sur le moteur de la personne. Un autre agent
   abaissé peut lire le jeton. Il n'obtient alors que l'espace de l'autre, qu'il peut déjà écrire ;
 - **le disque du moteur** : une image que l'agent nomme est tirée sur le moteur de la personne, et
-  y reste ;
+  y reste. Une image qu'il fait construire y reste aussi, une par projet ;
 - **la frontière du conteneur** : une évasion par le noyau ou le runtime atterrit dans la VM de
   Docker Desktop, l'hypothèse que le mode isolé fait déjà (§1) ;
-- **le réseau** sortant, comme celui de l'agent.
+- **le réseau** sortant, comme celui de l'agent ;
+- **la construction** (#1726, confrontée au modèle de menace,
+  [docs/19](./19-securite-modele-de-menace.md)) :
+  - les étapes `RUN` jouent dans les conteneurs de BuildKit, dans la VM de Docker Desktop, sans les
+    plafonds ni l'utilisateur du conteneur du §3, avec le réseau sortant ;
+  - une image de base est tirée avec les identifiants de registre de la personne, comme une image
+    nommée ;
+  - un frontend qu'une directive `# syntax=` nomme est une image tierce, tirée puis exécutée par
+    BuildKit. Il ne lit que le tar du contexte ;
+  - le cache de construction du moteur est celui de la personne. Une étape aux mêmes entrées
+    qu'une étape déjà construite, par l'agent ou par la personne, est reprise sans être rejouée.
+    Les caches montés (`RUN --mount=type=cache`) sont rangés sous l'espace de noms du dépôt du
+    projet (`BUILDKIT_CACHE_MOUNT_NS`) : une construction de la personne ne les voit pas, ni celle
+    d'un autre projet. Un frontend tiers n'est pas tenu par cet espace de noms ;
+  - le cache de construction grossit jusqu'à la politique de ramassage du moteur, celle de la
+    personne.
 
 Le conteneur ferme mieux que l'intégrité basse ce qu'il ne monte pas : le profil de la personne, et
 les dossiers étiquetés bas des autres agents.
@@ -489,8 +540,9 @@ les dossiers étiquetés bas des autres agents.
   rapatriement. L'agent committe depuis son shell ;
 - **un filet qui commande docker lui-même** (testcontainers, compose) : il ne passe par le courtier
   que s'il sait le demander ;
-- **une image construite depuis un Dockerfile de l'espace** : le courtier ne joue qu'une image
-  nommée (#1726) ;
+- **un constructeur à part** : l'agent construit sur le moteur et le cache de la personne. Un
+  constructeur dédié fermerait le partage du cache des couches, et celui des caches montés par un
+  frontend tiers ;
 - **le filet du dépôt de Maestro**, joué par un agent, et **la vérification d'une tâche** ne passent
   pas encore par lui (#1727, #1728) ;
 - **Linux et macOS** : rien n'y est abaissé, et le courtier n'y est pas offert.
@@ -521,6 +573,13 @@ marqueur `integrite_basse`) :
   d'un projet versionné, et reçoit la sortie et le code du conteneur, stderr compris. Le conteneur
   tourne sous l'uid 10001, sans capacité, racine en lecture seule, plafonné à 256 processus et 2 Go.
   Il voit l'espace, le `.env` versionné masqué (zéro octet) et le pointeur vers son propre dépôt ;
+- un processus abaissé fait construire, par `maestro-container --dockerfile`, l'image d'un projet
+  versionné dont le `.dockerignore` tente de faire revenir `.env` et `.git`. L'image porte ce que
+  ce fichier garde et le Dockerfile, ni `.env`, ni `.git`, ni le reste, et la commande y joue sous
+  l'uid 10001. La même demande ne reconstruit rien. Après un changement de contenu, l'image neuve
+  remplace la précédente, et le moteur ne garde que celle-là. Un Dockerfile qui demande
+  `--network=host` n'est pas construit (code 125). Une construction de la personne ne voit pas le
+  cache monté de l'agent, sauf sous l'espace de noms du projet ;
 - une suite jouée elle-même à l'intégrité basse, comme celle d'un agent confiné, saute ces tests et
   dit pourquoi : leur témoin y naîtrait bas lui aussi, et ils rougiraient sans rien dire du code
   (`tests/conftest.py`, #1714).

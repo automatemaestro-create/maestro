@@ -191,7 +191,8 @@ Le code de Maestro s'écrit en anglais ([docs/55](./55-decision-le-code-s-ecrit-
 | confinement | `containment` | ce qu'un agent lance ne survit pas à sa tâche |
 | intégrité basse | `low_integrity` | le niveau de Windows où naît le CLI d'un agent : il ne voit aucun processus de la personne et n'écrit que ce qui porte une étiquette basse |
 | étiquette (d'intégrité) | `integrity_label` | ce qu'un dossier porte pour être écrit à l'intégrité basse, ou fermé à sa lecture |
-| courtier (de conteneur) | `container_broker` | ce par quoi un agent à l'intégrité basse fait jouer une commande dans un conteneur que Maestro compose sur l'espace de sa session : il nomme l'image et la commande, rien d'autre, et le jeton de sa session le lie à son espace |
+| courtier (de conteneur) | `container_broker` | ce par quoi un agent à l'intégrité basse fait jouer une commande dans un conteneur que Maestro compose sur l'espace de sa session : il nomme l'image, ou un Dockerfile de son espace, et la commande, rien d'autre, et le jeton de sa session le lie à son espace |
+| image (d'un projet) | `container_image` | l'image que le courtier construit d'un Dockerfile de l'espace : une par projet, étiquetée par l'empreinte de son contexte, et qui retire la précédente |
 | établi | `workbench` | là où un agent essaie hors de son projet : ce que crée `mktemp -d`, que la portée reconnaît. À l'intégrité basse, chaque session a le sien, où mènent son temporaire et son `APPDATA`, et il est retiré avec elle |
 | cache de vérification | `verification_cache` | le `LOCALAPPDATA` que la vérification de l'outillage d'un projet garde d'un passage à l'autre, à l'intégrité basse : un par projet, jamais partagé, gardé par rétention |
 | espace de travail | `workspace` | le dossier jetable d'une tâche |
