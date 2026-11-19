@@ -1809,8 +1809,9 @@ def _git_qui_laisse_une_coquille(depot: Depot, *, vide: bool = True) -> None:
     """Faux `git` qui reproduit la panne : contenu supprimé, worktree désenregistré, dossier resté.
 
     Tout est délégué au vrai git — seul `worktree remove` est habillé de son échec, APRÈS coup,
-    exactement comme Windows le rend. `vide=False` laisse en plus un fichier dans le dossier, ce
-    qui est le cas où le rattrapage ne peut RIEN faire et doit le dire.
+    exactement comme Windows le rend. `vide=False` laisse en plus un fichier dans le dossier : ce
+    que git n'a pas atteint avant de s'arrêter. Le retrait l'achève (#1754), sauf si
+    `_un_processus_tient` le retient — le cas où le rattrapage ne peut RIEN faire et doit le dire.
 
     C'est la seule façon d'éprouver ce chemin sans dépendre d'un verrou de système de fichiers :
     « un processus tient le dossier » ne se met pas en scène de façon reproductible.
@@ -1838,6 +1839,31 @@ def _git_qui_laisse_une_coquille(depot: Depot, *, vide: bool = True) -> None:
     shim.chmod(0o755)
 
 
+def _un_processus_tient(depot: Depot, nom: str = "reste.txt") -> None:
+    """Faux `rm` : le fichier `nom` ne part pas, comme un fichier qu'un processus garde ouvert.
+
+    Le verrou est celui du système de fichiers, et « un processus tient ce fichier » ne se met pas
+    en scène de façon reproductible : ce double refuse de retirer tout chemin qui le porte, et
+    délègue le reste au vrai `rm`.
+    """
+    shim = depot.fauxbin / "rm"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'for cible in "$@"; do\n'
+        '  case "$cible" in -*) continue ;; esac\n'
+        f'  if [ -e "$cible/{nom}" ] || [ "${{cible##*/}}" = "{nom}" ]; then\n'
+        f'    printf "rm: cannot remove \'%s\': Device or resource busy\\n" "$cible/{nom}" >&2\n'
+        "    exit 1\n"
+        "  fi\n"
+        "done\n"
+        'for d in /usr/bin /bin; do [ -x "$d/rm" ] && exec "$d/rm" "$@"; done\n'
+        "exit 127\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    shim.chmod(0o755)
+
+
 def test_le_retrait_ecarte_la_coquille_que_git_laisse_derriere_lui(depot: Depot) -> None:
     """Le rattrapage : git a désenregistré, il ne reste qu'un dossier vide — on le retire."""
     depot.lance("create", "152", "--branche", BRANCHE)
@@ -1856,6 +1882,7 @@ def test_un_dossier_qui_resiste_est_dit_desenregistre_et_non_non_retire(depot: D
     """
     depot.lance("create", "152", "--branche", BRANCHE)
     _git_qui_laisse_une_coquille(depot, vide=False)
+    _un_processus_tient(depot)
 
     acheve = depot.lance("remove", "152")
     assert acheve.returncode == 1
@@ -2003,22 +2030,97 @@ def test_gc_nomme_la_cause_d_un_dossier_qui_resiste(depot: Depot) -> None:
     """« son dossier résiste », sans sa cause, obligeait à reproduire la panne pour la connaître."""
     depot.lance("create", "152", "--branche", BRANCHE)
     _git_qui_laisse_une_coquille(depot, vide=False)
+    _un_processus_tient(depot)
     depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert "#152 désenregistré, son dossier résiste" in acheve.stdout, acheve.stdout
     assert "Permission denied" in acheve.stdout, acheve.stdout
+    # Ce qui résiste au rattrapage est nommé lui aussi : git n'en est plus la cause.
+    assert "Device or resource busy" in acheve.stdout, acheve.stdout
 
 
 def test_remove_ne_promet_pas_le_ramassage_d_un_dossier_encore_plein(depot: Depot) -> None:
     """`gc` ne touche jamais à un dossier inconnu non vide : promettre son ramassage est faux."""
     depot.lance("create", "152", "--branche", BRANCHE)
     _git_qui_laisse_une_coquille(depot, vide=False)
+    _un_processus_tient(depot)
 
     acheve = depot.lance("remove", "152")
     assert acheve.returncode == 1
     assert "coquille vide" not in acheve.stderr, acheve.stderr
     assert "à la main" in acheve.stderr, acheve.stderr
+
+
+# --- Un dossier en lecture seule au retrait (#1754) -------------------------------------------
+# Git for Windows retire un FICHIER en lecture seule, pas un DOSSIER : son `rmdir` y échoue
+# (« Permission denied »), il s'arrête à cette entrée et désenregistre le worktree quand même.
+# Windows pose cet attribut sur tout dossier qu'un `desktop.ini` personnalise, celui que
+# l'installeur crée dans le profil du poste simulé de `verifier.sh` par exemple. Le `.git` était
+# déjà parti, le dossier restait plein, et `gc` le nommait sans y toucher (#422) : il ne partait
+# qu'à la main.
+
+
+def test_le_retrait_acheve_ce_que_git_a_laisse_en_chemin(depot: Depot) -> None:
+    """Git a commencé la suppression et s'est arrêté : le reste du worktree part avec lui."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot, vide=False)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists(), "le retrait ne devait pas laisser un dossier plein"
+
+
+def test_remove_acheve_ce_que_git_a_laisse_en_chemin(depot: Depot) -> None:
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot, vide=False)
+
+    acheve = depot.lance("remove", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Permission denied" in acheve.stdout, "l'arrêt de git en chemin se dit"
+    assert not depot.worktree().exists()
+
+
+def test_le_retrait_n_acheve_rien_que_git_n_ait_commence(depot: Depot) -> None:
+    """Sans `.git` AVANT l'appel, git n'a rien supprimé : rien ne dit que le dossier est un déchet.
+
+    C'est la frontière du rattrapage : il achève une suppression que git a décidée — après la garde
+    du travail non sauvegardé et sa propre vérification d'un arbre propre —, jamais une autre.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    (wt / ".git").unlink()
+    (wt / "notes.md").write_text("ne pas perdre", encoding="utf-8", newline="\n")
+
+    depot.lance("remove", "152")
+    assert (wt / "notes.md").read_text(encoding="utf-8") == "ne pas perdre"
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="l'attribut lecture seule d'un dossier est une affaire de Windows",
+)
+def test_un_worktree_qui_porte_un_dossier_en_lecture_seule_se_retire_sous_windows(
+    depot: Depot,
+) -> None:
+    """Le vrai git sur le vrai système de fichiers : le profil du poste simulé de #1751."""
+    attrib = shutil.which("attrib")
+    assert attrib is not None
+    depot.lance("create", "152", "--branche", BRANCHE)
+    # Sous un chemin ignoré (`node_modules/`), comme le poste simulé sous `.maestro/session/`.
+    bureau = depot.worktree() / "apps" / "web" / "node_modules" / "profil" / "Desktop"
+    bureau.mkdir(parents=True)
+    (bureau / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="utf-8")
+    subprocess.run([attrib, "+s", "+h", str(bureau / "desktop.ini")], check=True)  # noqa: S603
+    subprocess.run([attrib, "+r", str(bureau)], check=True)  # noqa: S603
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists(), "le dossier en lecture seule ne devait rien retenir"
 
 
 def test_gc_check_ne_retire_aucune_coquille(depot: Depot) -> None:

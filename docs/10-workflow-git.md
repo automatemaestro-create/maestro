@@ -5214,6 +5214,28 @@ sous Windows, l'option est sans effet. Deux suites, pour les cas où un dossier 
 la ligne de `gc` nomme la **cause rendue par git**, et `remove` ne promet plus le ramassage d'un
 dossier qui porte encore des fichiers, que rien ne ramassera. La garde de #422 ne bouge pas.
 
+#### Une suppression que git a commencée s'achève (#1754)
+
+Git for Windows retire un **fichier** en lecture seule, pas un **dossier** : son `rmdir` y échoue
+(« Permission denied »), il s'arrête à cette entrée, et désenregistre le worktree quand même.
+Windows pose cet attribut sur tout dossier qu'un `desktop.ini` personnalise. Observé le 2026-11-19 à
+la clôture de #1751 : `verifier.sh` avait posé son poste simulé sous le worktree, l'installeur y
+avait créé `profil/Desktop/` et son `desktop.ini`, et le dossier est resté plein, sans `.git`, nommé
+par `gc` et retiré à la main. Reproduit sur un dépôt jetable : le `desktop.ini` en système et caché
+ne gêne pas, le dossier `Desktop` en lecture seule suffit.
+
+Quand le `.git` du worktree était là **avant** l'appel et n'y est plus **après**, git a donc décidé
+de la suppression, après la garde du travail non sauvegardé et sa propre vérification d'un arbre
+propre. `retire_worktree` l'achève : `chmod -R u+w` rend le droit d'écrire (sous Windows il lève
+l'attribut lecture seule, sous POSIX il rouvre un dossier 0555), puis `rm -rf` retire le reste. Ni
+l'un ni l'autre ne traverse un lien, et Git Bash présente une jonction comme un lien : vérifié sur
+une jonction `mklink /J`, dont la cible garde ses fichiers et leurs attributs. Les trois artefacts
+partagés sont de toute façon déliés avant. Ce qui résiste encore, un fichier qu'un processus tient
+ou le dossier qui est le répertoire courant d'un shell, reste en place, et la ligne de `gc` le nomme
+(`reste : …`) sous la cause rendue par git. Sans `.git` avant l'appel, git n'a rien supprimé : seule
+la coquille vide s'écarte, comme avant. La garde de #422 sur un dossier qu'aucun worktree ne
+revendique ne bouge pas.
+
 #### L'état de la stack part avec son worktree (#1456)
 
 Chaque worktree a ses ports, donc sa stack, et `start.sh` range l'état de celle-ci — jeton de
