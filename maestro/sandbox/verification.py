@@ -251,12 +251,12 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from maestro.emplacements import jetable, racine_jetable
 from maestro.fichiers import retirer_arbre
@@ -1255,8 +1255,35 @@ class Abaissement:
     session: low_session.LowSession
 
 
+#: Ouvre le courtier de conteneur sur un lieu de jeu (#1728) : rend sa session, qui
+#: sait se donner à un établi (`maestro.sandbox.container_broker.BrokerSession.serve`),
+#: ou `None` quand le poste n'a pas de courtier.
+Courtier = Callable[[Path], Any]
+
+
 @contextmanager
-def abaissement(copie: Path, *, projet: Path | None = None) -> Iterator[Abaissement]:
+def sous_la_borne(
+    lieu: Path, *, projet: Path | None = None, courtier: Courtier | None = None
+) -> Iterator[Abaissement | None]:
+    """La borne du poste autour de `lieu`, le temps du bloc — `None` au niveau de la personne.
+
+    Ce que reçoit qui joue des commandes dans un lieu qu'il tient déjà — l'espace d'une
+    livraison, son miroir, son clone neuf (#1728) : l'abaissement de `lieu` là où le
+    poste abaisse (`BORNE_INTEGRITE_BASSE`), rien là où les agents tournent au niveau de
+    la personne. Lève `BorneIndisponible` comme `borne_du_poste` et `abaissement` : une
+    borne que le poste ne tient pas n'est jamais remplacée par le niveau de la personne.
+    """
+    if borne_du_poste() != BORNE_INTEGRITE_BASSE:
+        yield None
+        return
+    with abaissement(lieu, projet=projet, courtier=courtier) as abaisse:
+        yield abaisse
+
+
+@contextmanager
+def abaissement(
+    copie: Path, *, projet: Path | None = None, courtier: Courtier | None = None
+) -> Iterator[Abaissement]:
     """L'intégrité basse autour de `copie`, le temps du bloc (#1691).
 
     La copie reçoit l'étiquette basse, ce que Maestro ferme à la lecture est fermé
@@ -1268,6 +1295,12 @@ def abaissement(copie: Path, *, projet: Path | None = None) -> Iterator[Abaissem
     de son projet, tenu le temps du bloc et gardé au-delà (`verification_cache.held`), et
     ce que ses outils y rangent survit à l'établi. Un cache qu'une autre vérification du
     même projet tient, ou qui ne s'ouvre pas, laisse `LOCALAPPDATA` à l'établi.
+
+    `courtier` (#1728, docs/57 §5) ouvre le courtier de conteneur sur `copie` : la
+    commande abaissée reçoit son adresse, son jeton et son programme en tête de `PATH`,
+    comme l'agent d'une session, et le moteur lui reste fermé. Sa session se ferme avec
+    l'établi. Un courtier qui ne s'ouvre pas ne retire pas la borne : la commande joue
+    abaissée, sans lui, et ce qui demandait un conteneur le dit par sa sortie.
     """
     cache = verification_cache.held(projet) if projet is not None else nullcontext(None)
     with cache as local:
@@ -1286,6 +1319,13 @@ def abaissement(copie: Path, *, projet: Path | None = None) -> Iterator[Abaissem
                     "Git for Windows est introuvable sur ce poste, et seul le bash de sa "
                     "copie démarre à l'intégrité basse"
                 )
+            if courtier is not None:
+                try:
+                    ouvert = courtier(copie)
+                except OSError:
+                    ouvert = None
+                if ouvert is not None:
+                    ouvert.serve(session)
             yield Abaissement((str(session.bash), "-c"), session)
         finally:
             session.close()
@@ -1370,11 +1410,14 @@ def demarrer(
     periode_s: float = PERIODE_SONDE_S,
     caracteres_sortie: int = CARACTERES_SORTIE,
     environnement: Mapping[str, str] | None = None,
+    abaissement: Abaissement | None = None,
 ) -> Demarrage:
     """Démarre le service `commande`, rejoue `sonde` jusqu'à ce qu'elle tienne, puis l'arrête.
 
     `environnement` vaut pour le service **et** sa sonde : c'est là qu'ils trouvent
-    tous deux le port que Maestro leur réserve (`VARIABLE_PORT`, #1487).
+    tous deux le port que Maestro leur réserve (`VARIABLE_PORT`, #1487). `abaissement`
+    aussi (#1728) : le service et chaque passage de sa sonde naissent à l'intégrité
+    basse, sous le même établi, et `interprete` est alors le sien.
 
     La sonde est jouée par `jouer`, bornée par `delai_sonde_s`, toutes les
     `periode_s` ; l'ensemble est borné par `delai_s`. S'arrête au premier des trois
@@ -1400,6 +1443,7 @@ def demarrer(
                 delai_s=borne_s,
                 caracteres_sortie=caracteres_sortie,
                 environnement=environnement,
+                abaissement=abaissement,
             )
         except OSError as exc:
             raise SondeNonLancee(
@@ -1416,7 +1460,12 @@ def demarrer(
             duree_s=round(time.monotonic() - debut, 2),
             deja=True,
         )
-    arbre = Arbre.lancer([*interprete, commande], cwd=cwd, env=_environnement(environnement))
+    arbre = Arbre.lancer(
+        [*interprete, commande],
+        cwd=cwd,
+        env=_environnement(environnement, abaissement),
+        integrite_basse=abaissement is not None,
+    )
     tampon = bytearray()
     assert arbre.process.stdout is not None
     lecteur = threading.Thread(

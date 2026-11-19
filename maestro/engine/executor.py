@@ -1721,6 +1721,7 @@ class LocalExecutor(TaskExecutor):
                         ),
                         origine=origine,
                         empechement=empechement,
+                        projet=projet,
                     )
                     recette = await recetter(
                         self._verificateur,
@@ -2006,6 +2007,7 @@ class LocalExecutor(TaskExecutor):
                 if projet is not None
                 else None
             ),
+            projet=projet,
         )
 
     def _juge_de_livraison(
