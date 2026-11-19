@@ -97,7 +97,8 @@ désenregistre le worktree quand même. Personne ne les voyait (`git worktree li
 plus), et une coquille BLOQUAIT le remontage de son ticket. Un dossier inconnu qui porte quelque
 chose est nommé, jamais touché ; c'est pourquoi le retrait passe `core.longpaths` à git (#1590) —
 sous Windows, un chemin au-delà de MAX_PATH arrêtait la suppression à mi-chemin, worktree
-désenregistré et dossier plein.
+désenregistré et dossier plein —, et pourquoi il achève lui-même une suppression que git a
+commencée puis interrompue (#1754), sur un dossier en lecture seule par exemple.
 
 Après ses retraits, il retire l'ÉTAT DE LA STACK des copies parties (#1456) — jeton, chien de garde
 et profil de fenêtre que `start.sh` range sous `<temp>/maestro/controltower-<api>-<ui>` —, jamais
@@ -1036,6 +1037,7 @@ commande_remove() {
     # connaît plus), c'est un dossier à supprimer quand ce qui le tient l'aura lâché.
     erreur "worktree désenregistré, mais son dossier résiste :"
     printf '%s\n' "$RETRAIT_ERREUR" >&2
+    [ -n "$RETRAIT_RESTE" ] && printf '  reste : %s\n' "$RETRAIT_RESTE" >&2
     if [ -z "$(ls -A "$chemin" 2>/dev/null)" ]; then
       printf '  Il ne reste qu'\''une coquille vide : %s\n' "$(chemin_natif "$chemin")" >&2
       printf '  Elle sera écartée au prochain ramassage (worktree.sh gc), ou à la main.\n' >&2
@@ -2155,14 +2157,17 @@ occupe_par() {
 # En échec, RETRAIT_DESENREGISTRE dit LEQUEL des deux échecs : `0`, le worktree est intact et le
 # retrait reste à faire ; `1`, git l'a bel et bien désenregistré et seul le dossier résiste — dire
 # « non retiré » dans ce cas-là, c'est annoncer l'inverse de ce qui vient de se passer, et c'est ce
-# qui a laissé onze coquilles s'accumuler derrière autant de lignes rouges (#422).
+# qui a laissé onze coquilles s'accumuler derrière autant de lignes rouges (#422). RETRAIT_RESTE
+# porte alors la première plainte du rattrapage, c'est-à-dire ce qui retient encore le dossier.
 RETRAIT_ERREUR=""
+RETRAIT_RESTE=""
 RETRAIT_DESENREGISTRE=0
 retire_worktree() {
-  local chemin="$1" force="$2" verbeux="$3" principal artefact sortie
+  local chemin="$1" force="$2" verbeux="$3" principal artefact sortie avait_git=0
   local args=(-c core.longpaths=true worktree remove)
   principal="$(depot_principal)" || return 1
   RETRAIT_ERREUR=""
+  RETRAIT_RESTE=""
   for artefact in .venv .tools apps/web/node_modules; do
     if delier "$chemin/$artefact" && [ "$verbeux" = 1 ]; then
       ok "$artefact délié — la cible du clone principal reste intacte"
@@ -2170,25 +2175,48 @@ retire_worktree() {
   done
   [ "$force" = 1 ] && args+=(--force)
   RETRAIT_DESENREGISTRE=0
+  [ -e "$chemin/.git" ] && avait_git=1
   if sortie="$(git -C "$principal" "${args[@]}" "$chemin" 2>&1)"; then
     return 0
   fi
   RETRAIT_ERREUR="$sortie"
 
-  # git a échoué — mais sur QUOI ? Il supprime le contenu d'abord, et quand un processus tient le
-  # DOSSIER (« Permission denied » sous Windows) il va au bout de son désenregistrement quand même :
-  # le worktree quitte `git worktree list`, sa branche redevient supprimable, et il ne reste qu'une
-  # coquille vide que plus rien ne revendique (#422, observé sur #415). Le `.git` d'un worktree lié
-  # est le repère : parti, il ne s'agit plus d'un retrait à retenter mais d'un dossier à balayer.
+  # git a échoué — mais sur QUOI ? Il supprime le contenu entrée par entrée, son `.git` parmi les
+  # premières, s'arrête à la première qu'il ne sait pas retirer, et va au bout de son
+  # désenregistrement quand même : le worktree quitte `git worktree list` et sa branche redevient
+  # supprimable. Le `.git` d'un worktree lié est le repère : parti, il ne s'agit plus d'un retrait à
+  # retenter mais d'un dossier à balayer.
   if [ ! -e "$chemin" ]; then
     return 0                                    # dossier parti malgré le message : rien à rattraper
   fi
   if [ ! -e "$chemin/.git" ]; then
     RETRAIT_DESENREGISTRE=1
-    if [ -z "$(ls -A "$chemin" 2>/dev/null)" ] && rmdir "$chemin" 2>/dev/null; then
+    if [ "$avait_git" = 1 ]; then
+      # Git a commencé la suppression : on l'achève (#1754). Ce qui reste est ce qu'il allait
+      # retirer — la garde du travail non sauvegardé et sa propre vérification d'un arbre propre
+      # sont passées, sans quoi il n'aurait rien touché. Il s'arrête notamment sur un DOSSIER en
+      # lecture seule, que Windows pose sur tout dossier qu'un `desktop.ini` personnalise (le
+      # profil du poste simulé de `verifier.sh`) : il retire un fichier en lecture seule, pas un
+      # dossier. `chmod -R u+w` rend le droit d'écrire (sous Windows, il lève cet attribut ; sous
+      # POSIX, il rouvre un dossier 0555), puis `rm -rf` retire ce qui reste. Ni l'un ni l'autre ne
+      # traverse un lien, et Git Bash présente une jonction comme un lien : les trois artefacts
+      # partagés ont de toute façon été déliés plus haut. Ce qui résiste encore (un fichier qu'un
+      # processus tient, le dossier lui-même s'il est le répertoire courant d'un shell) reste, et
+      # se dit.
+      chmod -R u+w "$chemin" 2>/dev/null
+      RETRAIT_RESTE="$(rm -rf "$chemin" 2>&1 | head -1)"
+    elif [ -z "$(ls -A "$chemin" 2>/dev/null)" ]; then
+      # Pas de `.git` avant l'appel : git n'a rien supprimé, et rien ne prouve que ce dossier est
+      # un déchet. Seule la coquille vide s'écarte (#422).
+      rmdir "$chemin" 2>/dev/null
+    fi
+    if [ ! -e "$chemin" ]; then
       # `prune` pour le cas symétrique : le dossier avait disparu mais l'entrée d'administration
       # restait, et `git worktree add` refuserait alors de remonter la même branche ici.
       git -C "$principal" worktree prune >/dev/null 2>&1
+      if [ "$verbeux" = 1 ] && [ "$avait_git" = 1 ]; then
+        ok "git s'est arrêté en chemin ($(printf '%s' "$sortie" | head -1)) : le reste du dossier est retiré"
+      fi
       return 0
     fi
   fi
@@ -2474,6 +2502,8 @@ commande_gc() {
         # ligne : sans elle, il faut reproduire la panne pour savoir ce qui retient le dossier.
         rapport="$rapport$(printf '  ⚠ #%s désenregistré, son dossier résiste : %s\n    git : %s' \
           "$iid" "$(chemin_natif "$chemin")" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
+        # Et ce qui a résisté au rattrapage (#1754) : git n'en est plus la seule cause.
+        [ -n "$RETRAIT_RESTE" ] && rapport="$rapport$(printf '    reste : %s' "$RETRAIT_RESTE")"$'\n'
       else
         rapport="$rapport$(printf '  ✗ #%s non retiré : %s' "$iid" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
       fi
