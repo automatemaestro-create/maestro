@@ -8,7 +8,8 @@
 //   3. elle l'ARRÊTE quand sa fenêtre se ferme — le même lanceur, avec `--stop`.
 //
 // Installée, elle se met aussi à jour (#644) : elle télécharge la version suivante et ne la pose
-// qu'après ce même arrêt (§ « la mise à jour »).
+// qu'après ce même arrêt (§ « la mise à jour »). Et elle écrit ce qu'elle dit dans un journal, à
+// côté de ceux du lanceur, puisqu'elle n'a alors pas de console (§ « le journal de la fenêtre »).
 //
 // Le lanceur est `scripts/controltower/start.sh` dans un clone, et le lanceur du produit
 // (`python -m maestro.lanceur`, #640) dans une installation (#641) — § « deux lanceurs » plus bas.
@@ -76,12 +77,16 @@ const RACINE_PRODUIT = path.join(process.resourcesPath, 'produit');
 const PYTHON_EMBARQUE = path.join(RACINE_PRODUIT, 'runtime', 'python', 'python.exe');
 const RACINE = INSTALLEE ? RACINE_PRODUIT : RACINE_DEPOT;
 
-// Où le lanceur installé inscrit la session qu'il a démarrée — `journaux_du_lanceur` de
-// `maestro/emplacements.py`, sous l'état du poste : le dossier d'installation ne porte que le
-// paquet, et une mise à jour l'efface (#1620). La coque installée y relit l'URL réellement
-// servie : le lanceur déplace un port pris plutôt que d'échouer, et la fenêtre doit ouvrir
-// l'adresse qu'il a choisie, pas celle qu'on lui demandait.
-const SESSION_DU_LANCEUR = path.join(os.homedir(), '.maestro', 'lanceur', 'session.json');
+// Où le lanceur installé tient ses journaux et sa session — `journaux_du_lanceur` de
+// `maestro/emplacements.py`, seul à déclarer les racines du poste, recomposé ici parce que la
+// coque ne lit pas Python (`tests/test_coque_bureau.py` les confronte). Sous l'état du poste : le
+// dossier d'installation ne porte que le paquet, et une mise à jour l'efface (#1620).
+const JOURNAUX_DU_LANCEUR = path.join(os.homedir(), '.maestro', 'lanceur');
+// La coque installée y relit l'URL réellement servie : le lanceur déplace un port pris plutôt que
+// d'échouer, et la fenêtre doit ouvrir l'adresse qu'il a choisie, pas celle qu'on lui demandait.
+const SESSION_DU_LANCEUR = path.join(JOURNAUX_DU_LANCEUR, 'session.json');
+// Et elle y écrit son propre journal (`journal_de_la_fenetre`, § « le journal de la fenêtre »).
+const JOURNAL_DE_LA_FENETRE = path.join(JOURNAUX_DU_LANCEUR, 'window.log');
 
 // Où le produit dit sa version (#1622). Le paquet pose la coque et le produit ensemble, à la même
 // version : celle de `package.json`, que l'assemblage écrit aussi à la racine du produit
@@ -133,20 +138,111 @@ const LANCEUR = INSTALLEE
 // seule option qu'on lui relayait, celle du mode démo, a quitté le produit avec lui (#1168). La coque
 // joue donc deux jeux d'arguments écrits ici même, jamais autre chose.
 
+// LE JOURNAL DE LA FENÊTRE (#1751, docs/54 §3.4). Ce que la coque écrit sur sa sortie — la mise
+// à jour, l'attente, les refus, et ce que le lanceur lui dit — n'a de lecteur que dans un
+// terminal. Installée et ouverte par son raccourci, la fenêtre n'en a pas : sans ce fichier, une
+// mise à jour qui échoue chez quelqu'un ne laisserait aucune trace qu'il puisse transmettre.
+//
+// La sortie reste ce qu'elle est, au caractère près : `scripts/distribution/verifier.sh` lance
+// `Maestro.exe` et la lit ligne à ligne. Le fichier en reçoit une copie, chaque ligne horodatée.
+//
+// Une vie, un fichier, comme les journaux du lanceur (`maestro.lanceur.systeme`) : il repart à zéro
+// à chaque lancement. Mais les vies précédentes restent à côté (`window.log.1`, `window.log.2`),
+// parce qu'une mise à jour en traverse deux — elle se télécharge et s'installe dans l'une, et la
+// version posée démarre dans la suivante. Une vie est aussi bornée en taille : une boucle d'erreurs
+// ne remplit pas le disque, et ses premières lignes, qui portent la cause, restent.
+const VIES_GARDEES = 3;
+const TAILLE_MAX_D_UNE_VIE = 1 * 1024 * 1024;
+
+let journalDeLaFenetre = null;
+let octetsConsignes = 0;
+let enDebutDeLigne = true;
+
+/**
+ * Ouvre le journal de la vie qui commence, après avoir décalé les précédentes. Installée
+ * seulement : un clone est lancé depuis un terminal, qui garde sa sortie, et une session de
+ * développement n'écrit jamais sous le dossier personnel (#1454).
+ *
+ * Appelée une fois, par l'instance qui a obtenu le verrou (§ plus bas) : une seconde instance qui
+ * l'ouvrirait ferait tourner le journal sous la fenêtre déjà ouverte.
+ *
+ * Un journal qui ne s'ouvre pas ne retient jamais la fenêtre : elle s'ouvre, et le dit sur sa
+ * sortie.
+ */
+function ouvrirLeJournal() {
+  if (!INSTALLEE) return;
+  try {
+    fs.mkdirSync(JOURNAUX_DU_LANCEUR, { recursive: true });
+    const vie = (rang) => (rang === 0 ? JOURNAL_DE_LA_FENETRE : `${JOURNAL_DE_LA_FENETRE}.${rang}`);
+    // De la plus ancienne vers la plus récente : chaque renommage remplace la vie que le
+    // précédent vient de libérer, et la plus ancienne s'en va.
+    for (let rang = VIES_GARDEES - 1; rang >= 1; rang -= 1) {
+      if (fs.existsSync(vie(rang - 1))) fs.renameSync(vie(rang - 1), vie(rang));
+    }
+    journalDeLaFenetre = fs.openSync(JOURNAL_DE_LA_FENETRE, 'w');
+  } catch (err) {
+    journalDeLaFenetre = null;
+    ecrire('stdout', `[coque] journal de la fenêtre impossible (${err.message})\n`);
+  }
+}
+
+/** Le texte tel que le journal le garde : chaque ligne précédée de l'heure où elle est arrivée. */
+function horodater(texte) {
+  let horodate = '';
+  for (const morceau of texte.split(/(?<=\n)/)) {
+    if (morceau === '') continue;
+    if (enDebutDeLigne) horodate += `${new Date().toISOString()} `;
+    horodate += morceau;
+    enDebutDeLigne = morceau.endsWith('\n');
+  }
+  return horodate;
+}
+
+/** Copie le texte dans le journal de la fenêtre, s'il est ouvert et qu'il reste de la place. */
+function consigner(texte) {
+  if (journalDeLaFenetre === null) return;
+  // Où en est la dernière ligne écrite, avant que `horodater` n'avance sur ce texte-ci.
+  const aLaLigne = enDebutDeLigne;
+  const ligne = horodater(texte);
+  const octets = Buffer.byteLength(ligne);
+  try {
+    if (octetsConsignes + octets > TAILLE_MAX_D_UNE_VIE) {
+      const fin =
+        `${aLaLigne ? '' : '\n'}${new Date().toISOString()} [coque] journal de la fenêtre plein ` +
+        `(${TAILLE_MAX_D_UNE_VIE} octets) : la suite de cette vie n'y est plus écrite\n`;
+      fs.writeSync(journalDeLaFenetre, fin);
+      fs.closeSync(journalDeLaFenetre);
+      journalDeLaFenetre = null;
+      return;
+    }
+    fs.writeSync(journalDeLaFenetre, ligne);
+    octetsConsignes += octets;
+  } catch {
+    // Le disque a refusé : la sortie a déjà reçu le texte, et le journal s'arrête là.
+    journalDeLaFenetre = null;
+  }
+}
+
+/** Écrit sur la sortie de la coque, puis dans son journal — le seul chemin de l'un et de l'autre. */
+function ecrire(flux, texte) {
+  process[flux].write(texte);
+  consigner(texte);
+}
+
 /** Quelques lignes de diagnostic, gardées pour la fenêtre d'attente quand le démarrage échoue. */
 const journal = [];
 function retenir(flux, donnees) {
   const texte = String(donnees);
-  process[flux].write(texte);
+  ecrire(flux, texte);
   journal.push(texte);
   if (journal.length > 80) journal.splice(0, journal.length - 80);
 }
 
 /**
  * Joue le lanceur avec les arguments donnés et rend son code de sortie.
- * La sortie est relayée telle quelle sur la console, et retenue pour l'écran d'attente : le
- * lanceur y dit des choses qu'on ne saurait pas redire mieux (ce qui manque pour démarrer, le
- * chemin du journal d'un service mort, ce que l'arrêt a soldé).
+ * La sortie est relayée telle quelle sur la console et dans le journal de la fenêtre, et retenue
+ * pour l'écran d'attente : le lanceur y dit des choses qu'on ne saurait pas redire mieux (ce qui
+ * manque pour démarrer, le chemin du journal d'un service mort, ce que l'arrêt a soldé).
  *
  * `windowsHide` : la coque installée n'a pas de console, et sans lui Windows en ouvrirait une
  * pour l'interpréteur du lanceur — une fenêtre noire à côté de Maestro, qui l'arrêterait si on
@@ -502,30 +598,30 @@ function encadrerNavigation(contenu) {
  *      répertoires, ce qui suffit au livrable d'un run (sa racine de projet) et ne lance rien.
  *
  * Rend un booléen plutôt que de lever : la page a déjà le chemin sous les yeux et le dit elle-même
- * quand c'est non. Le détail part sur la console de la coque, qui est un terminal de développement.
+ * quand c'est non. Le détail part sur la sortie de la coque et dans son journal (§ `ecrire`).
  */
 async function ouvrirDossier(chemin) {
   if (typeof chemin !== 'string' || chemin.trim() === '') return false;
   const cible = path.normalize(chemin);
   if (!path.isAbsolute(cible)) {
-    process.stderr.write(`[coque] ouverture refusée (chemin relatif) : ${chemin}\n`);
+    ecrire('stderr', `[coque] ouverture refusée (chemin relatif) : ${chemin}\n`);
     return false;
   }
   let etat;
   try {
     etat = fs.statSync(cible);
   } catch {
-    process.stderr.write(`[coque] ouverture refusée (introuvable) : ${cible}\n`);
+    ecrire('stderr', `[coque] ouverture refusée (introuvable) : ${cible}\n`);
     return false;
   }
   if (!etat.isDirectory()) {
-    process.stderr.write(`[coque] ouverture refusée (pas un dossier) : ${cible}\n`);
+    ecrire('stderr', `[coque] ouverture refusée (pas un dossier) : ${cible}\n`);
     return false;
   }
   // `openPath` rend la chaîne vide en cas de succès, un message d'erreur sinon.
   const erreur = await shell.openPath(cible);
   if (erreur !== '') {
-    process.stderr.write(`[coque] ouverture impossible : ${erreur}\n`);
+    ecrire('stderr', `[coque] ouverture impossible : ${erreur}\n`);
     return false;
   }
   return true;
@@ -557,18 +653,18 @@ function montrerFichier(chemin) {
   if (typeof chemin !== 'string' || chemin.trim() === '') return false;
   const cible = path.normalize(chemin);
   if (!path.isAbsolute(cible)) {
-    process.stderr.write(`[coque] fichier non montré (chemin relatif) : ${chemin}\n`);
+    ecrire('stderr', `[coque] fichier non montré (chemin relatif) : ${chemin}\n`);
     return false;
   }
   let etat;
   try {
     etat = fs.statSync(cible);
   } catch {
-    process.stderr.write(`[coque] fichier non montré (introuvable) : ${cible}\n`);
+    ecrire('stderr', `[coque] fichier non montré (introuvable) : ${cible}\n`);
     return false;
   }
   if (!etat.isFile()) {
-    process.stderr.write(`[coque] fichier non montré (pas un fichier) : ${cible}\n`);
+    ecrire('stderr', `[coque] fichier non montré (pas un fichier) : ${cible}\n`);
     return false;
   }
   shell.showItemInFolder(cible);
@@ -734,7 +830,9 @@ if (STACK !== `${PORT_API_DEFAUT}-${PORT_UI_DEFAUT}`) {
 
 // Une seconde instance DE LA MÊME STACK partagerait les ports de la première et l'arrêterait en se
 // fermant. Elle sort donc tout de suite — par `app.exit`, avant que `before-quit` ne soit armé :
-// passer par l'arrêt couperait la stack que la première fenêtre est en train de servir.
+// passer par l'arrêt couperait la stack que la première fenêtre est en train de servir. Et sans
+// ouvrir de journal : l'ouvrir ferait tourner celui de la première fenêtre, dont la vie en cours
+// passerait aux archives. Son refus ne s'écrit que sur sa sortie.
 if (!app.requestSingleInstanceLock()) {
   process.stderr.write(
     `[coque] Maestro est déjà ouvert sur cette stack (UI :${PORT_UI} · API :${PORT_API}) — ` +
@@ -742,6 +840,7 @@ if (!app.requestSingleInstanceLock()) {
   );
   app.exit(0);
 } else {
+  ouvrirLeJournal();
   app.on('second-instance', () => {
     if (!fenetre || fenetre.isDestroyed()) return;
     if (fenetre.isMinimized()) fenetre.restore();
@@ -752,5 +851,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Diagnostic : les ports servis, pour que le terminal dise d'emblée à quelle stack cette fenêtre
-// est attachée — deux worktrees, donc deux couples de ports, en ouvrent deux (#1275).
-process.stdout.write(`[coque] Maestro — UI :${PORT_UI} · API :${PORT_API}\n`);
+// est attachée — deux worktrees, donc deux couples de ports, en ouvrent deux (#1275). Dans le
+// journal, c'est la première ligne d'une vie, avec la version qui l'a vécue.
+ecrire('stdout', `[coque] Maestro — UI :${PORT_UI} · API :${PORT_API}\n`);
+consigner(`[coque] version ${app.getVersion()}\n`);

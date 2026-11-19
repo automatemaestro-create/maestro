@@ -527,7 +527,10 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
         NOM_OUTILS: (
             "copie de Git for Windows des agents à l'intégrité basse (maestro.sandbox.low_session)"
         ),
-        NOM_LANCEUR: "journaux et session du lanceur installé (maestro.lanceur.emplacement)",
+        NOM_LANCEUR: (
+            "journaux et session du lanceur installé, journal de la fenêtre "
+            "(maestro.lanceur.emplacement, apps/desktop/main.js)"
+        ),
         NOM_REPRISE: "copie d'une installation antérieure (maestro.lanceur.reprise)",
         NOM_CACHES_DE_VERIFICATION: (
             "caches de la vérification de l'outillage, un par projet, gardés par rétention "

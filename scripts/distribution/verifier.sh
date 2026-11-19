@@ -242,6 +242,10 @@ sonde() { # sonde <url> [jeton] → code HTTP
 }
 
 JETON_FICHIER="$PROFIL/.maestro/jeton-api"
+# Le journal de la fenêtre (`maestro.emplacements.journal_de_la_fenetre`, #1751) : ce que la coque
+# dit sur sa sortie, qu'elle écrit aussi là parce qu'ouverte par son raccourci elle n'a pas de
+# console. Les vies précédentes sont à côté (`.1`, `.2`).
+JOURNAL_DE_LA_FENETRE="$PROFIL/.maestro/lanceur/window.log"
 # Ce que la personne écrit, sous l'état du poste d'une installation (`maestro.emplacements`).
 CONFIGURATION="$PROFIL/.maestro/configuration"
 
@@ -349,10 +353,25 @@ sous_la_configuration() {
     sed "s|^$PROFIL/||" | sort | tr '\n' ' '
 }
 
-# Ce que le lanceur a dit de la reprise, dans ses journaux (ligne `[reprise]`).
+# Ce que le lanceur a dit de la reprise, dans ses journaux (ligne `[reprise]`). Le journal de la
+# fenêtre, posé parmi eux, redit la sortie de la coque, lue juste après : on ne le lit pas, sans
+# quoi la reprise serait dite deux fois.
 dit_de_la_reprise() {
-  cat "$PROFIL/.maestro/lanceur/"*.log "$TRACE/coque-$1.log" 2>/dev/null | tr -d '\r' |
-    grep -F '[reprise]' | head -n 5
+  local journal
+  for journal in "$PROFIL/.maestro/lanceur/"*.log "$TRACE/coque-$1.log"; do
+    [ "${journal##*/}" = window.log ] || cat "$journal" 2>/dev/null
+  done | tr -d '\r' | grep -F '[reprise]' | head -n 5
+}
+
+# `absentes_du_journal <nom>` : les lignes que la coque a écrites sur sa sortie — les siennes et
+# celles du lanceur qu'elle relaie (`[coque]`, `[mise à jour]`, `[api]`…) — et que le journal de la
+# fenêtre ne porte pas. Le journal les horodate ; ce qu'Electron écrit lui-même
+# (`[1234:1118/…:ERROR:…]`) ne passe pas par la coque, et n'est pas compté.
+absentes_du_journal() {
+  [ -f "$JOURNAL_DE_LA_FENETRE" ] || { echo "(aucun journal)"; return; }
+  tr -d '\r' <"$TRACE/coque-$1.log" | grep -E '^\[[^]0-9:]+\] ' |
+    grep -vxFf <(tr -d '\r' <"$JOURNAL_DE_LA_FENETRE" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //') |
+    head -n 3
 }
 
 # Les fichiers sous le dossier d'installation que le paquet n'a pas posés. Le cache de compilation
@@ -590,6 +609,12 @@ constat "$([ -z "$restants" ] && echo 0 || echo 1)" \
 constat "$([ "$(sonde "http://127.0.0.1:$PORT_UI/")" = 000 ] && [ "$(sonde "http://127.0.0.1:$PORT_API/api/sante")" = 000 ] && echo 0 || echo 1)" \
   "les ports :$PORT_API et :$PORT_UI sont libérés"
 cp "$PROFIL/.maestro/lanceur/"*.log "$TRACE/" 2>/dev/null || true
+# Le journal de la fenêtre (#1751), une fois la fenêtre fermée : ce qu'elle a dit sur sa sortie, de
+# l'ouverture à l'arrêt, ce qu'une personne sans console transmettrait.
+cp "$JOURNAL_DE_LA_FENETRE" "$TRACE/window-premiere.log" 2>/dev/null || true
+absentes="$(absentes_du_journal premiere)"
+constat "$([ -s "$JOURNAL_DE_LA_FENETRE" ] && [ -z "$absentes" ] && echo 0 || echo 1)" \
+  "la fenêtre écrit dans son journal ce qu'elle dit sur sa sortie (~/.maestro/lanceur/window.log, $(grep -c . "$JOURNAL_DE_LA_FENETRE" 2>/dev/null || echo 0) lignes)${absentes:+ — absentes : $(printf '%s\n' "$absentes" | tr '\n' ' ')}"
 
 # Le dossier d'installation, une fois Maestro passé dessus : le paquet, et rien d'autre (#1620).
 etrangers >"$TRACE/fichiers-etrangers.txt"
@@ -617,6 +642,8 @@ fi
 ouvrir par-dessus
 constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
   "la version réinstallée s'ouvre (API HTTP $api, interface HTTP $ui)"
+constat "$([ -s "$TRACE/window-premiere.log" ] && cmp -s "$JOURNAL_DE_LA_FENETRE.1" "$TRACE/window-premiere.log" && echo 0 || echo 1)" \
+  "rouverte, la fenêtre range la vie précédente de son journal à côté (window.log.1), réinstallation comprise"
 constat "$(retrouver par-dessus && echo 0 || echo 1)" \
   "après la réinstallation par-dessus, le projet « $NOM_PROJET » et le réglage sont retrouvés"
 fermer par-dessus
@@ -742,6 +769,13 @@ if [ -n "$FLUX_DOSSIER" ]; then
     ouvrir apres-mise-a-jour
     constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
       "Maestro se rouvre sur $VERSION_SUIVANTE, sans clone ni geste de plus (API HTTP $api, interface HTTP $ui)"
+    # La vie qui a téléchargé puis posé la version est maintenant la précédente : c'est elle qu'une
+    # personne chez qui la mise à jour a échoué transmettrait (#1751).
+    vie_de_la_mise_a_jour="$(tr -d '\r' <"$JOURNAL_DE_LA_FENETRE.1" 2>/dev/null)"
+    cp "$JOURNAL_DE_LA_FENETRE.1" "$TRACE/window-mise-a-jour.log" 2>/dev/null || true
+    constat "$(contient "$vie_de_la_mise_a_jour" "[mise à jour] prête : $VERSION_SUIVANTE" &&
+      contient "$vie_de_la_mise_a_jour" "[mise à jour] installation de $VERSION_SUIVANTE, en silence" && echo 0 || echo 1)" \
+      "le journal de la fenêtre garde la vie de la mise à jour (window.log.1) : $VERSION_SUIVANTE prête, puis posée"
     # Les quatre composants (#1622) : la coque, le produit (front et backend, posés ensemble), et le
     # CLI que le produit lance — tous de l'installation, à la nouvelle version.
     coque_apres="$(version_de_la_coque)"
