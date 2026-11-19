@@ -121,9 +121,9 @@ Elle passe sous `borne_du_poste`, comme celle de l'outillage. Une commande qui �
 l'espace et de son établi y est refusée par le poste. Ce qui demande un conteneur y passe par le
 courtier, sur l'espace de la livraison.
 
-[docs/17 §7](./17-isolation-execution.md) et [docs/19 §2.4](./19-securite-modele-de-menace.md) la
-retirent de « ce que l'isolation ne couvre pas » quand le lot qui la livre est mergé. Jusque-là, elle
-y reste.
+[docs/17 §7](./17-isolation-execution.md) et [docs/19 §2.4](./19-securite-modele-de-menace.md)
+l'ont retirée de « ce que l'isolation ne couvre pas » avec le lot qui la livre (#1728), et disent
+comment elle joue.
 
 ## 6. Ce qui ne bouge pas
 

@@ -85,6 +85,24 @@ mesurer —, nommé par le vérificateur avec son origine (`Controle.delai_s`). 
 commande que rien ne borne se joue jusqu'à son verdict, et s'arrête quand le run
 cesse de l'attendre (`DelaisVerification`).
 
+## Sous la borne du poste (#1728)
+
+Le texte d'un contrôle vient du vérificateur ; ce qu'il exécute vient de l'agent — ses
+tests, son `conftest.py`, ses scripts —, et la portée ne lit que le texte. Chaque
+commande jouée ici, sa sonde et le service qu'elle démarre compris, joue donc sous **la
+borne des agents du poste** (`maestro.sandbox.verification.borne_du_poste`), celle de
+la vérification de l'outillage (#1691) : à l'intégrité basse là où les agents y
+tournent, et ce qu'elle écrirait hors de son lieu de jeu et de son établi est refusé
+par le poste. L'abaissement se prépare une fois par vérification, au premier contrôle
+joué, et part avec elle ; un clone neuf reçoit le sien. Une borne que le poste ne tient
+pas n'est jamais remplacée par le niveau de la personne : le contrôle n'est pas joué,
+et sa raison le dit.
+
+Abaissée, une commande ne joint pas le moteur de conteneurs. Ce qui demande un
+conteneur — le filet d'un projet qui joue ses tests dans le sien — y passe par le
+**courtier** de Maestro (`maestro.sandbox.container_broker`, docs/57 §5), ouvert sur le
+lieu de jeu comme il l'est sur l'espace d'un agent, et fermé avec la vérification.
+
 ## La boucle, et ce qui l'arrête
 
 Pas un nombre de tentatives figé (le ticket l'écarte en toutes lettres) : la
@@ -208,6 +226,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -221,6 +240,8 @@ from maestro.telemetry import SpendingCapExceeded
 
 if TYPE_CHECKING:
     from maestro.engine.retry import PolitiqueRelance
+    from maestro.projects.model import Project
+    from maestro.sandbox.container_broker import ContainerBroker
 
 #: Suffixe des étapes de vérification au journal : `<task.id>:verification`, une
 #: par livraison vérifiée — le pont Control Tower les range en activités d'agent
@@ -270,6 +291,11 @@ _SANS_BASH = (
 )
 _SANS_ESPACE = (
     "le livrable est un texte, sans espace de travail où jouer une commande"
+)
+
+_SANS_BORNE = (
+    "pas jouée — le poste ne borne pas ce qu'une commande écrirait hors de l'espace de la "
+    "vérification"
 )
 
 _FENCE = re.compile(r"```(?:json)?\s*(?P<corps>.*?)```", re.DOTALL)
@@ -639,6 +665,10 @@ class Livraison:
     travail (`maestro.sandbox.projet.etat_de_la_branche`) : ses commits et ce qui
     n'est pas commité, pour juger de la convention, et ce qu'elle a changé de la
     comptabilité de Maestro. Vides, les prompts sont ceux d'avant.
+
+    `projet` (#1728) est le projet dont l'espace est dérivé, `None` pour un espace qui
+    n'est le projet de personne : c'est sur lui que le courtier compose le conteneur
+    d'une commande abaissée — ses masques, son dépôt, son tour.
     """
 
     sortie: str
@@ -649,6 +679,7 @@ class Livraison:
     empechement: str = ""
     outillage: str = ""
     branche: str = ""
+    projet: Project | None = None
 
     def en_clair(self, constat: Constat) -> Constat:
         """Le constat dont la preuve nomme `origine` là où la commande a écrit `espace`.
@@ -678,6 +709,62 @@ Joueur = Callable[..., execution.Execution]
 
 #: La signature de `maestro.sandbox.verification.demarrer` (#1432) — idem.
 Demarreur = Callable[..., execution.Demarrage]
+
+
+class _Borne:
+    """La borne du poste autour du lieu d'une vérification, préparée au premier contrôle joué.
+
+    Une vérification qui ne joue rien — des lectures, des commandes que la portée
+    refuse — ne prépare rien. `prendre` rend l'abaissement du lieu (`None` là où les
+    agents tournent au niveau de la personne), le même pour tous les contrôles ; un
+    refus du poste est gardé, et chaque contrôle le reçoit sans rien repréparer.
+    `fermer` retire ce qui a été préparé, la session du courtier comprise.
+    """
+
+    def __init__(
+        self, ouvrir: Callable[[], AbstractContextManager[execution.Abaissement | None]]
+    ) -> None:
+        self._ouvrir = ouvrir
+        self._pile = ExitStack()
+        self._verrou = threading.Lock()
+        self._prete = False
+        self._abaisse: execution.Abaissement | None = None
+        self._refus: str | None = None
+
+    def prendre(self) -> execution.Abaissement | None:
+        """L'abaissement du lieu — lève `BorneIndisponible` si le poste ne le borne pas."""
+        with self._verrou:
+            if self._refus is not None:
+                raise execution.BorneIndisponible(self._refus)
+            if not self._prete:
+                try:
+                    self._abaisse = self._pile.enter_context(self._ouvrir())
+                except execution.BorneIndisponible as exc:
+                    self._refus = str(exc)
+                    raise
+                self._prete = True
+            return self._abaisse
+
+    def fermer(self) -> None:
+        """Retire ce que la borne a préparé ; sans effet si rien ne l'a été."""
+        with self._verrou:
+            self._pile.close()
+            self._prete = False
+            self._abaisse = None
+
+
+def _abaisse(
+    abaisse: execution.Abaissement | None, interprete: tuple[str, ...]
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    """L'interpréteur et ce qu'un joueur reçoit de plus, sous la borne du lieu.
+
+    Abaissée, la commande joue par le bash de l'établi, seul à démarrer à ce niveau, et
+    reçoit son abaissement ; au niveau de la personne, rien ne change — un joueur de
+    test n'a pas à connaître ce mot.
+    """
+    if abaisse is None:
+        return interprete, {}
+    return abaisse.interprete, {"abaissement": abaisse}
 
 
 class VerificateurEnPanne(Exception):
@@ -845,7 +932,9 @@ class VerificateurTaches:
     `joueur`, `demarreur` et `interprete` valent ceux de
     `maestro.sandbox.verification`, **relus à chaque appel** : c'est ce qui laisse
     la suite de tests retirer l'interpréteur d'un seul endroit
-    (`tests/conftest.py`, #1160), comme pour l'outillage.
+    (`tests/conftest.py`, #1160), comme pour l'outillage. `courtier` (#1728) vaut
+    celui du process (`maestro.sandbox.container_broker.shared`), là où le poste en a
+    un : il n'est ouvert que pour une commande abaissée.
     """
 
     def __init__(
@@ -857,6 +946,7 @@ class VerificateurTaches:
         joueur: Joueur | None = None,
         demarreur: Demarreur | None = None,
         interprete: tuple[str, ...] | None = None,
+        courtier: ContainerBroker | None = None,
     ) -> None:
         self._provider = provider
         self._modele = modele
@@ -864,6 +954,7 @@ class VerificateurTaches:
         self._joueur = joueur
         self._demarreur = demarreur
         self._interprete = interprete
+        self._courtier = courtier
 
     async def verifier(
         self,
@@ -924,24 +1015,30 @@ class VerificateurTaches:
                 )
                 lectures, renvois = _lire_relecture(texte, controles, amont)
         constats: list[Constat] = []
-        for rang, controle in enumerate(controles):
-            if controle.joue:
-                constats.append(await self._jouer(controle, livraison))
-            else:
-                constats.append(
-                    lectures.get(rang)
-                    or Constat(
-                        critere=controle.critere,
-                        etat=CONSTAT_NON_JOUE,
-                        preuve="le vérificateur n'a pas rendu de jugement sur cette lecture",
+        borne = self._borne_de(livraison)
+        try:
+            for rang, controle in enumerate(controles):
+                if controle.joue:
+                    constats.append(await self._jouer(controle, livraison, borne))
+                else:
+                    constats.append(
+                        lectures.get(rang)
+                        or Constat(
+                            critere=controle.critere,
+                            etat=CONSTAT_NON_JOUE,
+                            preuve="le vérificateur n'a pas rendu de jugement sur cette lecture",
+                        )
                     )
-                )
-        # À chaque livraison, et pas seulement à la première : une commande encore
-        # rouge est relue avec le compte-rendu de l'agent, qui a pu dire, preuve à
-        # l'appui, en quoi elle se trompe (voir `Recette.retour`).
-        controles = await self._contre_expertiser(
-            tache, livraison, controles, constats, modele, brief
-        )
+            # À chaque livraison, et pas seulement à la première : une commande encore
+            # rouge est relue avec le compte-rendu de l'agent, qui a pu dire, preuve à
+            # l'appui, en quoi elle se trompe (voir `Recette.retour`).
+            controles = await self._contre_expertiser(
+                tache, livraison, controles, constats, modele, brief, borne
+            )
+        finally:
+            # Dans un fil, et jusqu'au bout même si l'on cesse d'attendre : l'établi et
+            # la session du courtier partent avec la vérification.
+            await asyncio.shield(asyncio.to_thread(borne.fermer))
         if anterieurs:
             constats = _nommer_les_ecarts(controles, constats, anterieurs)
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
@@ -969,7 +1066,8 @@ class VerificateurTaches:
         controles: tuple[Controle, ...],
         constats: list[Constat],
         modele: str,
-        brief: Brief | None = None,
+        brief: Brief | None,
+        borne: _Borne,
     ) -> tuple[Controle, ...]:
         """Un contrôle joué qui ne tient pas : le défaut est-il au livrable, ou au contrôle ?
 
@@ -1016,7 +1114,7 @@ class VerificateurTaches:
             if livraison.portee is not None and _hors_portee(controle, livraison.portee):
                 continue  # une révision que Maestro ne peut pas jouer ne remplace rien
             nouveaux[rang] = controle
-            constats[rang] = await self._jouer(controle, livraison)
+            constats[rang] = await self._jouer(controle, livraison, borne)
         for rang, raison in _lire_abstentions(texte, fautifs).items():
             if nouveaux[rang] is controles[rang]:
                 constats[rang] = _abstention(constats[rang], raison)
@@ -1062,7 +1160,47 @@ class VerificateurTaches:
             controles, refus = candidats, restants
         return controles
 
-    async def _jouer(self, controle: Controle, livraison: Livraison) -> Constat:
+    def _borne_de(self, livraison: Livraison) -> _Borne:
+        """La borne du poste autour de l'espace de `livraison`, à préparer au premier jeu (#1728).
+
+        Le cache de `LOCALAPPDATA` est celui du projet (#1709) : l'arbre qui le nomme
+        est la racine que l'espace reflète, à défaut l'espace — un worktree se
+        reconnaît à son dépôt.
+        """
+        espace = livraison.espace
+        if espace is None:
+            return _Borne(lambda: nullcontext(None))
+        return _Borne(
+            lambda: execution.sous_la_borne(
+                espace,
+                projet=livraison.origine or espace,
+                courtier=self._ouvre_le_courtier(livraison.projet),
+            )
+        )
+
+    def _ouvre_le_courtier(self, projet: Project | None) -> execution.Courtier:
+        """Ce qui ouvre le courtier de conteneur sur un lieu de jeu de `projet` (#1728).
+
+        Appelé pour une commande abaissée seulement : là où rien n'est abaissé, le
+        moteur répond à la commande, et aucun courtier ne s'ouvre. Rend `None` sur un
+        poste sans courtier — le fait qui choisit le régime (docs/57 §4).
+        """
+
+        def ouvrir(lieu: Path) -> Any:
+            # Importé ici : le courtier tire les conteneurs et les projets, que la
+            # vérification n'a pas à charger pour jouer au niveau de la personne.
+            from maestro.sandbox import container_broker
+
+            courtier = self._courtier
+            if courtier is None:
+                if not container_broker.available():
+                    return None
+                courtier = container_broker.shared()
+            return courtier.open(lieu, projet)
+
+        return ouvrir
+
+    async def _jouer(self, controle: Controle, livraison: Livraison, borne: _Borne) -> Constat:
         """Joue une commande dans l'espace de la livraison — la portée d'abord, le code ensuite.
 
         Une commande que le système refuse de **lancer** n'est ni tenue ni non tenue :
@@ -1073,10 +1211,17 @@ class VerificateurTaches:
         """
         if livraison.empechement:
             return _non_joue(controle)(f"pas jouée — {livraison.empechement}")
-        return livraison.en_clair(await self._jouer_dans_l_espace(controle, livraison))
+        return livraison.en_clair(await self._jouer_dans_l_espace(controle, livraison, borne))
 
-    async def _jouer_dans_l_espace(self, controle: Controle, livraison: Livraison) -> Constat:
-        """`_jouer`, une fois établi qu'il y a un lieu où jouer."""
+    async def _jouer_dans_l_espace(
+        self, controle: Controle, livraison: Livraison, borne: _Borne
+    ) -> Constat:
+        """`_jouer`, une fois établi qu'il y a un lieu où jouer.
+
+        Après la portée, la borne du poste (#1728) : la commande, sa sonde et son
+        service naissent sous l'abaissement de l'espace là où le poste abaisse. Un
+        clone neuf est un autre lieu, qui reçoit le sien.
+        """
         non_joue = _non_joue(controle)
         if livraison.espace is None:
             return non_joue(_SANS_ESPACE)
@@ -1089,10 +1234,25 @@ class VerificateurTaches:
             motif = _hors_portee(controle, livraison.portee)
             if motif:
                 return non_joue(f"pas jouée — {motif}")
+        if controle.clone_neuf and not controle.sonde:
+            return await self._jouer_sur_un_clone(controle, livraison, interprete)
+        try:
+            interprete, sous = _abaisse(await asyncio.to_thread(borne.prendre), interprete)
+        except execution.BorneIndisponible as exc:
+            return non_joue(f"{_SANS_BORNE} : {exc}")
         if controle.sonde:
-            return await self._demarrer(controle, livraison.espace, interprete)
-        if controle.clone_neuf:
-            return await self._jouer_sur_un_clone(controle, livraison.espace, interprete)
+            return await self._demarrer(controle, livraison.espace, interprete, sous)
+        return await self._jouer_la_commande(controle, livraison.espace, interprete, sous)
+
+    async def _jouer_la_commande(
+        self,
+        controle: Controle,
+        espace: Path,
+        interprete: tuple[str, ...],
+        sous: Mapping[str, Any],
+    ) -> Constat:
+        """Joue dans `espace` la commande d'un contrôle sans sonde, sous ce que la borne donne."""
+        non_joue = _non_joue(controle)
         joueur = self._joueur if self._joueur is not None else execution.jouer
         delai, origine = self._delai_de(controle)
         try:
@@ -1100,7 +1260,12 @@ class VerificateurTaches:
             # porte d'autres tâches pendant ce temps. Un service démarré prend son
             # tour sur le poste, sonde ou non : il occupe son port tout autant (#1449).
             appel = functools.partial(
-                joueur, controle.commande, livraison.espace, interprete=interprete, delai_s=delai
+                joueur,
+                controle.commande,
+                espace,
+                interprete=interprete,
+                delai_s=delai,
+                **sous,
             )
             port: int | None = None
             if controle.demarrage:
@@ -1150,7 +1315,7 @@ class VerificateurTaches:
             raise
 
     async def _jouer_sur_un_clone(
-        self, controle: Controle, espace: Path, interprete: tuple[str, ...]
+        self, controle: Controle, livraison: Livraison, interprete: tuple[str, ...]
     ) -> Constat:
         """Joue la commande dans un clone neuf de ce que la branche a commité (#1507).
 
@@ -1160,21 +1325,33 @@ class VerificateurTaches:
         le clone est à Maestro. Un clone impossible rend le contrôle « non joué », avec
         ce que Git a répondu : il ne se rejoue jamais dans l'espace, où il ne
         constaterait plus ce qu'il dit.
+
+        Le clone est un lieu à lui : il reçoit sa borne (#1728), et le courtier s'y
+        ouvre sur lui — un conteneur demandé depuis le clone monte le clone.
         """
         non_joue = _non_joue(controle)
         joueur = self._joueur if self._joueur is not None else execution.jouer
         delai, origine = self._delai_de(controle)
+        espace = livraison.espace
+        assert espace is not None  # établi par `_jouer_dans_l_espace`
+        courtier = self._ouvre_le_courtier(livraison.projet)
 
         def jouer(**signal: Any) -> execution.Execution:
-            with execution.clone_neuf(espace) as clone:
+            with (
+                execution.clone_neuf(espace) as clone,
+                execution.sous_la_borne(clone, projet=espace, courtier=courtier) as abaisse,
+            ):
+                du_clone, sous = _abaisse(abaisse, interprete)
                 return joueur(
-                    controle.commande, clone, interprete=interprete, delai_s=delai, **signal
+                    controle.commande, clone, interprete=du_clone, delai_s=delai, **sous, **signal
                 )
 
         try:
             resultat = await self._jusqu_a_son_verdict(jouer)
         except execution.CloneImpossible as exc:
             return non_joue(f"pas jouée — {exc}")
+        except execution.BorneIndisponible as exc:
+            return non_joue(f"{_SANS_BORNE} : {exc}")
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
         constat = _constat_joue(controle, resultat, delai, origine=origine)
@@ -1190,7 +1367,11 @@ class VerificateurTaches:
         )
 
     async def _demarrer(
-        self, controle: Controle, espace: Path, interprete: tuple[str, ...]
+        self,
+        controle: Controle,
+        espace: Path,
+        interprete: tuple[str, ...],
+        sous: Mapping[str, Any],
     ) -> Constat:
         """Démarre le service du contrôle, le sonde jusqu'à ce qu'il réponde, l'arrête (#1432).
 
@@ -1204,6 +1385,8 @@ class VerificateurTaches:
         Chaque essai reçoit aussi, à son tour, le port que Maestro réserve à son service
         (`_au_port_reserve`, #1487) : un agent qui libère le port de son critère n'y
         trouve jamais le service d'une vérification.
+
+        `sous` est ce que la borne du lieu donne au service et à sa sonde (#1728).
         """
         non_joue = _non_joue(controle)
         demarreur = self._demarreur if self._demarreur is not None else execution.demarrer
@@ -1218,6 +1401,7 @@ class VerificateurTaches:
             sonde=controle.sonde,
             delai_s=delai,
             delai_sonde_s=self._delais.sonde_s,
+            **sous,
         )
         debut = time.monotonic()
         tour = False  # un autre service de vérification a-t-il fait attendre ?
@@ -2246,6 +2430,9 @@ class Recette:
     n'y soit joué (`maestro.sandbox.projet.empreinte_du_livrable`) : le verdict la porte,
     et c'est par elle que la recette du run sait si l'arbre qu'elle juge est celui que
     cette vérification a jugé. `None` : un espace qui n'est le projet de personne.
+
+    `projet` (#1728) est le projet de la tâche, que chaque livraison porte jusqu'au
+    courtier de conteneur (`Livraison.projet`).
     """
 
     verificateur: VerificateurTaches
@@ -2259,6 +2446,7 @@ class Recette:
     outillage: str = ""
     etat_de_la_branche: Callable[[Path], str] | None = None
     empreinte_de: Callable[[Path], str] | None = None
+    projet: Project | None = None
     controles: tuple[Controle, ...] | None = None
     livraisons: int = 0
     meilleur: int = -1
@@ -2312,6 +2500,7 @@ class Recette:
                 if espace is not None and self.etat_de_la_branche is not None
                 else ""
             ),
+            projet=self.projet,
         )
         empreinte = (
             await asyncio.to_thread(self.empreinte_de, espace)

@@ -93,6 +93,7 @@ from maestro.sandbox.container_broker_client import (
     frame,
 )
 from maestro.sandbox.container_image import ImageRefusal
+from maestro.sandbox.low_session import LowSession
 
 #: The network of a broker's container: outbound only, no port published.
 NETWORK = container.RESEAU_DEFAUT
@@ -207,6 +208,18 @@ class BrokerSession:
     def close(self) -> None:
         """Ends the session: its token is refused from now on, its containers removed."""
         self._close()
+
+    def serve(self, session: LowSession) -> None:
+        """Gives a low session the broker, and ends with it (#1728).
+
+        The session's processes receive the broker's address and the token, and find
+        `maestro-container` first on their `PATH`: what an agent's session receives,
+        for a command Maestro plays lowered on the same workspace.
+        """
+        session.closers.append(self.close)
+        path = session.env.get("PATH", os.environ.get("PATH", ""))
+        session.env |= self.env
+        session.env["PATH"] = str(self.launchers) + (os.pathsep + path if path else "")
 
 
 class ContainerBroker:

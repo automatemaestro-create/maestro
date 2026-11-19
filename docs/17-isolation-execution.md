@@ -395,6 +395,22 @@ Une borne que le système refuse (une étiquette, l'absence de Git for Windows) 
 « à vérifier » avec sa raison. Elle n'est jamais rejouée au niveau de la personne. Ce que la borne ne
 couvre pas est ce qu'elle ne couvre pas pour un agent, listé ci-dessous.
 
+**La vérification d'une tâche joue sous la même borne** (#1728,
+[docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md)). Le texte de ses
+contrôles vient du vérificateur, et la portée le juge. Ce qu'ils exécutent vient de l'agent : ses
+tests, son `conftest.py`, ses scripts. Chaque commande d'un contrôle joue donc sous la borne du
+tableau ci-dessus, la sonde et le service d'un démarrage compris, comme celles de la recette du
+run :
+- **le lieu** est celui où la vérification jouait déjà : l'espace de l'agent, le miroir de la racine
+  d'un projet non versionné, ou un clone neuf de la branche. Il reçoit l'étiquette basse, et un clone
+  neuf reçoit son propre abaissement ;
+- **l'abaissement** se prépare une fois par vérification, au premier contrôle joué, et part avec
+  elle. `LOCALAPPDATA` mène au cache du projet (#1709), le même que pour son outillage ;
+- **une borne que le poste ne tient pas** rend le contrôle « non joué », avec sa raison. Le critère
+  n'est alors ni tenu ni non tenu : il empêche le vert, et ne revient pas à l'agent. C'est le cas du
+  régime `conteneur` ailleurs que sous Windows ;
+- **ce qui demande un conteneur** passe par le courtier (plus bas), ouvert sur le lieu de jeu.
+
 **Un cache par projet pour la vérification** (#1709). L'établi part avec la vérification. Si
 `LOCALAPPDATA` y menait, ce que les outils y rangent (le cache de npm, par exemple) partirait avec
 lui, et chaque vérification retéléchargerait tout. La vérification reçoit donc, à la place, le
@@ -536,6 +552,16 @@ commande dans un conteneur, et Maestro compose lui-même ce conteneur, au niveau
 Le conteneur ferme mieux que l'intégrité basse ce qu'il ne monte pas : le profil de la personne, et
 les dossiers étiquetés bas des autres agents.
 
+**Le courtier sert aussi la vérification d'une tâche** (#1728). Abaissée, une commande de
+vérification ne joint pas le moteur. Maestro ouvre donc le courtier sur le lieu où elle joue
+(l'espace de la livraison, son miroir ou son clone neuf), avec le projet de la tâche. La commande
+reçoit l'adresse, le jeton et `maestro-container` en tête de `PATH`, comme l'agent d'une session, et
+cette session du courtier se ferme avec la vérification. Le filet du dépôt de Maestro, joué par un
+contrôle, y garde donc le conteneur : mesuré le 2026-11-19 sur un clone du dépôt, `bash
+scripts/ci/local.sh --only pytest` y joue en 31 s, « conteneur Linux, par le courtier de la
+session », et le seul dossier monté est le clone. Un poste sans courtier (pas de `docker` sur le
+`PATH` de la personne) laisse la commande abaissée, sans conteneur, et c'est sa sortie qui le dit.
+
 **Ce que le courtier ne couvre pas** :
 - **un commit fait dans le conteneur** : le dépôt du conteneur est retiré après la commande, sans
   rapatriement. L'agent committe depuis son shell ;
@@ -544,13 +570,11 @@ les dossiers étiquetés bas des autres agents.
 - **un constructeur à part** : l'agent construit sur le moteur et le cache de la personne. Un
   constructeur dédié fermerait le partage du cache des couches, et celui des caches montés par un
   frontend tiers ;
-- **la vérification d'une tâche** ne passe pas encore par lui (#1728). Le filet du dépôt de
-  Maestro, joué par un agent, y passe depuis #1727 ;
 - **Linux et macOS** : rien n'y est abaissé, et le courtier n'y est pas offert.
 
 **Ce qui est mesuré sur le poste** (`tests/test_low_integrity.py`,
-`tests/test_verification_low_integrity.py` et `tests/test_container_broker.py`, sous Windows,
-marqueur `integrite_basse`) :
+`tests/test_verification_low_integrity.py`, `tests/test_task_verification_bound.py` et
+`tests/test_container_broker.py`, sous Windows, marqueur `integrite_basse`) :
 - `taskkill /IM` contre un programme témoin de la personne, lancé directement ou par un script :
   l'agent ne le trouve pas, et le témoin vit ;
 - la commande de #1502 (`taskkill //IM python.exe //F`), lancée directement ou par un script :
@@ -570,6 +594,11 @@ marqueur `integrite_basse`) :
 - une commande de vérification qui remplit son cache sous `LOCALAPPDATA`, comme un gestionnaire de
   paquets, l'écrit à l'intégrité basse. La vérification suivante du même projet le trouve, celle
   d'un autre projet non, dans une copie comme dans un clone neuf ;
+- le contrôle d'une tâche dont le script, écrit par l'agent, ajoute une ligne à un profil hors de
+  l'espace est joué et échoue sur l'écriture refusée, dans l'espace comme sur un clone neuf. Le
+  profil garde son contenu et sa date. Le contrôle voisin, qui n'écrit que dans l'espace et son
+  établi, tient. Un service démarré par un contrôle et sa sonde écrivent dans l'espace, et rien
+  dans le profil (#1728) ;
 - un processus abaissé lance `maestro-container` depuis le bash de la copie de Git, sur l'espace
   d'un projet versionné, et reçoit la sortie et le code du conteneur, stderr compris. Le conteneur
   tourne sous l'uid 10001, sans capacité, racine en lecture seule, plafonné à 256 processus et 2 Go.
@@ -608,11 +637,6 @@ marqueur `integrite_basse`) :
     qu'un agent hostile d'un autre projet ne puisse pas y écrire ;
   - ce qu'une commande y laisse **persiste** jusqu'à la rétention, cache ou état d'un outil, et
     tout agent du poste peut le lire ;
-- **la vérification d'une tâche** (`maestro/engine/verification.py`) : ses contrôles tournent au
-  niveau de la personne. Ce sont des commandes que le vérificateur écrit, et que la portée ne juge
-  pas, mais le code qu'elles exécutent est celui de l'agent : ses tests, ses scripts. Elle passera
-  sous la borne du poste, et par le courtier pour ce qui demande un conteneur
-  ([docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md), #1728) ;
 - **les autres systèmes** : ailleurs que sous Windows, rien n'est abaissé. Le défaut y est `hote`,
   et le conteneur reste l'option qui isole.
 

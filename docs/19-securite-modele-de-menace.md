@@ -353,10 +353,14 @@ réponse en trois couches :
 - deux agents abaissés en même temps écrivent l'un chez l'autre, et l'un peut arrêter les
   processus de l'autre ;
 - le **réseau**, bouclage compris ;
-- l'**environnement** de la personne, hors ce que Maestro retient ;
-- la vérification d'une tâche, que Maestro joue lui-même au niveau de la personne. Ses commandes
-  exécutent le code de l'agent. Celle de l'outillage joue sous la borne des agents (#1691), et celle
-  d'une tâche y passera ([docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md), #1728).
+- l'**environnement** de la personne, hors ce que Maestro retient.
+
+**Ce que Maestro joue lui-même passe sous la même borne.** Les commandes qu'il joue pour vérifier un
+outillage (#1691), une tâche ou la recette d'un run (#1728,
+[docs/57 §5](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md)) exécutent le code de
+l'agent : ses tests, ses scripts. Elles naissent à l'intégrité basse là où les agents y tournent.
+Une borne que le poste ne tient pas n'est jamais remplacée par le niveau de la personne : la
+commande n'est pas jouée, et sa raison le dit.
 
 **Le régime conteneur, sans le tube du moteur** ([docs/57](./57-decision-un-courtier-de-conteneur-pour-l-agent-confine.md),
 en vigueur depuis #1725). Le moteur de Docker Desktop refuse un processus abaissé (#1714), et ouvrir
@@ -384,9 +388,11 @@ Ce que le courtier **ouvre** :
 Ce qu'il **ne couvre pas** :
 - un commit fait dans le conteneur, qui n'en revient pas ;
 - un filet qui commande docker lui-même ;
-- un constructeur à part, qui fermerait le partage du cache de construction ;
-- la vérification d'une tâche (#1728). Le filet du dépôt de Maestro joué par un agent y passe
-  depuis #1727, sans rien demander de plus qu'une commande et son Dockerfile.
+- un constructeur à part, qui fermerait le partage du cache de construction.
+
+Le filet du dépôt de Maestro y passe sans rien demander de plus qu'une commande et son Dockerfile,
+joué par un agent (#1727) ou par la vérification d'une tâche (#1728) : le courtier s'ouvre alors
+sur le lieu où cette vérification joue.
 
 Le détail est dans [docs/17 §7](./17-isolation-execution.md). Ailleurs que sous Windows, rien
 n'est abaissé : le défaut y est l'exécution sur l'hôte, et seul le conteneur isole.
