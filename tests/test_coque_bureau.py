@@ -397,19 +397,26 @@ def test_le_lanceur_du_produit_comprend_les_deux_arguments_de_la_coque():
     assert analyser(["--stop"], {}).action == "arreter"
 
 
+def _journaux_du_lanceur_en_js() -> str:
+    """`maestro.emplacements.journaux_du_lanceur`, écrit comme la coque doit l'écrire.
+
+    La coque ne lit pas Python : elle recompose le dossier sous `os.homedir()`, et ce test est ce
+    qui l'empêche d'en inventer un autre (#1454 — `maestro/emplacements.py` est seul à déclarer).
+    """
+    from maestro.emplacements import journaux_du_lanceur
+
+    sous_la_maison = journaux_du_lanceur().relative_to(Path.home()).parts
+    return "path.join(os.homedir(), " + ", ".join(f"'{s}'" for s in sous_la_maison) + ")"
+
+
 def test_la_coque_installee_relit_la_session_ou_le_lanceur_l_inscrit(main_js):
     """Le lanceur du produit déplace un port pris plutôt que d'échouer : la fenêtre
     ouvre l'URL qu'il a **inscrite**, et ce chemin est une frontière avec
     `maestro.emplacements.journaux_du_lanceur` — réécrit d'un seul côté, la coque
     ouvrirait l'adresse demandée pendant que le produit sert ailleurs. Installé, il est
     sous l'état du poste : une mise à jour efface le dossier d'installation (#1620)."""
-    from maestro.emplacements import journaux_du_lanceur
-
-    sous_la_maison = journaux_du_lanceur().relative_to(Path.home()).parts
-    segments = ", ".join(f"'{segment}'" for segment in (*sous_la_maison, "session.json"))
-    assert (
-        f"const SESSION_DU_LANCEUR = path.join(os.homedir(), {segments});" in main_js
-    )
+    assert f"const JOURNAUX_DU_LANCEUR = {_journaux_du_lanceur_en_js()};" in main_js
+    assert "const SESSION_DU_LANCEUR = path.join(JOURNAUX_DU_LANCEUR, 'session.json');" in main_js
     assert "fenetre.loadURL(urlServie())" in main_js
     assert "fenetre.loadURL(URL_UI)" not in main_js
 
@@ -634,7 +641,7 @@ def lignes_imprimees(main: str) -> list[str]:
     prend un appel trop long pour une ligne, et la sonde ne voyait pas la ligne du verrou de #1287.
     """
     litteraux = re.findall(
-        r"""(?:process\.(?:stdout|stderr)\.write|retenir)\(\s*(?:'\w+',\s*)?"""
+        r"""(?:process\.(?:stdout|stderr)\.write|retenir|ecrire)\(\s*(?:'\w+',\s*)?"""
         r"""(['`])(\[coque\][^'`]*)\1""",
         main,
     )
@@ -911,6 +918,189 @@ def test_le_desinstalleur_emporte_le_cache_et_jamais_pendant_une_mise_a_jour():
     assert "${ifNot} ${isUpdated}" in macro
     assert f'RMDir /r "$LOCALAPPDATA\\{nom}-updater"' in macro
     assert macro.index("${ifNot} ${isUpdated}") < macro.index("RMDir")
+
+
+# ==================================================================================================
+# ③ ter Le journal de la fenêtre (#1751, docs/54 §3.4)
+# ==================================================================================================
+#
+# Ouverte par son raccourci, la fenêtre installée n'a pas de console : ce qu'elle écrit sur sa
+# sortie — la mise à jour, l'attente, les refus — ne serait écrit nulle part, et une mise à jour qui
+# échoue chez quelqu'un ne laisserait aucune trace à transmettre. Elle l'écrit donc aussi dans un
+# fichier, à côté des journaux du lanceur. Ce qui ne doit pas bouger : sa sortie standard, que
+# `scripts/distribution/verifier.sh` capte et lit ligne à ligne.
+
+VERIFIER_SH = RACINE / "scripts" / "distribution" / "verifier.sh"
+
+#: Ce qu'une écriture directe sur la sortie de la coque ressemble, quelle qu'en soit la forme.
+_ECRITURE_DIRECTE = re.compile(r"process(?:\.std(?:out|err)|\[\w+\])\.write\(")
+
+ECHANTILLON_ECRITURES_FAUTIF = """
+function ecrire(flux, texte) {
+  process[flux].write(texte);
+  consigner(texte);
+}
+function refuser(chemin) {
+  process.stderr.write(`[coque] refusé : ${chemin}\\n`);
+}
+if (!app.requestSingleInstanceLock()) {
+  process.stderr.write('[coque] déjà ouvert\\n');
+  app.exit(0);
+} else {
+  ouvrirLeJournal();
+}
+"""
+
+
+def ecritures_hors_du_journal(source: str) -> list[str]:
+    """Les écritures sur la sortie qui ne passent pas par `ecrire`, donc pas par le journal.
+
+    Deux sont admises, et seulement elles : celle d'`ecrire` lui-même, et le refus d'une seconde
+    instance — qui sort avant d'avoir ouvert un journal, parce que l'ouvrir ferait tourner celui de
+    la fenêtre déjà ouverte (§ `test_le_journal_ne_s_ouvre_que_chez_l_instance_qui_garde_la_stack`).
+    """
+    admises = [objet(source, "function ecrire(flux, texte) {")]
+    admises.append(objet(source, "if (!app.requestSingleInstanceLock()) {"))
+    restant = source
+    for bloc in admises:
+        restant = restant.replace(bloc, "", 1)
+    return _ECRITURE_DIRECTE.findall(restant)
+
+
+def test_la_sonde_des_ecritures_voit_une_ligne_qui_echappe_au_journal():
+    assert ecritures_hors_du_journal(ECHANTILLON_ECRITURES_FAUTIF) == ["process.stderr.write("]
+    sans_la_faute = ECHANTILLON_ECRITURES_FAUTIF.replace(
+        "process.stderr.write(`[coque] refusé", "ecrire('stderr', `[coque] refusé"
+    )
+    assert ecritures_hors_du_journal(sans_la_faute) == []
+
+
+def test_aucune_ligne_de_la_coque_n_echappe_a_son_journal(main_js):
+    """Les refus du pont, les lignes du lanceur que la coque relaie, celles de la mise à jour et
+    son annonce de démarrage : tout passe par `ecrire`, qui écrit la sortie puis le journal."""
+    assert ecritures_hors_du_journal(main_js) == []
+    assert "function retenir(flux, donnees) {" in main_js
+    assert "ecrire(flux, texte);" in objet(main_js, "function retenir(flux, donnees) {")
+
+
+def test_la_sortie_standard_reste_celle_que_la_verification_capte(main_js):
+    """`verifier.sh` lance `Maestro.exe` et lit sa sortie (`[mise à jour] prête : …`) : elle reçoit
+    le texte tel quel, sans horodatage, et AVANT le journal — un journal qui ne s'écrit pas
+    n'enlève rien à la sortie."""
+    corps = objet(main_js, "function ecrire(flux, texte) {")
+    assert "process[flux].write(texte);" in corps
+    assert corps.index("process[flux].write(texte);") < corps.index("consigner(texte);")
+
+
+def test_le_journal_de_la_fenetre_est_celui_que_les_emplacements_declarent(main_js):
+    """Le chemin vient de `maestro.emplacements` : à côté des journaux du lanceur, sous le nom que
+    le module déclare. La coque ne compose qu'un seul chemin sous le dossier personnel."""
+    from maestro.emplacements import (
+        NOM_JOURNAL_DE_LA_FENETRE,
+        journal_de_la_fenetre,
+        journaux_du_lanceur,
+    )
+
+    assert journal_de_la_fenetre() == journaux_du_lanceur() / NOM_JOURNAL_DE_LA_FENETRE
+    assert f"const JOURNAUX_DU_LANCEUR = {_journaux_du_lanceur_en_js()};" in main_js
+    assert (
+        "const JOURNAL_DE_LA_FENETRE = "
+        f"path.join(JOURNAUX_DU_LANCEUR, '{NOM_JOURNAL_DE_LA_FENETRE}');" in main_js
+    )
+    assert main_js.count("os.homedir()") == 1
+
+
+def test_le_journal_ne_s_ouvre_que_dans_une_installation(main_js):
+    """Un clone est lancé depuis un terminal, qui garde sa sortie ; et une session de développement
+    n'écrit jamais sous le dossier personnel (#1454)."""
+    corps = objet(main_js, "function ouvrirLeJournal() {")
+    assert corps.strip().startswith("if (!INSTALLEE) return;")
+
+
+def test_le_journal_ne_s_ouvre_que_chez_l_instance_qui_garde_la_stack(main_js):
+    """Une seconde instance sort aussitôt : ouvrir le journal avant le verrou la ferait tourner sous
+    la fenêtre déjà ouverte, dont la vie en cours partirait aux archives. L'ouverture est donc dans
+    la branche du verrou obtenu, et avant l'annonce du démarrage, qui doit y figurer."""
+    verrou = main_js.index("if (!app.requestSingleInstanceLock()) {")
+    obtenu = objet(main_js[verrou:], "} else {")
+    assert main_js.count("ouvrirLeJournal();") == 1
+    assert "ouvrirLeJournal();" in obtenu
+    assert obtenu.index("ouvrirLeJournal();") < obtenu.index("armerArret();")
+    assert main_js.index("ouvrirLeJournal();") < main_js.index(
+        "ecrire('stdout', `[coque] Maestro — UI :"
+    )
+
+
+ECHANTILLON_ROTATION_FAUTIVE = """
+const VIES_GARDEES = 50;
+function ouvrirLeJournal() {
+  for (let rang = 1; rang < VIES_GARDEES; rang += 1) {
+    fs.renameSync(vie(rang - 1), vie(rang));
+  }
+  journalDeLaFenetre = fs.openSync(JOURNAL_DE_LA_FENETRE, 'a');
+}
+"""
+
+
+def _rotation(source: str) -> dict[str, bool]:
+    corps = objet(source, "function ouvrirLeJournal() {")
+    vies = re.search(r"const VIES_GARDEES = (\d+);", source)
+    return {
+        # Au moins la vie en cours et la précédente : une mise à jour se télécharge et s'installe
+        # dans l'une, et démarre dans l'autre. Et pas une archive : bornée.
+        "vies bornées": vies is not None and 2 <= int(vies.group(1)) <= 5,
+        # De la plus ancienne vers la plus récente : dans l'autre sens, chaque renommage écrase
+        # celui qu'il vient de faire, et toutes les archives finissent par être la même vie.
+        "de la plus ancienne": "for (let rang = VIES_GARDEES - 1; rang >= 1; rang -= 1) {" in corps,
+        # Une vie repart à zéro, comme les journaux du lanceur (`maestro.lanceur.systeme`).
+        "une vie, un fichier": "fs.openSync(JOURNAL_DE_LA_FENETRE, 'w')" in corps,
+    }
+
+
+def test_la_sonde_de_la_rotation_voit_une_rotation_qui_ecrase_ses_archives():
+    assert not any(_rotation(ECHANTILLON_ROTATION_FAUTIVE).values())
+
+
+def test_le_journal_garde_des_vies_bornees_en_nombre(main_js):
+    assert all(_rotation(main_js).values()), _rotation(main_js)
+    assert "`${JOURNAL_DE_LA_FENETRE}.${rang}`" in main_js
+
+
+def test_une_vie_du_journal_est_bornee_en_taille_et_le_dit(main_js):
+    """Une boucle d'erreurs ne remplit pas le disque de la personne : passé le plafond, le journal
+    dit qu'il s'arrête et n'écrit plus. Les premières lignes, qui portent la cause, restent."""
+    corps = objet(main_js, "function consigner(texte) {")
+    assert re.search(r"const TAILLE_MAX_D_UNE_VIE = \d+ \* 1024 \* 1024;", main_js)
+    assert "if (octetsConsignes + octets > TAILLE_MAX_D_UNE_VIE) {" in corps
+    assert "journal de la fenêtre plein" in corps
+
+
+def test_un_journal_qui_ne_s_ecrit_pas_ne_retient_jamais_la_fenetre(main_js):
+    """Disque plein, dossier refusé : la fenêtre s'ouvre quand même, et le dit sur sa sortie."""
+    ouverture = objet(main_js, "function ouvrirLeJournal() {")
+    consignation = objet(main_js, "function consigner(texte) {")
+    assert "} catch (err) {" in ouverture
+    assert "journalDeLaFenetre = null;" in ouverture
+    assert "} catch {" in consignation
+    assert "journalDeLaFenetre = null;" in consignation
+
+
+def test_la_verification_ne_lit_pas_deux_fois_ce_que_la_coque_dit():
+    """`verifier.sh` lit la sortie de la coque ET les journaux du lanceur ; le journal de la
+    fenêtre, posé parmi eux, redit cette sortie. Sans l'en écarter, la reprise y serait dite deux
+    fois. Les vies archivées (`window.log.1`…) ne répondent pas à `*.log`."""
+    from maestro.emplacements import (
+        NOM_ETAT,
+        NOM_JOURNAL_DE_LA_FENETRE,
+        NOM_LANCEUR,
+    )
+
+    verifier = VERIFIER_SH.read_text(encoding="utf-8")
+    lecture = objet(verifier, "dit_de_la_reprise() {")
+    assert f'[ "${{journal##*/}}" = {NOM_JOURNAL_DE_LA_FENETRE} ]' in lecture
+    # Et c'est bien ce fichier-là qu'elle confronte à la sortie de la coque.
+    chemin = f"$PROFIL/{NOM_ETAT}/{NOM_LANCEUR}/{NOM_JOURNAL_DE_LA_FENETRE}"
+    assert f'\nJOURNAL_DE_LA_FENETRE="{chemin}"\n' in verifier
 
 
 # ==================================================================================================

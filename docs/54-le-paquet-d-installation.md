@@ -37,6 +37,14 @@ Ce qu'elle écrit en marchant :
   (`configuration\.env`) ;
 - les **journaux du lanceur** sous `%USERPROFILE%\.maestro\lanceur\`, avec la cause d'un service
   qui serait mort au démarrage ;
+- le **journal de la fenêtre** à côté d'eux, `%USERPROFILE%\.maestro\lanceur\window.log` : ce que
+  la fenêtre dit en marchant, chaque ligne avec son heure. On y trouve la mise à jour (§6.2),
+  l'attente du démarrage et ce que le lanceur lui a répondu, et les gestes qu'elle a refusés. Ouverte
+  par son raccourci, la fenêtre n'a pas de console : c'est le seul endroit où ces lignes s'écrivent,
+  et le fichier à transmettre quand quelque chose a échoué. Il repart à zéro à chaque ouverture ;
+  les deux ouvertures précédentes restent à côté (`window.log.1`, la plus récente, puis
+  `window.log.2`). Une ouverture n'y écrit pas plus d'un mégaoctet : au-delà, une dernière ligne le
+  dit, et les premières, qui portent la cause, restent ;
 - les **projets** sous `%USERPROFILE%\Maestro\` (docs/24 §2.7) ;
 - l'**installeur de la version suivante**, que la mise à jour télécharge, sous
   `%LOCALAPPDATA%\maestro-updater\` : il y attend d'être posé, et part avec la désinstallation
@@ -175,7 +183,9 @@ machine vierge n'était disponible :
 
 Il relève ensuite **qui sert** : chaque processus né de l'installation avec le chemin de son
 exécutable. Un seul pris au poste ou au clone, et la vérification échoue. Et il **compte** les
-fichiers installés contre ceux du paquet, parce que l'installeur ne le fait pas (§3.3.1).
+fichiers installés contre ceux du paquet, parce que l'installeur ne le fait pas (§3.3.1). Il
+confronte enfin le journal de la fenêtre (§1) à ce qu'elle a dit sur sa sortie, et constate qu'à
+chaque réouverture la vie précédente est rangée à côté, celle d'une mise à jour comprise.
 
 Puis il éprouve **ce qui survit** (§3.3.3) : il déclare un projet et règle le répertoire des
 projets par l'API, réinstalle par-dessus, désinstalle, réinstalle, et les cherche chaque fois.
@@ -290,12 +300,6 @@ jouée (§3.5).
 - **Un dossier de profil de plus de 20 caractères** (un profil de domaine `prenom.nom.DOMAINE`, un
   `%TEMP%` redirigé ailleurs) : il entame la marge de §3.3.1. Rien ne le détecte à l'installation ;
   c'est un constat à reprendre si l'installeur devait servir des postes gérés.
-- **Le journal de la fenêtre, chez quelqu'un** : la coque écrit ses lignes, dont celles de la mise
-  à jour (`[mise à jour]`, §6.2), sur sa sortie standard. La vérification les capte parce qu'elle
-  lance `Maestro.exe` elle-même. Ouverte par son raccourci, la fenêtre n'a pas de console, et ces
-  lignes ne sont écrites nulle part : seuls les journaux du lanceur restent, sous
-  `%USERPROFILE%\.maestro\lanceur\`. Une mise à jour qui échoue chez quelqu'un ne laisse donc pas
-  de trace qu'il puisse transmettre.
 
 ### 3.5 La preuve sur une machine vierge : différée, et comment la jouer
 
@@ -461,7 +465,7 @@ coût avant qu'on choisisse.
 | **Les versions sautées** | On va toujours à la plus récente, sans passer par les intermédiaires : les migrations du journal (§5) rattrapent l'écart |
 | **Le retour en arrière** | Jamais de lui-même : la mise à jour ne propose pas une version plus ancienne, ni une préversion. Pour revenir à une version précédente, on réinstalle son installeur. Un journal qu'une version plus récente a mis à niveau est alors **refusé** (§5) : sa sauvegarde, `commun.sqlite3-sauvegarde`, porte le fichier d'avant |
 | **Un clone du dépôt** | Il ne se met pas à jour par ce chemin. Un clone se met à jour par git |
-| **Une mise à jour qui échoue** | Si l'arrêt n'aboutit pas, la version n'est pas posée : une stack à moitié arrêtée tient encore des fichiers du dossier que l'installeur efface. La version reste téléchargée, et le prochain lancement la repropose. Tout se lit au journal de la fenêtre, sur les lignes `[mise à jour]`, quand la fenêtre a une console pour l'écrire. Ouverte par son raccourci, elle n'en a pas (§3.4) |
+| **Une mise à jour qui échoue** | Si l'arrêt n'aboutit pas, la version n'est pas posée : une stack à moitié arrêtée tient encore des fichiers du dossier que l'installeur efface. La version reste téléchargée, et le prochain lancement la repropose. Tout se lit au journal de la fenêtre (`%USERPROFILE%\.maestro\lanceur\window.log`, §1), sur les lignes `[mise à jour]`. Une mise à jour traverse deux ouvertures : une fois Maestro rouvert, celle qui a téléchargé puis posé la version est `window.log.1` |
 
 La variable `MAESTRO_MISES_A_JOUR_FLUX` remplace le canal par une autre adresse (HTTPS, ou HTTP
 vers le poste lui-même) ou l'éteint (`0`). Une valeur qui ne se lit pas **éteint** la mise à jour
@@ -599,3 +603,14 @@ rend 60 constats, tous ✓, dont `presse : Plus tard` (#1647).
 
 Le run lancé avant la mise à jour avait déjà échoué quand Maestro s'est fermé : le profil vierge
 n'a aucun compte. L'arrêt d'un run **en cours** par la mise à jour n'a donc pas été vu (§3.4).
+
+Passe du **2026-11-18** (#1751), sur deux paquets du même code, 0.1.0 et 0.1.1, et le journal de
+la fenêtre (§1) avec eux. Elle rend **63 constats, dont 62 ✓**. Le ✗ (« aucun processus ne joue
+un fichier du clone ») vient du poste simulé, laissé sous le clone, son emplacement par défaut :
+chaque chemin de l'installation porte alors celui du clone. Les trois constats du journal sont ✓ :
+
+| Geste | Constat |
+|---|---|
+| Ouvrir puis fermer la 0.1.0 | chaque ligne que la fenêtre a écrite sur sa sortie est dans `window.log` (19 lignes), horodatée, jusqu'à « Maestro est arrêté » |
+| Réinstaller, rouvrir | la vie précédente est `window.log.1`, octet pour octet |
+| Mettre à jour, rouvrir sur la 0.1.1 | `window.log.1` porte la vie de la mise à jour : la recherche, le téléchargement, « prête : 0.1.1 », l'arrêt de la stack, puis « installation de 0.1.1, en silence » et l'installeur lancé |

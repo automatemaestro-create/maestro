@@ -93,6 +93,12 @@ NOM_CONFIGURATION = "configuration"
 #: sa session (`maestro.lanceur.emplacement`).
 NOM_LANCEUR = "lanceur"
 
+#: Le journal de la fenêtre installée, à côté de ceux du lanceur (#1751) : ce que la coque
+#: écrit sur sa sortie standard, que personne ne voit quand on l'ouvre par son raccourci.
+#: La coque (`apps/desktop/main.js`) en est le seul écrivain ; un nom qui s'enregistre,
+#: donc en anglais (docs/55 §4).
+NOM_JOURNAL_DE_LA_FENETRE = "window.log"
+
 #: Le dossier de l'état du poste où l'installeur dépose, avant que l'ancienne version ne
 #: soit désinstallée, ce qu'elle avait écrit sous son dossier (`apps/desktop/installer.nsh`)
 #: — repris une fois au démarrage suivant (`maestro.lanceur.reprise`), puis retiré.
@@ -260,6 +266,16 @@ def env_du_poste(environnement: Mapping[str, str] | None = None) -> Path | None:
 def journaux_du_lanceur() -> Path:
     """`~/.maestro/lanceur` — les journaux et la session du lanceur installé. Non créé."""
     return racine_etat() / NOM_LANCEUR
+
+
+def journal_de_la_fenetre() -> Path:
+    """`~/.maestro/lanceur/window.log` — le journal de la fenêtre installée. Non créé.
+
+    La coque l'ouvre à chaque lancement et garde à côté les vies précédentes
+    (`window.log.1`, `window.log.2`) : une mise à jour se télécharge dans une vie et
+    démarre dans la suivante, et c'est leur raccord qu'on vient y chercher.
+    """
+    return journaux_du_lanceur() / NOM_JOURNAL_DE_LA_FENETRE
 
 
 def reprise_du_poste() -> Path:
